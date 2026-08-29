@@ -1,0 +1,4 @@
+source_root=cadagent_eval_rerun
+source_algo=freerouting_via1x_s00_r00_seed1
+source_dir=cadagent_eval_rerun/PCBench/freerouting_via1x_s00_r00_seed1
+n_boards=100

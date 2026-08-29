@@ -1,0 +1,16 @@
+name: default
+description: >
+  Baseline global design rules applied to boards that have neither a
+  companion .kicad_pro nor legacy (pre-KiCad 6) setup tokens in the pcb.
+  Values approximate a hobby-grade 2-layer 1oz process. All units in mm.
+
+global_minima:
+  clearance:            0.15
+  track_width:          0.20
+  via_diameter:         0.60
+  through_hole_drill:   0.30
+  via_annular_width:    0.10
+  hole_to_hole:         0.25
+  uvia_diameter:        0.20
+  uvia_drill:           0.10
+  copper_edge_clearance: 0.15

@@ -1,0 +1,81 @@
+# Shared policy-construction defaults  →  configs.loader.schema.RLPolicyConfig
+#
+# SINGLE SOURCE for the DecoderOnlyPCBPolicy network knobs. Used as both the
+# RL-training argparse defaults (the network group) and the RL-eval ckpt
+# fallback (PolicyConfig.from_checkpoint): eval rebuilds the policy from the
+# checkpoint's stored args, falling back to these only for missing keys.
+# => training and eval build the same architecture by construction.
+#
+# (use_critic / legacy_pad_layer_encoding / legacy_net_encoding /
+# legacy_edge_encoding are normally derived from the saved state_dict at load
+# time; the values here are the construction defaults.)
+
+d_model: 128
+n_heads: 4
+n_layers: 4
+d_ff: 512
+max_seq_len: 10000
+n_freq: 32
+use_critic: true
+detach_critic: false
+coord_encoding: fourier
+mlp_hidden: 128
+disable_slot_emb: false
+# Slot-table size = upper bound on nets per board (matches the ckpt's
+# slot_emb_table row count); 512 leaves headroom for real boards (d3b tops out
+# at 109 nets). Checkpoints without the key fall back to a literal 64 in
+# from_checkpoint, so changing this default stays load-compatible. The slot_perm
+# augmentation is a fixed 64-permutation and is incompatible with != 64 (the
+# trainer checks this).
+n_max_slots: 512
+policy_net_select: false
+same_net_bias: false
+legacy_pad_layer_encoding: false
+# NET-token feature width: false = current 4f (track_width + clearance +
+# via_diameter + per-episode `closed` flag), true = old-checkpoint 3f
+# (no closed flag). Derived from net_proj.weight shape at ckpt load.
+legacy_net_encoding: false
+# EDGE-token points: false = current 3-point (p1 + p2 + on-path midpoint via
+# its own edge_mid_proj; straight edge -> chord midpoint, outline arc -> the
+# on-arc midpoint), true = old-checkpoint 2-point (no midpoint — such policies
+# refuse outline_obs="arc" obs). Derived from the presence of edge_mid_proj in
+# the state_dict at ckpt load (shared proj shapes are unchanged, so presence —
+# not shape — is the signal).
+legacy_edge_encoding: false
+# HEAD-token time scalar. "step_ratio" (step/max_steps),
+# "log_remaining" (log1p(steps_remaining)/log1p(time_feature_cap) — max_steps-
+# invariant, so boards with different step budgets share one time coordinate),
+# "sin_remaining" (steps_remaining/cap through a dedicated sinusoidal ladder
+# anchored to step units: top rung period = 2 steps, so ±1 step resolves at any
+# horizon — transformer-PE anchoring; keeps log_remaining's max_steps
+# invariance), or "none" (constant 0 — time-blind ablation: the policy cannot
+# observe episode progress/deadline). All modes feed the same-width Fourier
+# slot with zero new weights, so checkpoints are weight-compatible across
+# modes; old checkpoints lack the key and fall back to step_ratio here.
+time_feature: step_ratio
+# Normalization ceiling (largest plausible max_steps) for log_remaining /
+# sin_remaining; for sin_remaining also the longest ladder period.
+time_feature_cap: 10000
+# ACTION_HISTORY window K: recent action entries tokenized per obs (3 tokens
+# each, newest first; short histories pad with the idle sentinel). Age is
+# encoded as Fourier(age/MAX_HISTORY)→proj — no K-shaped weights, so K is a
+# plain config knob (checkpoints stay load-compatible across K; MAX_HISTORY=32
+# frozen in models.v1.spec). Default 1 = a single-step prev-action window (the
+# encoding still adds net-slot + age markers) — history ablations raise it via
+# --action-history-len. Old prev-action
+# checkpoints (no history_age_proj in the state_dict) load as
+# legacy_action_history=true + K=1 — bit-identical single-entry encoding,
+# slot/age-free.
+action_history_len: 1
+legacy_action_history: false
+# OBSTACLE tokens for netless immovable blockers: NPTH mounting holes / oval
+# slots (board_static "obstacles"; rule-area keepout zones stay engine-only)
+# + net-less NC pads ("unconnected_pads"). Pad-shaped channels through the
+# tied pad_proj, no net slot. Off (default) emits zero tokens — the stream
+# stays byte-identical to pre-knob checkpoints.
+obstacle_obs: false
+# Boundary-shape channel on PAD + OBSTACLE tokens: 6-bucket categorical
+# (rect/roundrect/circle/oval/other/unknown) through an additive shape_embed.
+# Off (default) constructs no weights — checkpoints round-trip unchanged; the
+# loader presence-detects shape_embed for old-checkpoint loads.
+shape_obs: false

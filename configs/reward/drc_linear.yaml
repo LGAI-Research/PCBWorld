@@ -1,0 +1,13 @@
+# Dense reward with DRC: potential-based shaping with DRC penalties.
+# DRC is checked every step, penalizing violations via Φ delta.
+
+name: drc_linear
+mode: per_step            # "terminal" | "per_step"
+
+potential:
+  completion_bonus: 5.0
+  unconnected_penalty: 1.0
+  wirelength_penalty: 0.0
+  drc_penalty: 0.5
+  step_penalty: 0.01
+  truncation_mode: none    # "none" | "penalty_only" | "full"

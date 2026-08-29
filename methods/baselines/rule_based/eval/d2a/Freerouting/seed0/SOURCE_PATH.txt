@@ -1,0 +1,4 @@
+source_root=bench_results_evalfinal
+source_algo=freerouting_via1x
+source_dir=bench_results_evalfinal/synth_2L_v2_test/freerouting_via1x
+n_boards=128

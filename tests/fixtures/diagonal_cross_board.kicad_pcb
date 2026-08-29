@@ -1,0 +1,110 @@
+(kicad_pcb
+  (version 20241229)
+  (generator "cadagent_test_fixture")
+  (generator_version "9.0.5")
+  (general
+    (thickness 1.6)
+    (legacy_teardrops no)
+  )
+  (paper "A4")
+  (layers
+    (0 "F.Cu" signal)
+    (31 "B.Cu" signal)
+    (34 "B.Paste" user)
+    (35 "F.Paste" user)
+    (36 "B.SilkS" user "B.Silkscreen")
+    (37 "F.SilkS" user "F.Silkscreen")
+    (38 "B.Mask" user "B.Mask")
+    (39 "F.Mask" user "F.Mask")
+    (44 "Edge.Cuts" user)
+  )
+  (setup
+    (pad_to_mask_clearance 0)
+  )
+
+  (net 0 "")
+  (net 1 "NET1")
+  (net 2 "NET2")
+
+  (net_class "Default" "Default net class"
+    (clearance 0.2)
+    (trace_width 0.2)
+    (via_dia 0.6)
+    (via_drill 0.3)
+    (uvia_dia 0.3)
+    (uvia_drill 0.1)
+  )
+
+  (footprint "SamplePad:FCu"
+    (layer "F.Cu")
+    (at 2.5 2.5)
+    (uuid "00000000-0000-0000-0000-0000000010a1")
+    (property "Reference" "PTL" (at 0 -3) (layer "F.SilkS")
+      (effects (font (size 0.6 0.6) (thickness 0.1))))
+    (property "Value" "N1" (at 0 3) (layer "F.Fab")
+      (effects (font (size 0.6 0.6) (thickness 0.1))))
+    (pad "1" smd rect
+      (at 0 0) (size 5 5)
+      (layers "F.Cu" "F.Paste" "F.Mask")
+      (net 1 "NET1")
+      (uuid "00000000-0000-0000-0000-0000000010b1")
+    )
+  )
+
+  (footprint "SamplePad:FCu"
+    (layer "F.Cu")
+    (at 27.5 27.5)
+    (uuid "00000000-0000-0000-0000-0000000010a2")
+    (property "Reference" "PBR" (at 0 -3) (layer "F.SilkS")
+      (effects (font (size 0.6 0.6) (thickness 0.1))))
+    (property "Value" "N1" (at 0 3) (layer "F.Fab")
+      (effects (font (size 0.6 0.6) (thickness 0.1))))
+    (pad "1" smd rect
+      (at 0 0) (size 5 5)
+      (layers "F.Cu" "F.Paste" "F.Mask")
+      (net 1 "NET1")
+      (uuid "00000000-0000-0000-0000-0000000010b2")
+    )
+  )
+
+  (footprint "SamplePad:FCu"
+    (layer "F.Cu")
+    (at 27.5 2.5)
+    (uuid "00000000-0000-0000-0000-0000000010a3")
+    (property "Reference" "PTR" (at 0 -3) (layer "F.SilkS")
+      (effects (font (size 0.6 0.6) (thickness 0.1))))
+    (property "Value" "N2" (at 0 3) (layer "F.Fab")
+      (effects (font (size 0.6 0.6) (thickness 0.1))))
+    (pad "1" smd rect
+      (at 0 0) (size 5 5)
+      (layers "F.Cu" "F.Paste" "F.Mask")
+      (net 2 "NET2")
+      (uuid "00000000-0000-0000-0000-0000000010b3")
+    )
+  )
+
+  (footprint "SamplePad:FCu"
+    (layer "F.Cu")
+    (at 2.5 27.5)
+    (uuid "00000000-0000-0000-0000-0000000010a4")
+    (property "Reference" "PBL" (at 0 -3) (layer "F.SilkS")
+      (effects (font (size 0.6 0.6) (thickness 0.1))))
+    (property "Value" "N2" (at 0 3) (layer "F.Fab")
+      (effects (font (size 0.6 0.6) (thickness 0.1))))
+    (pad "1" smd rect
+      (at 0 0) (size 5 5)
+      (layers "F.Cu" "F.Paste" "F.Mask")
+      (net 2 "NET2")
+      (uuid "00000000-0000-0000-0000-0000000010b4")
+    )
+  )
+
+  (gr_rect
+    (start 0.0 0.0)
+    (end 30.0 30.0)
+    (stroke (width 0.15) (type solid))
+    (fill none)
+    (layer "Edge.Cuts")
+    (uuid "00000000-0000-0000-0000-0000000010c1")
+  )
+)

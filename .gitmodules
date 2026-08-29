@@ -1,0 +1,21 @@
+[submodule "engine"]
+	path = engine
+	# The engine is a separate GPLv3 program in its own repository. Nothing under
+	# engine/ is tracked or distributed here — only this pointer.
+	url = https://github.com/LGAI-Research/PCBWorld-Engine.git
+	branch = main
+	shallow = true
+	ignore = dirty
+
+[submodule "agents/RAGEN"]
+	path = external/RAGEN
+	url = https://github.com/mll-lab-nu/RAGEN.git
+	ignore = dirty
+[submodule "agents/verl-agent"]
+	path = external/verl-agent
+	url = https://github.com/langfengQ/verl-agent.git
+	ignore = dirty
+[submodule "external/OrthoRoute"]
+	path = external/OrthoRoute
+	url = https://github.com/bbenchoff/OrthoRoute.git
+	ignore = dirty

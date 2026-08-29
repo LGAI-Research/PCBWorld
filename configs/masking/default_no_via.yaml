@@ -1,0 +1,21 @@
+# Strict condition-based action masking WITHOUT make_via (finish IS allowed).
+# For 1-layer boards where vias are physically invalid but finish should be
+# available. Counterpart to default_no_finish_no_via.yaml.
+
+name: default_no_via
+
+actions:
+  net_select:
+    when: {has_net: false, is_routing: false}
+
+  start_route:
+    when: {has_net: true, is_routing: false, net_fully_connected: false}
+
+  net_end:
+    when: {has_net: true, is_routing: false, net_fully_connected: true}
+
+  make_line:
+    when: {is_routing: true}
+
+  finish:
+    when: {is_routing: true}

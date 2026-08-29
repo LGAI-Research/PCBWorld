@@ -1,0 +1,61 @@
+# One-shot conda environment for CADAgent — single env for training, eval AND the
+# rule-based baselines (FreeRouting/KRT/OrthoRoute). Linux x86_64 / CUDA 12 primary.
+#
+#   conda env create -f environment.yml        # or: bash tools/setup/setup_all.sh
+#
+# Python deps come exclusively from requirements.txt (the compiled lock of the
+# pinned pyproject.toml). Conda supplies the interpreter, the C++ router build
+# toolchain, and the baselines' system toolchains (JVM / Rust).
+# Not covered here (see tools/setup/setup_all.sh + README):
+#   kicad_rl_router.so build · Freerouting jar · KRT/OrthoRoute checkouts · pcbnew.
+name: cadagent
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  # --- C++ router build toolchain (engine/build_rl_router.sh) ---
+  # KiCad is C++20 and uses concepts, so it needs GCC 10 or newer, and cmake
+  # would otherwise pick the host's /usr/bin/c++ (still GCC 9 on supported LTS
+  # releases). Pinned to 15.2: KiCad 9.0.8 does not build with GCC 16, whose
+  # sysroot pulls <sys/types.h> into a translation unit where the glibc major()
+  # macro then collides with a local variable in dxf_import_plugin.cpp.
+  - gcc_linux-64=15.2.*
+  - gxx_linux-64=15.2.*
+  # The sysroot must be pinned too. Left free, conda resolves the glibc 2.17
+  # sysroot, whose headers make the compiler's own math.h shim redeclare
+  # std::isinf/isnan and fail every translation unit that includes <cmath>.
+  - sysroot_linux-64=2.28
+  - cmake
+  - ninja
+  - pkg-config
+  - boost
+  - wxwidgets<3.3
+  # zlib and expat provide the development headers KiCad's CMake looks for
+  # (find_package(ZLIB) / EXPAT). The runtime-only libzlib that arrives as a
+  # transitive dependency is not enough.
+  - zlib
+  - expat
+  - ngspice
+  - occt
+  - protobuf
+  - libprotobuf
+  - glew
+  - glfw
+  - glm
+  - libgit2
+  - swig
+  - nng
+  - unixodbc
+  - libsecret
+  # GL headers + loader for the wx/GL build (libglvnd). Do NOT substitute the
+  # mesa-libgl-cos7-* packages: they are CentOS 7 builds and pull in a glibc
+  # 2.17 sysroot, which then makes the compiler's math.h shim redeclare
+  # std::isinf/isnan and breaks every translation unit that includes <cmath>.
+  - libgl-devel
+  - libglx-devel
+  # --- rule-based baselines toolchain ---
+  - openjdk>=21   # FreeRouting JVM
+  - rust          # KRT grid_router.so rebuild against the host glibc
+  - pip
+  - pip:
+      - -r requirements.txt

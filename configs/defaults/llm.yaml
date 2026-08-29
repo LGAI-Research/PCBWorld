@@ -1,0 +1,61 @@
+# LLM eval defaults  →  configs.loader.schema.LLMConfig (nested: env/boards/prompt/
+# rollout/vllm/api — mirrors the eval/args.py CLI groups one-for-one).
+#
+# The LLM eval program (methods/llm_agent/rollout/cadagent.py + the interactive REPL) is a
+# separate program from RL train/eval: it evaluates an LLM, not an RL checkpoint.
+# Its env-core knobs use LLM-eval's own default *values* (e.g. max_steps 20 vs
+# RL's 200). eval/args.py reads these as its argparse defaults, and the flags are
+# generated from the schema via configs.loader.cli.add_dataclass_args (style=underscore).
+
+env:                      # eval/args.py add_env_args group
+  max_steps: 20
+  masking_rule: strict
+  reward_rule: grpo_final
+  corner_mode: 0
+  state_format: sexpr     # LLM-only: observation serialization (sexpr|xml)
+  via_penalty: null       # override reward-config via_penalty (null = use config)
+  reward_noise_std: 0.0
+  emit_drc_tokens: true   # inverted CLI: --no_drc_tokens
+  use_yaml_drc_fallback: false
+  drc_config_path: null   # required (no implicit default) when use_yaml_drc_fallback is on
+
+boards:                   # eval/args.py add_boards_args group
+  boards_order: single
+  boards_json: null         # multi-board mode requires an explicit --boards_json
+  boards_difficulty: easy
+  boards_split: test
+
+prompt:                   # eval/args.py add_prompt_args group
+  prompt_version: v1      # choices are dynamic (CADAGENT_PROMPT_VERSIONS)
+
+rollout:                  # eval/args.py add_rollout_args group
+  env_num: 1
+  seed: 0
+  rollout_episodes: 5
+  num_cpus_per_worker: 1.0
+  history_length: 0
+  temperature: 0.7
+  max_new_tokens: 256
+  dump_dir: null
+  early_stop_no_progress: 0
+
+vllm:                     # eval/args.py add_llm_args group
+  model_path: Qwen/Qwen2.5-VL-3B-Instruct
+  tensor_parallel_size: 1
+  gpu_memory_utilization: 0.95
+  max_model_len: 4096
+  enable_prefix_caching: false
+  enable_chunked_prefill: false
+  guided_grammar: null
+
+api:                      # eval/args.py add_api_args group
+  api_provider: openai
+  api_model: null
+  api_key: null
+  api_rpm: null
+  api_itpm: null
+  api_otpm: null
+  api_max_retries: 8
+  api_prompt_cache: false
+  api_reasoning_effort: null
+  api_disable_thinking: false

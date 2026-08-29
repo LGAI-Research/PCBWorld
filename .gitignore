@@ -1,0 +1,145 @@
+examples/
+!external/verl-agent-patch/examples/
+
+# Python
+# uv.lock: project uses `uv pip compile pyproject.toml -> requirements.txt`, not `uv sync`.
+uv.lock
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Build artifacts
+# anchored: the top-level build dir only (tools/build/ is tracked source)
+/build/
+build_rl/
+build_rl_dev/
+CMakeFiles/
+
+# AI tool configs
+.omc/
+**/AGENTS.md
+# Local AI-assistant configs stay ignored.
+CLAUDE.md
+CLAUDE.local.md
+AGENT.md
+.cursorrules
+.claude/
+
+# Training data
+datasets/
+!configs/datasets/
+!configs/datasets/**
+configs/datasets/local/
+datasets_local/
+
+# Training artifacts
+checkpoints/
+checkpoints_*/
+tb_logs/
+
+# Test output
+tests/output/
+
+# Demo output
+output/
+outputs/
+
+# KiCad lock files
+*.lck
+
+# KiCad autosave files
+_autosave-*
+
+# KiCad local settings
+*.kicad_prl
+
+# KiCad history folder
+tests/fixtures/.history/
+
+# KiCad project files
+*.kicad_pro
+# ...except test fixture pros: the engine load contract requires a .kicad_pro
+# next to every board, so fixture boards ship with their pair (a clone without
+# them fails every engine test loudly).
+!tests/fixtures/*.kicad_pro
+!tests/fixtures/**/*.kicad_pro
+
+# Experiment logs & results
+logs/
+experiments/
+# ...but experiments/ at repo root holds TRACKED reproduction recipes, not outputs.
+# Outputs go to var/. Keep ignoring any nested experiments/ dir elsewhere.
+!/experiments/
+!/experiments/**
+# ...but the broad un-ignore above also re-includes caches under experiments/ — re-ignore them.
+/experiments/**/__pycache__/
+/experiments/**/*.py[cod]
+# tools/experiments/ is a tracked manual-tools dir (batch preflight etc.), not an outputs dir.
+!/tools/experiments/
+
+# Local cache (e.g. kicad-cli pcb upgrade artifacts)
+cache/
+
+# wandb log
+wandb/
+
+# pcbdataset history
+pcb_dataset/.history/
+
+# PCB dataset directories (local, not tracked)
+dataset/
+pcb_dataset/
+pcb_dataset_*
+
+# Scratch code: not reproducible and imported by nothing. Generated data and
+# results belong in var/ instead.
+sandbox/
+
+# Ad-hoc run outputs (routed boards, eval artifacts, checkpoints, tensorboard).
+runs/
+
+# Vendored rule-based-router release binary — Freerouting jar (~66 MB, not source).
+# Auto-downloaded by methods/baselines/rule_based/scripts/setup_env.sh; pinned via docs.
+external/freerouting/*.jar
+# Pinned upstream checkout made by tools/setup/fetch_baselines.sh (KRT_ROOT)
+external/KiCadRoutingTools/

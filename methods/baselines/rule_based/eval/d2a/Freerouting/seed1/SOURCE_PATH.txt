@@ -1,0 +1,4 @@
+source_root=cadagent_eval_rerun
+source_algo=freerouting_via1x_seed1
+source_dir=cadagent_eval_rerun/synth_2L_v2_test/freerouting_via1x_seed1
+n_boards=128

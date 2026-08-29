@@ -1,0 +1,6 @@
+{
+  "d2a": {"boards_json": "configs/datasets/d2a.json", "difficulty": "easy",   "boards_split": "test"},
+  "d3a": {"boards_json": "configs/datasets/d3.json", "difficulty": "easy",   "boards_split": "test"},
+  "d3b": {"boards_json": "configs/datasets/d3.json", "difficulty": "medium", "boards_split": "test"},
+  "d3c": {"boards_json": "configs/datasets/d3.json", "difficulty": "hard",   "boards_split": "test"}
+}

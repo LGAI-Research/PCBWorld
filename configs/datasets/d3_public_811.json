@@ -1,0 +1,3580 @@
+{
+  "board_filename": "processed_v9_guide_v3.kicad_pcb",
+  "_split_meta": {
+    "ratio": [
+      0.8,
+      0.1,
+      0.1
+    ],
+    "stratify_by": [
+      "tier",
+      "layers",
+      "wire_type"
+    ],
+    "wire_type_rule": "W1_uniform (1 tw), W2_dual (2 tw), W3-4_multi (3-4 tw), W5+_rich (>=5 tw)",
+    "wire_type_source": "processed_v9_guide_v3.kicad_pro → net_settings.classes[*].track_width",
+    "assignment": "sort by (pins,nets,sample); i%10==0→test, 1→val, else→train",
+    "rare_stratum_min": 3,
+    "source_csv": "${CADAGENT_DATA_ROOT}/pcbench/exacad_sorted/pcb_characteristics_exacad_sorted.csv",
+    "source_dir": "${CADAGENT_DATA_ROOT}/pcbench/exacad_sorted",
+    "easy_rows": 100,
+    "medium_pin_threshold": 100,
+    "wire_parse_errors": 0,
+    "excluded_samples": [
+      "hackaday_esp-14_power_meter__autosave-esp-14"
+    ]
+  },
+  "_stratum_stats": {
+    "easy/2L/W1_uniform": {
+      "n": 62,
+      "train": 48,
+      "val": 7,
+      "test": 7
+    },
+    "easy/2L/W2_dual": {
+      "n": 23,
+      "train": 17,
+      "val": 3,
+      "test": 3
+    },
+    "easy/2L/W3-4_multi": {
+      "n": 12,
+      "train": 8,
+      "val": 2,
+      "test": 2
+    },
+    "easy/2L/W5+_rich": {
+      "n": 2,
+      "train": 2,
+      "val": 0,
+      "test": 0
+    },
+    "easy/4L/W2_dual": {
+      "n": 1,
+      "train": 1,
+      "val": 0,
+      "test": 0
+    },
+    "medium/2L/W1_uniform": {
+      "n": 98,
+      "train": 78,
+      "val": 10,
+      "test": 10
+    },
+    "medium/2L/W2_dual": {
+      "n": 80,
+      "train": 64,
+      "val": 8,
+      "test": 8
+    },
+    "medium/2L/W3-4_multi": {
+      "n": 77,
+      "train": 61,
+      "val": 8,
+      "test": 8
+    },
+    "medium/2L/W5+_rich": {
+      "n": 28,
+      "train": 22,
+      "val": 3,
+      "test": 3
+    },
+    "medium/4L/W1_uniform": {
+      "n": 1,
+      "train": 1,
+      "val": 0,
+      "test": 0
+    },
+    "medium/4L/W2_dual": {
+      "n": 1,
+      "train": 1,
+      "val": 0,
+      "test": 0
+    },
+    "medium/4L/W3-4_multi": {
+      "n": 1,
+      "train": 1,
+      "val": 0,
+      "test": 0
+    },
+    "hard/2L/W1_uniform": {
+      "n": 68,
+      "train": 54,
+      "val": 7,
+      "test": 7
+    },
+    "hard/2L/W2_dual": {
+      "n": 59,
+      "train": 47,
+      "val": 6,
+      "test": 6
+    },
+    "hard/2L/W3-4_multi": {
+      "n": 75,
+      "train": 59,
+      "val": 8,
+      "test": 8
+    },
+    "hard/2L/W5+_rich": {
+      "n": 54,
+      "train": 42,
+      "val": 6,
+      "test": 6
+    },
+    "hard/4L/W1_uniform": {
+      "n": 4,
+      "train": 2,
+      "val": 1,
+      "test": 1
+    },
+    "hard/4L/W2_dual": {
+      "n": 5,
+      "train": 3,
+      "val": 1,
+      "test": 1
+    },
+    "hard/4L/W3-4_multi": {
+      "n": 12,
+      "train": 8,
+      "val": 2,
+      "test": 2
+    },
+    "hard/4L/W5+_rich": {
+      "n": 14,
+      "train": 10,
+      "val": 2,
+      "test": 2
+    },
+    "hard/8L/W5+_rich": {
+      "n": 1,
+      "train": 1,
+      "val": 0,
+      "test": 0
+    }
+  },
+  "easy": {
+    "train": [
+      "0005_AVR-Playground_hello_world",
+      "0006_raspberry_pi_pullup_button_pullup_shutdown_button",
+      "0007_raspberry_pi_pullup_button_pullup_shutdown_button(revB)",
+      "0008_CapPCB_CapPcb",
+      "0009_SmartLaserCO2-PCB_WaterCool",
+      "0010_SmartLaserCO2-PCB_OptAdjust",
+      "0011_PixyWirelessShield_Shield PIXY",
+      "0012_kitspace_ir_sensor",
+      "0013_crossover-schiit-stack_xover4schiit",
+      "0014_hardware-designs_m-trigger",
+      "0015_kitspace_tt_opt101_module_b1",
+      "0016_breakout-boards_avr-isp-x2",
+      "0019_CubeSAT-Reaction-Wheel_Edison_Motor_Servo",
+      "0020_Cherry-Mx-Bitboard_Cherry Mx Bitboard",
+      "0022_OpenVNAVI_motor unit",
+      "0023_hardware-designs_si7021-board",
+      "0024_memsarray_mems_modules",
+      "0026_PCB_constant_current_ac_hv",
+      "0027_ID-FIX_scanConnect",
+      "0028_hardware-designs_c-trigger",
+      "0029_espeverywhere__autosave-espeverywhere_breakout",
+      "0031_kitspace_Potentiometer_mount_4LED",
+      "0033_breakout-boards_swd-to-wires",
+      "0034_NavigationThing_NavigationThingBacklight",
+      "0035_KiCad-Like-a-Pro-Tutorial_rf24-breakout-v1",
+      "0036_nRF24breakoutBoard_nRF24-breakout",
+      "0037_hardware-designs_spsgrf-board",
+      "0038_PCB_serie_led_strip",
+      "0039_drawduino_drawduino",
+      "0041_FogDrive_attiny45_slim",
+      "0042_starsynctrackers_reset_switch",
+      "0044_blink-errr_blink-errr",
+      "0045_retroreflectors_TANGOFLOCK",
+      "0046_mearm-base-pcb_ServoPCB",
+      "0047_LoLin_Designs_LoLin",
+      "0048_MySRaspiGW_MySRaspiGW",
+      "0049_MySRaspiGW_MySRaspiGW_PA_LNA",
+      "0052_breakout-boards_50-to-100",
+      "0053_mechkeys_lfk78-jtag",
+      "0054_induction-hob_temperature-sensor",
+      "0055_dustbox_Dustbox",
+      "0056_nrf2rfm69_nrf2rfm69",
+      "0057_tepmachcha_tepmachcha",
+      "0058_scimpy_powersupply",
+      "0059_marlin-neopixel-bridge_ATtiny85_Marneo",
+      "0060_Paperino_HW_paperino_breakout",
+      "0061_kitspace_temp_breakout",
+      "0062_I2CTempsensor_sensors",
+      "0065_DiscoDanceFloorV1_BusTerminator",
+      "0066_ESP8266-WS2811-LEDs_ws2811controller_panels",
+      "0067_radio_saw_dcc6c",
+      "0068_AVR-ISP_pogo-plug_1.27mm_AVR-ISP_pogo-plug_1.27mm",
+      "0069_C-BISCUIT_crowbar",
+      "0070_Raspberry-Pi-Soft-Power-Controller_Switching Supply TPS563208 MCI",
+      "0071_hackyflasher_Flasher",
+      "0072_esp8266_wi07_3_adapter_esp",
+      "0073_z2amiller_sensorboard_programmer",
+      "0074_kitspace_12V5A_breakout",
+      "0075_RPi-ATtiny85-Programmer_rpi_attiny85_programmer",
+      "0076_breakout-boards_usb-5v-3v3",
+      "0077_HaveSome_PCB_HaveSomePCB",
+      "0078_Hardware_Playground_buck_led_driver",
+      "0079_Inkjet_InkjetBreakout",
+      "0080_kitspace_RPi_shield",
+      "0083_DustSensorShield_DustSensorShield",
+      "0084_kitspace__autosave-nunchuk_breakout",
+      "0085_mini-whip_mini-whip-power-feed",
+      "0088_DA_Lamp_attiny44a_servo_i2c",
+      "0089_cobwebb-junction-box_CobwebbJunctionBox",
+      "0090_keyboard_converter_adapter_ibm4704_converter_adapter_ibm4704",
+      "0092_DerKnopf_power-supply",
+      "0093_kitspace_nunchuk_breakout",
+      "0095_PsuFanController_FanController",
+      "0096_karabas-nano_wifi_revA",
+      "0097_bristle_bot_light_follow_bristle_bot",
+      "0099_SparkSwitch_SparkProtectionSwitch"
+    ],
+    "val": [
+      "0002_rufs_simple_kicad_schema_and_pcb_v1",
+      "0003_kitspace_grove_adaptor",
+      "0018_Hardware_Playground_hy_adapter",
+      "0025_kitspace_hum_temp_sensor",
+      "0030_kitspace_sop8breakout",
+      "0043_breakout-boards_swd-and-uart",
+      "0051_MySRaspiGW_MySRaspiGW_Pimoroni",
+      "0063_stlinkv2_breakout_stlink_breakout",
+      "0082_firefly-jar_solar_lamp",
+      "0091_rufs_dra818v_breakout_board",
+      "0094_kitspace_gas_sensor",
+      "0100_smt-zvs-driver_IH10-mc"
+    ],
+    "test": [
+      "0001_rufs__autosave-simple_kicad_schema_and_pcb_v1",
+      "0004_S1G-Mod_JST_Adapter",
+      "0017_Blink-Eras_AVR_ISP_Pogo",
+      "0021_RPi-PWM-Fan-interface_RPi PWM Fan interface",
+      "0032_kitspace_Potentiometer_mount_8LED",
+      "0040_oshtimer_transponder",
+      "0050_MySRaspiGW_MySRaspiGW_PA_LNA_Pimoroni",
+      "0064_kicad-guitar-preamp_Preamp-Instructables",
+      "0081_everled_everled",
+      "0086_BB-PWR-8009_BB-PWR-8009_revA",
+      "0087_solar-lanterns_proto1",
+      "0098_MSGEQ7-Breakout-Board_MSGEQ7_Breakout_Board"
+    ]
+  },
+  "medium": {
+    "train": [
+      "0105_filament_extruder_sensor",
+      "0107_fingerprint-with-esp32_quet van tay",
+      "0110_NodeMcu-v3-LiPoly-LiIon-Backpack_NodeMcuLiPolyBackpack",
+      "0111_yamsek.kicad_i2c_bridge_secondary",
+      "0112_kicad_bbb-melzi",
+      "0113_maytal_Maytal",
+      "0114_POV_POV",
+      "0115_4N35-TTL-Serial-Optoisolator_4N35-TTL-Serial-Optoisolator",
+      "0117_Hardware-done-with-kicad_AVRlearn",
+      "0118_LimitSwitchesPlugin_LimitSwitchesPlugin",
+      "0119_rotorcontrol_nanomount",
+      "0120_hardware-designs_solar-harvester",
+      "0121_OpenHardwareExG_ActiveElectrode_OpenHardwareExG_ActiveElectrode",
+      "0122_Usb-Serial-Breakout-Cp2102_cp2102",
+      "0123_uext-esp32_UEXT_ESP32",
+      "0124_nixie-clock_ab18x5-breakout",
+      "0125_kicad-projects_ili9341-breakout",
+      "0126_mini-whip_mini-whip",
+      "0127_NeoWall_NeoWall",
+      "0128_kitspace_4_switch_array",
+      "0131_busblaster-to-swd_busblaster-to-swd",
+      "0132_TPS63001-Breakout_TPS63001 Breakout 25x25",
+      "0133_esp-leipa_esp-12",
+      "0134_continuity-tester_continuity-tester",
+      "0135_tinyFISH_tinyBRUSH",
+      "0136_navelino-leaf_navelino-leaf",
+      "0137_hardware-designs_soil-moisture-sensor",
+      "0138_Solare-BQ24210_Solare-BQ24210",
+      "0139_HillhacksLantern_LEDLantern",
+      "0140_eBUS-Adapter_Groeger",
+      "0141_TPS63001-Breakout_TPS63001 Breakout",
+      "0144_ottawa-badges-2016_ottawa-badge-tagger-2016",
+      "0145_BML-Badges_BML_01",
+      "0146_pulse_v1_pulse",
+      "0150_ReST32_ReST SD-Module",
+      "0151_BB-PWR-8113_BB-PWR-8113_revA",
+      "0152_mechkeys_isp",
+      "0154_Arduino-Theremin_arduino-theremin-v1",
+      "0155_ToslinkCNC_Toslink PlanetCNC ECO shield",
+      "0156_esp12-breakout_ESP12Breakout",
+      "0157_DIYDAC_DIYDAC",
+      "0158_opentilt_opentilt1",
+      "0159_CAL430FR_CAL430F_watch",
+      "0160_BML-Badges_BML-Badges",
+      "0161_spisolator_spisolator",
+      "0162_AS5043-Encoder_sensor-board",
+      "0163_kika-in-space_analog-test-board",
+      "0164_yamsek.kicad_i2c_bridge_primary",
+      "0165_snappi-zero_snappi-zero",
+      "0166_Phased-Array-Microphone-using-FPGA_SateliteMicrophone",
+      "0167_esp8266_envmonitor_environment-monitor-1.2",
+      "0168_ABOVISP_ABOVISP",
+      "0169_hardware-designs_energy-harvester",
+      "0171_esp8266-external-temp-sensor_external-temp-sensor",
+      "0172_Wkaku_wkaku",
+      "0174_sensorboard_DiffIR",
+      "0175_Youyue-858D-plus-FAN-speed-mod_youyue-858d-plus-fan-speed-mod",
+      "0176_BirdAttractor_BirdAttractor_RevA",
+      "0178_gamelights_leds",
+      "0179_silverduino-board_kicad",
+      "0180_beer-gauge_sensorboard",
+      "0181_kitspace_pmt_combiner",
+      "0184_kitspace_push-on-hold-off",
+      "0185_HES-V2__autosave-hes",
+      "0186_HES-V2_hes",
+      "0187_esp8266_envmonitor_environment-monitor",
+      "0188_esp8266_envmonitor_environment-monitor-1.4",
+      "0189_AnalogThermometer_AnalogThermometer",
+      "0190_LAUNCHXL-F28027-isolation-PCB_project1",
+      "0193_Teensy-Hats_Teensy-7-Segment-Hat",
+      "0196_kitspace_level_shifter",
+      "0197_RFM69HCW_ATSHA204A_Breakout_RFM69HCW_ATSHA204A_Breakout",
+      "0198_RoBoC_CameraAdaptor",
+      "0199_kitspace_USB-LED-Otter",
+      "0200_rufs_spv1040_power_controller",
+      "0201_hardware-designs_nixie-power",
+      "0202_kitspace_filaSens",
+      "0203_MOD-MPU9150_mod-mpu9150",
+      "0204_RFM69-PowerMonitor_RFM69-PowerMonitor",
+      "0205_atmel-programmer_atmel_programmer",
+      "0206_rgb-strip-controller__autosave-rgb-strip",
+      "0207_cap-soil-moisture-v2_soil-moisture2x4",
+      "0208_USB-TypeC-breakout-board_USB-TypeC-breakout-board",
+      "0209_beast-phat_beast-phat",
+      "0210_MAVRIC_Hardware_SoilBoard",
+      "0211_kitspace_Heltec_Node",
+      "0212_kitspace_trans_switch_volt_amp",
+      "0213_kika-in-space_DS8500",
+      "0215_LED-grid-8x8_LED grid 8x8",
+      "0216_microphone_preamp",
+      "0217_esp8266_link_test_esp_micro85-only",
+      "0218_kitspace_GPSMux",
+      "0219_tbd_tbd",
+      "0220_makerspace-emonth_resistor_board",
+      "0224_one-shift-register_one-shift-register",
+      "0225_mac-pro-conversion_front-panel-power-adapter",
+      "0226_beryl_rain_beryl_rain",
+      "0227_PWRmeter_PWMeter",
+      "0228_yamsek.kicad_matrix_attiny861a",
+      "0229_Minitel_video_output_stage",
+      "0230_Retro1DecodingModules_AddressDecoderModule",
+      "0231_Neptune-Hardware_DataAcquisitionBoard",
+      "0232_ATtiny461Breakout_ATTiny461DevBoard",
+      "0233_KiCad-LTC6802-2_main",
+      "0234_hm-mod-rpi-rtc_hm-mod-rpi-rtc",
+      "0235_miniboard-opamp_miniboard-opamp",
+      "0236_sv650sds_sds_tool",
+      "0237_Paperino_HW_Paperino_shield",
+      "0238_usb2serial-CH340G_USB2TTL-CH340G",
+      "0240_ESP-12-breakout_ESP12E-breakout",
+      "0241_FT231X_breakout_FTDI_FT231XS-U_Breakout",
+      "0242_photon_Sprinkler_sprinkler",
+      "0243_sonic3_feram_adapter_sonic3_feram_adapter",
+      "0246_LongPixel_AnalogDriverMini",
+      "0247_denbit_basic",
+      "0248_PGA2311_pga2311",
+      "0250_JLink-SWD_JLink-SWD",
+      "0254_kitspace_esp8266",
+      "0255_audio_relay_input_switch_relay_switch",
+      "0256_sms-cart-32k_cart",
+      "0257_xwhatits-capsense-controller_solenoid-driver",
+      "0258_kitspace_ESP8266-PowerMonitor",
+      "0259_kitspace_Potentiometer_mount_16LED",
+      "0260_NiMH-Charger_NiMH Charger",
+      "0261_Practicas-Curso-Kicad_Salguero_Federico2",
+      "0262_low-power-counter_lpcounter",
+      "0263_kitspace_led_driver",
+      "0265_bobc_LCD-panel-adapter-lvc",
+      "0266_m2-electronics_m2pa-tiny",
+      "0268_m2-electronics_m2pa-instrument",
+      "0269_m2-electronics_m2pa-m3mount",
+      "0270_kitspace_BQ25570_Harvester",
+      "0271_devttys0_IRis",
+      "0272_tinymuseum_museum",
+      "0273_omega-dock-new_omega-dock-new",
+      "0274_kitspace_OpenSpritzer_1.3",
+      "0275_roomba-ESP12E_roomba-esp",
+      "0276_nan-15_top-plate",
+      "0278_1-Wire-Wing-pcb_1-Wire_Wing",
+      "0279_powerfreq-hardware_powerfreq",
+      "0280_APC_AtariPunkConsole",
+      "0281_SynthDrumTrigger_Synth Drum Trigger",
+      "0282_WordClock_v2.0_WordClock_v2",
+      "0284_kitspace_PIS",
+      "0285_kitspace_Lcr_addon",
+      "0289_supply-ldo-adj-single_supply-ldo-adj-single",
+      "0290_m2-electronics_m2rl",
+      "0291_C-BISCUIT_buck-reg-5v",
+      "0292_sb-serial-usb_ch340",
+      "0293_pcb-ks0108-128x64-glcd_circuit",
+      "0294_esp8266-12f-board_esp8266",
+      "0295_arduino_arduino leds",
+      "0296_cdm324_backpack_cdm324",
+      "0297_scimpy_crossover",
+      "0298_kitspace_tt_nano_HAT_b1",
+      "0299_gpsclock_clock",
+      "0300_type5_type5",
+      "0301_flatpack2-adapter_EltekFlatpack2",
+      "0302_disco-dongle_DiscoDongle",
+      "0303_ESP-Breakout_ESP-Breakout",
+      "0304_gepetto_circuito",
+      "0305_raspican_raspican",
+      "0308_LED-Square_PT4115_LED-Square_PT4115",
+      "0309_ESPLux_Board",
+      "0311_soil-moisture-sensor-analog_analog-moist-sensor",
+      "0312_S4A-Mini-board_s4a-mini-board",
+      "0314_nikon_gps_nikon_gps",
+      "0315_RASPMINI_RASPmini",
+      "0316_kicad-workshop_fancyboard",
+      "0317_DerKnopf_led-ring",
+      "0318_kitspace_hbridge_driver",
+      "0319_magic-table_etch-a-sketch_cyclone",
+      "0320_kitspace_Arduino_uno_sheild",
+      "0321_polearm-weapon_rod",
+      "0322_USBtin_USBtin",
+      "0323_WemosLoraTracker_wemosGPSrfm",
+      "0324_nodemcu-backstage_NodeMCU Backstage",
+      "0325_nanoSwinSidC_nanoSwinSidC",
+      "0326_Atmel-ICE-Header-Adapter_ice header adapter pcb",
+      "0327_SMDBreakouts_smd_breakout",
+      "0331_Planet_Vocab",
+      "0333_gwurrbus_gwurrbus-relay",
+      "0334_esp-serial-terminal_esp-com",
+      "0335_MAVRIC_Hardware_ArduinoPracticeBoard",
+      "0336_AVR-ISP_level-shifter_AVR-ISP_level-shifter",
+      "0338_shutter_Shutter V4",
+      "0339_TTNEnschedeMote_ArduinoNanoRN2483",
+      "0340_kitspace_Brk40p",
+      "0342_hardware-designs_cc430-debug-board",
+      "0343_clock_lcdb4",
+      "0344_mavbridge_mavbridge",
+      "0345_Paperino_HW_paperino_module",
+      "0346_ESP32-Module-Breakout_ESP32S-breakout",
+      "0347_kitspace_peltier",
+      "0348_Eggbot-Spherebot-polargraph-Controller_eggbot-spherebot-polargraph-controller",
+      "0349_kitspace_8_switch_array",
+      "0350_fuzzer_fuzzer",
+      "0352_usb_rs232c_usb_rs232c_rev_a",
+      "0353_RC2014_RC2014 IDE",
+      "0354_rc2014_bank_switcher_z80_cpm_mmu",
+      "0355_imfr-schematics_Telescopio",
+      "0357_kitspace_dynamixel_shield",
+      "0358_esp12-appliance_mod_esp12-appliance-mod",
+      "0361_phone_rtty_interface_phone_rtty_rev_b",
+      "0362_prog-cc-100mA_prog-cc-100mA",
+      "0363_OpenBot_openbot",
+      "0364_scimpy_volumebuffer",
+      "0365_DasBlinkinput_Das Blinkinput",
+      "0366_ReST32_ReST RRD-FGC-Adapter",
+      "0367_pcb-usb-ft245r-parallel-adapter_pcb-usb-ft245r-parallel-adapter",
+      "0370_Biscay_Blueeye_mcu",
+      "0371_Minitel_bbb-adapter",
+      "0372_retrocon_bbb-adapter",
+      "0373_badge2016_Badge_init",
+      "0374_light-painting-wand_light-wand",
+      "0375_eurorack_headphones_eurorack_headphones",
+      "0376_cat-trainer_teensy_base_pcb",
+      "0377_Hardware_Playground_pro_mini",
+      "0378_airqualitystation_hardware",
+      "0379_kicad-esp8266-led-shld_ESP8266_LED_shld",
+      "0380_Minitel_driver_board",
+      "0381_retrocon_driver_board",
+      "0382_LT3652EvalBoard_LT3652EvalBoard",
+      "0383_FRM16_Relay_Module_I2C_Controller_relay_controller",
+      "0384_DerKnopf_digi-pot",
+      "0385_rgb-led_rgb-led-v2",
+      "0386_onion2-breakout_onion2 breakout",
+      "0387_RC2014_RC2014 RAM"
+    ],
+    "val": [
+      "0103_LizardBoard_lizard",
+      "0106_IR-Transponder-ATTiny85-v2_Transponder_v2",
+      "0109_kitspace_CH330",
+      "0116_kitspace_power_supply",
+      "0130_Starburst-One_alpha",
+      "0143_kitspace_solenoid_driver",
+      "0148_LED_port-status_LED_port-status-CA-CC-combo",
+      "0153_6N137-TTL-Serial-Optoisolator_6N137-TTL-Serial-Optoisolator",
+      "0177_kitspace_bbq10breakout",
+      "0183_KiCad-Like-a-Pro-Tutorial_proj2-sevensegment",
+      "0192_CubeSAT-Reaction-Wheel__autosave-GPIO to motor",
+      "0194_kitspace_postcard",
+      "0221_akuhei_akuhei",
+      "0223_Teensy-3.5-Breakout-Boaard_PropShield_Uno",
+      "0244_VM-sensor-PT1000_vm-sensor-pt100",
+      "0249_RN2483shield_RN2483shield",
+      "0253_ezusb-logicanalyzer_cypress_logic_analyzer",
+      "0267_m2-electronics_m2pa",
+      "0277_kitspace_bobbycar",
+      "0287_OLD-Stepper-motor-board-design-project_Stepper motor driver",
+      "0288_raspberrypi-3-usb-hub_usb_hub",
+      "0307_LVDS2TMDS_LVDS2TMDS",
+      "0313_Teensy-Hats_Teensy-LCD-LiDAR-Hat",
+      "0330_thegrid_pole",
+      "0332_Hardware_Playground_wifi_lights",
+      "0341_vatx_vatx",
+      "0356_kitspace_ideal_diode",
+      "0360_PCB_small_halogen_replacement",
+      "0369_Inkjet__autosave-InkjetDriver"
+    ],
+    "test": [
+      "0101_DerKnopf_remote-control",
+      "0102_ponyser-pcb_Ponyser",
+      "0104_zx-sizif-512-wifi_sizif512-wifi",
+      "0108_BB-PWR-3608_BB-PWR-3608_revA",
+      "0129_pi_plant_MCP3002",
+      "0142_kitspace_12_24_boost_converter",
+      "0147_LED_port-status_LED_port-status-CA",
+      "0149_smt-zvs-driver_IH10-sl",
+      "0173_sensorboard_DiffIR.kicad_pcb_narrow",
+      "0182_Teensy-Hats_Temperature-Monitor-Hat",
+      "0191_deskbot_breakout",
+      "0195_kitspace__autosave-postcard",
+      "0214_hillhacks2016_badge_badge1",
+      "0222_xwhatits-capsense-controller_model-f-3178-adaptor",
+      "0239_bpnode-bb_BPnode-BB",
+      "0245_kitspace_DIY_detector",
+      "0251_kitspace_hp_led_switch",
+      "0252_apa102lantern_apa102-lantern-side",
+      "0264_Practicas-Curso-Kicad_Ejercicio_2",
+      "0283_atmegax8-protoboard_atmegax8-protoboard",
+      "0286_breakout-boards_esp8266-jtag",
+      "0306_pcb-ice40-vga_VGA expansion",
+      "0310_rufs_smart_psu",
+      "0328_SMDBreakouts_smd_breakout_quad",
+      "0329_NightClock_ESPBoard",
+      "0337_rfidBoard_rfid",
+      "0351_ESP07-Breakout_ESP07-Breakout",
+      "0359_kitspace_tt_nano_HAT_b2",
+      "0368_Inkjet_InkjetDriver"
+    ]
+  },
+  "hard": {
+    "train": [
+      "0393_boards_shift-register-demo-v2",
+      "0395_Arduino_Lipo_Storage_Discharger_Lipo_Storage_Discharger",
+      "0397_wt-rpm_C.H.I.P",
+      "0398_two-daisy-chained-shift-registers_two-shift-registers",
+      "0399_blinky-badge_blinky",
+      "0401_Hypfer-RGB-W-LED-Controller_led_strip_controller",
+      "0403_Mini-Ultra-8-MHz_RS-MINI-ULTRA-8M",
+      "0404_Omega2-mini-dock_Omega2 mini-dock",
+      "0405_dust_sensor_dust_sensor",
+      "0406_QRPCard_QRPCard",
+      "0407_MAGFest-2017-Swadges_magfest_badges",
+      "0408_LoRaCatTrack_GPSLoRa",
+      "0409_nextbusclock_NextBusClockV1",
+      "0410_Open-Source-Power-Supply_PowerSupply_PCB",
+      "0411_R1002_R1002",
+      "0413_bmw-ibus-bluetooth_bmw_bt_cdcemu_analog",
+      "0414_tessel-ice40__autosave-project",
+      "0415_pcb-covox-amp_pcb-covox-amp",
+      "0416_kitspace_beehive",
+      "0418_AVR-ZIF-Programmer_AVR-ZIF-Prog",
+      "0419_basic_esp_board_basic_esp_board",
+      "0420_rufs_aprs_tracker",
+      "0422_Kefersender_UKW TX",
+      "0423_induction-hob_temperature-sender",
+      "0424_rf-biscuit_rf_biscuit",
+      "0427_vdcmon_vdcmon",
+      "0428_espeverywhere_espeverywhere",
+      "0429_R1007_R1007",
+      "0430_bldc-gimbal-1d_gimbal-board",
+      "0431_bldc-gimbal-1d_r1_gimbal-board",
+      "0432_RaspberryPi-PoE_PoELLi_PI",
+      "0433_ATmega32_ExploreUltraAvrDevKit_40pin_AVRMCU",
+      "0434_Prototyping_Workshop_Prototyping_PCB",
+      "0435_filament_extruder_extruder",
+      "0436_raspberry-pi-rfm69_rfm69-rpi",
+      "0437_ReST32_combined",
+      "0438_E202VAR-Natural-Radio-Receiver_e202var-vlf-radio-receiver",
+      "0439_scimpy_amp",
+      "0440_Starling_Starling_V1",
+      "0441_kitspace_spike_n_hold",
+      "0442_MAPone_MAP_append",
+      "0443_MAPone_MAPone",
+      "0444_audprog_audprog_v2",
+      "0445_Amiga-A1012-PCB_Amiga-A1012",
+      "0447_thegrid_thegrid",
+      "0448_uedaino_uedaino",
+      "0452_ipod-serial-adapter_s1_ipod_serial",
+      "0453_ESP8266-MQTT-battery-monitor-hw_battery-monitor",
+      "0455_STM32F373_LQFP48_STM32_LQFP48",
+      "0456_custom_cpu--ALU_custom_cpu--ALU",
+      "0457_mojo-nes_mojo-nes",
+      "0458_esp8266_network_speaker_esp_network_speaker",
+      "0459_BirdAttractor_BirdAttractor_RevC",
+      "0460_medusa_medusa_rs422_rx",
+      "0461_AzizLight_AzizLight",
+      "0462_HellScribe_HellScribe",
+      "0463_guitar_fret",
+      "0464_pi-zero-stepper-board_pi-zero-stepper-board",
+      "0465_rgb2ypbpr_rgb2ypbpr",
+      "0468_boatcontrol_NonLatchingNO30A",
+      "0469_NRC2016_usb_sio",
+      "0471_BlueBerry-Zero_blueberry",
+      "0473_data-manager_data-manager",
+      "0474_smt-zvs-driver_IH10",
+      "0475_ESP_BaPoTeSta_ESP_BaPoTeSta",
+      "0476_RX5808_diversityModule",
+      "0477_MeArm-Wireless-PCB_MeArmWireless",
+      "0478_PmodHDMIIn_PmodHDMIIn",
+      "0479_HW-AC-Emeter_ac-power-monitor",
+      "0480_hwstar_ac-power-monitor",
+      "0482_Hardware_Playground_rfm69w_adapter",
+      "0484_MAVRIC_Hardware_pcieduino",
+      "0485_moonpunchorg_pcieduino",
+      "0486_WyoManiacalDisplay_WyoDisplay",
+      "0488_stm32_ccd_camera_ccd",
+      "0490_fifogfx_c64cart",
+      "0491_ponchoeduciaaiot_ponchoeduciaaiot",
+      "0492_bt-tnc_tnc",
+      "0493_gdrom_adapter_board_adapter",
+      "0494_Youyue-858D-plus-MCU-adapter_youyue-858d-plus-mcu-adapter",
+      "0495_6volt-5W-solar-cc_6vleadacidsolar",
+      "0496_kitspace_f-91w",
+      "0497_kitspace_threeboard",
+      "0498_kitspace_Spikeling_V2.1",
+      "0499_fan_controller_fan_controller",
+      "0500_LED_port-status_LED_port-status",
+      "0502_MYS-PMS7003_MYS-PMS7003",
+      "0503_WS2811LEDMatrix_matrixcontrol",
+      "0505_Dekada_dekada",
+      "0506_Dekada_dekada_1210_example",
+      "0507_Dekada_dekada_TopoR_curves",
+      "0508_kitspace_sympetrum-v2%20NFF1.1",
+      "0509_LiFePO4-Charge-Controller_LiFePO4-Charge-Controller",
+      "0510_pesho_pesho",
+      "0511_boatcontrol_CommonCathode60A",
+      "0512_Protoboard-DIP-for-CHIP_chip-dip-protoboard",
+      "0513_esp32-ethernet_esp32-ethernet",
+      "0514_esp8266_32x32panel_esp_12_f_595",
+      "0515_esp8266_32x32panel_esp_12_f_595_ORDERED",
+      "0517_bobc_MS-F100",
+      "0518_mosavr_pcie1x_backplane",
+      "0523_hardware-designs_nixie-combo",
+      "0524_Baofeng-Interface_BaofengInterfaceIsolated",
+      "0525_pcb-covox-amp-v2_pcb-covox-amp-v2",
+      "0527_WHCS-Base-Station_base-station",
+      "0528_esp8266_esp-output",
+      "0529_kitspace_flypi",
+      "0530_RC2014_RC2014 Tandy Sound Card",
+      "0531_mini_ice40_mini_ice40",
+      "0534_kitspace_Driverino-Shield",
+      "0535_anima_MotorDrive",
+      "0536_avr-fuser-32_adapter",
+      "0537_rodi-pcb_rodi-pcb",
+      "0538_tdstat_TDstatv2",
+      "0539_antdroid-board_antdroid-board",
+      "0540_CPU-Power-Supply-Mod_CPU_Power_Supply_Mod",
+      "0541_cnlohr_wiflier",
+      "0542_bobc_led_clock",
+      "0543_solar-lora_solar-lora",
+      "0544_wavegen_waveform-generator-rev1",
+      "0545_wavegen_wavegen",
+      "0546_ozinverter_ozinverterkicad",
+      "0547_kitspace_Oak",
+      "0548_kitspace_training_board_v02",
+      "0550_Box0-hv-analog-breakoutboard_breakout",
+      "0554_LED_Clock_AM_led_clock",
+      "0555_analogevse_AnalogEVSE",
+      "0556_UniversalBoard4Nucleo_Nucleo_Universal_Board",
+      "0557_Teensy-3.5-Breakout-Boaard_Teensy35Mega",
+      "0558_cnlohr_wiflier_B",
+      "0559_Biscay_Blueeye_sipm-fpga",
+      "0560_PSU-5V-6V-Dual9V_PSU-5V-6V-Dual9V",
+      "0561_MAVRIC_Hardware_Motherboard",
+      "0563_OpAmpPassXsistorBenchSupply_OpAmpPassXsistorBenchSupply",
+      "0565_eeg_brainboard_batteryv0",
+      "0567_kitspace_T32_ref",
+      "0569_stm32-network-rs232_stm32-network-rs232",
+      "0571_Brushless_ESC_Brushless_ESC",
+      "0572_Hardware_Playground_esp8266_uno_relay",
+      "0573_battmanpi_battmanpi",
+      "0574_Hardware_Playground_usb_shield",
+      "0575_kitspace_USBee32-S2",
+      "0576_srambo_1_srambo_1",
+      "0577_Shift-out-32-HC595_Shift-out",
+      "0578_stubby_hex",
+      "0580_nodemcu-basecamp_NodeMCU Basecamp",
+      "0581_a123-battery-integration_BCM",
+      "0583_elec-power-bms_OSBMS Balancer Rev1",
+      "0584_Hardware_Playground_orange_pi_zero_node",
+      "0585_nichiden27_PISCIUM",
+      "0586_kitspace_aquarius",
+      "0587_xwhatits-capsense-controller_amkey-usb",
+      "0588_DSKY-alarm-panel-replica_DSKY_alarm",
+      "0589_kassenautomat.mdb-interface_mdb-interface",
+      "0590_Mechaduino-DR_Mechaduino DR 1.01",
+      "0591_PoEPi-hardware_pizero-poe",
+      "0592_protoarray_proto_array",
+      "0594_kitspace_sensor",
+      "0596_stubby_stubby",
+      "0597_UltrasonicSystem_Schematic",
+      "0598_PDB_OSD_HARDWARE_Quadcopter Power Board",
+      "0599_RGBMatrixPanelCPLD-PhotonBackpack_RGBMatrixPanel_CPLD",
+      "0600_Hardware_Playground_rpi_zero",
+      "0601_kitspace_USB-C-Screen-Adapter",
+      "0603_f.60_keyboard",
+      "0604_recalbox-gpio-board__autosave-board",
+      "0605_recalbox-gpio-board_board",
+      "0607_tmk_HHKB_controller",
+      "0608_cdi-tach_cdi-tach",
+      "0609_avr_ledprojector_avr_ledprojection",
+      "0610_bobc_matrix_clock",
+      "0611_avr_ledprojector_avr_ledprojection-0402",
+      "0612_balena-rover-wide-hat_resin-rover",
+      "0613_Teensy-3.5-Breakout-Boaard_TeensyMegaIoShield",
+      "0614_rfcx-sentinel-pcb_Mainboard",
+      "0615_Omega2-Berrydock_berrydock-mini",
+      "0616_MixSID_mixsid",
+      "0617_divergence_meter_dm_nixiebrd",
+      "0618_LMS6002-Pmod_LMS6002-Pmod",
+      "0619_Apple-M0110-BT_Apple M0110",
+      "0620_memsarray_mems_array",
+      "0621_eeg_brainboardv0",
+      "0622_Aria_Aria",
+      "0623_rk86kngmd_rk86kngmd",
+      "0627_divergence_meter_dm_control",
+      "0628_digital_clock_led_clock_3_and_4_digit",
+      "0630_gsm-iot-core-hw_gsm-iot-core",
+      "0631_kitspace_dropbot-front-panel",
+      "0632_TripleDelay2399_TripleDelay2399",
+      "0633_NRC2016_z80",
+      "0634_arduino-led-driver_arduino-led-driver",
+      "0635_BUF-DiffToSE-ADAU1966_BUF-DiffToSE-ADAU1966",
+      "0637_Electronics-MainBoard_MainBoard",
+      "0638_DoroidOscillo-Board_Android_Oscilloscope",
+      "0639_pwm-2420-lus_pwm-2420-lus",
+      "0640_kitspace_d20_r0.1",
+      "0642_rjw57_cpu-board",
+      "0643_xmasOrn_xmasOrn",
+      "0645_Own-Mailbox-Hardware_eth",
+      "0646_juno-chorus-clone_juno-chorus-clone",
+      "0647_Simple_84_Keyboard_84",
+      "0648_zx-sizif-128_sizif128",
+      "0650_kitspace_PSLab",
+      "0651_youtubeplaybutton_playbutton",
+      "0652_kitspace_lpa96",
+      "0653_BrushlessESC_esc",
+      "0654_2d_conduction_sk9822-matrix",
+      "0655_ADC-PCM4202-SE_ADC-PCM4202-SE",
+      "0656_Horticulture_Light_EQ_3-Band_light",
+      "0657_mppt-2420-hpx_mppt-2420-hpx",
+      "0658_sweet-sixteen_sweet-sixteen",
+      "0659_ADC-PCM4202_ADC-PCM4202",
+      "0660_bumps_bumps",
+      "0661_mechkeys_MF68+10",
+      "0662_stm32_mech_keyboard_TCKB",
+      "0663_bms-8s50-ic_bms-8s50-ic",
+      "0664_klangorium_logic_noise_playground",
+      "0666_kitspace_d20_tri_r0.3",
+      "0668_Keyboard_PCB_Keyboard",
+      "0672_DAC-ADAU1966_DAC-ADAU1966",
+      "0673_kitspace_40-channel-hv-switching-board",
+      "0674_opendous_Upconverter",
+      "0675_DSP-ADAU1452_DSP-ADAU1452",
+      "0676_dorkyboard_keyboard",
+      "0678_oskirby_logicbone",
+      "0679_Aleste-520EX_aleste"
+    ],
+    "val": [
+      "0392_ISO-port_ch340-usb-serial-isolated",
+      "0394_LiPoSensor_lipo_sensor",
+      "0400_laptimer58_Chickadee",
+      "0402_DualLM317BenchSupply_DualLM317BenchSupply",
+      "0417_Open-Source-Power-Supply_PowerSupply_PCB_backup",
+      "0425_Radar-System_fmcw_radar",
+      "0426_kitspace_CO2",
+      "0449_small-scope-electronics_small-scope",
+      "0451_kit2-led-cube_led_cube",
+      "0466_Hardware_Playground_minimal_node_rfm69w",
+      "0472_T962A-UpgradeBoard_T962A-UpgradeBoard",
+      "0483_Hardware_Playground_Touch_Switch_1ch_PCB",
+      "0489_minievse_minievse",
+      "0504_TeensyProtoboard_TeensyProtoboard",
+      "0521_RGBMatrixPanelCPLD-PhotonBackpack_RGBMatrixPanel_CPLD_positive",
+      "0522_bypass_crossmix_bypass_crossmix",
+      "0526_makerspace-emonth_load_box",
+      "0533_headstage-adapter_headstage adapter",
+      "0552_wavegen_wavegen-alt",
+      "0553_ESP32-board_esp32_board",
+      "0568_ESCPT_data",
+      "0570_bee-light-measurement-matrix_bee-light-measurement-matrix",
+      "0582_Sensory_Adaptation_Bot_sa_bot",
+      "0593_vhf-radio_exp-1",
+      "0595_LoRaPP_loramod",
+      "0606_elec_power_dispatch",
+      "0625_digital_clock_led_clock_v1",
+      "0629_Hardware_Playground_BL_PCB_latest",
+      "0641_tiny-8088_Computer",
+      "0649_kitspace_mppt-1210-hus",
+      "0670_wiggleport_wiggle-spine",
+      "0671_VB-IoT1_VB-IoT1_v1",
+      "0677_kitspace_glasgow"
+    ],
+    "test": [
+      "0388_kitspace_piezo_amplifier",
+      "0389_kitspace_bomanz",
+      "0390_radio_antenna-iridium",
+      "0391_ToslinkCNC_toslink_arduino_shield",
+      "0396_kitspace_ss_relay",
+      "0412_linklayer_contact",
+      "0421_custom_cpu--register_custom_cpu--register",
+      "0446_kitspace_flypi_v2",
+      "0450_hw_trials_demo",
+      "0454_komputer-klavier_KomputerKlavier",
+      "0467_pmtoy-hardware-pcb_PMToy",
+      "0470_ChirpHardware_chirp",
+      "0481_Hardware_Playground_nrf52832_uno",
+      "0487_nunchuk_rf_hw_NunchukRF_V3",
+      "0501_led_array_atmega8_led_array",
+      "0516_MicroMaple_MicroMaple",
+      "0519_LogicBoxen_LogicBoxen",
+      "0520_RGBMatrixPanelCPLD-PhotonBackpack_RGBMatrixPanel_CPLD_negative",
+      "0532_rxadc_14_rxadc_14",
+      "0549_bmw-ibus-bluetooth_bmw_bt_cdcemu_digital",
+      "0551_KiwiSDR_PCB_ant",
+      "0562_MAVRIC_Hardware__autosave-Motherboard",
+      "0564_Inhibition_amplifier",
+      "0566_TinyTracker_ub-minimal",
+      "0579_Hardware_Playground_esp8266_uno",
+      "0602_PoEPi-hardware__autosave-pizero-poe",
+      "0624_elbsupply_elbsupply",
+      "0626_TOBS_HybridChargeController",
+      "0636_kitspace_120-channel-test-board",
+      "0644_AmpOne_dev-AmpOne",
+      "0665_kitspace_d20_tri_r0.2",
+      "0667_kitspace_tri_panel_4up_r0.1",
+      "0669_timecircuits-hardware_BTTF-TimeCircuits"
+    ]
+  },
+  "_board_features": {
+    "0001_rufs__autosave-simple_kicad_schema_and_pcb_v1": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0002_rufs_simple_kicad_schema_and_pcb_v1": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0003_kitspace_grove_adaptor": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0004_S1G-Mod_JST_Adapter": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0005_AVR-Playground_hello_world": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0006_raspberry_pi_pullup_button_pullup_shutdown_button": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0007_raspberry_pi_pullup_button_pullup_shutdown_button(revB)": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0008_CapPCB_CapPcb": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0009_SmartLaserCO2-PCB_WaterCool": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0010_SmartLaserCO2-PCB_OptAdjust": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0011_PixyWirelessShield_Shield PIXY": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0012_kitspace_ir_sensor": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0013_crossover-schiit-stack_xover4schiit": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0014_hardware-designs_m-trigger": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0015_kitspace_tt_opt101_module_b1": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0016_breakout-boards_avr-isp-x2": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0017_Blink-Eras_AVR_ISP_Pogo": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0018_Hardware_Playground_hy_adapter": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0019_CubeSAT-Reaction-Wheel_Edison_Motor_Servo": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0020_Cherry-Mx-Bitboard_Cherry Mx Bitboard": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0021_RPi-PWM-Fan-interface_RPi PWM Fan interface": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0022_OpenVNAVI_motor unit": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0023_hardware-designs_si7021-board": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0024_memsarray_mems_modules": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0025_kitspace_hum_temp_sensor": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0026_PCB_constant_current_ac_hv": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0027_ID-FIX_scanConnect": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0028_hardware-designs_c-trigger": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0029_espeverywhere__autosave-espeverywhere_breakout": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0030_kitspace_sop8breakout": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0031_kitspace_Potentiometer_mount_4LED": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0032_kitspace_Potentiometer_mount_8LED": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0033_breakout-boards_swd-to-wires": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0034_NavigationThing_NavigationThingBacklight": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0035_KiCad-Like-a-Pro-Tutorial_rf24-breakout-v1": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0036_nRF24breakoutBoard_nRF24-breakout": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0037_hardware-designs_spsgrf-board": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0038_PCB_serie_led_strip": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0039_drawduino_drawduino": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0040_oshtimer_transponder": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0041_FogDrive_attiny45_slim": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0042_starsynctrackers_reset_switch": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0043_breakout-boards_swd-and-uart": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0044_blink-errr_blink-errr": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0045_retroreflectors_TANGOFLOCK": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0046_mearm-base-pcb_ServoPCB": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0047_LoLin_Designs_LoLin": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0048_MySRaspiGW_MySRaspiGW": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0049_MySRaspiGW_MySRaspiGW_PA_LNA": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0050_MySRaspiGW_MySRaspiGW_PA_LNA_Pimoroni": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0051_MySRaspiGW_MySRaspiGW_Pimoroni": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0052_breakout-boards_50-to-100": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0053_mechkeys_lfk78-jtag": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0054_induction-hob_temperature-sensor": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0055_dustbox_Dustbox": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0056_nrf2rfm69_nrf2rfm69": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0057_tepmachcha_tepmachcha": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0058_scimpy_powersupply": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0059_marlin-neopixel-bridge_ATtiny85_Marneo": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0060_Paperino_HW_paperino_breakout": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0061_kitspace_temp_breakout": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0062_I2CTempsensor_sensors": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0063_stlinkv2_breakout_stlink_breakout": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0064_kicad-guitar-preamp_Preamp-Instructables": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0065_DiscoDanceFloorV1_BusTerminator": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0066_ESP8266-WS2811-LEDs_ws2811controller_panels": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0067_radio_saw_dcc6c": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0068_AVR-ISP_pogo-plug_1.27mm_AVR-ISP_pogo-plug_1.27mm": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0069_C-BISCUIT_crowbar": {
+      "n_track_widths": 6,
+      "wire_type": "W5+_rich"
+    },
+    "0070_Raspberry-Pi-Soft-Power-Controller_Switching Supply TPS563208 MCI": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0071_hackyflasher_Flasher": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0072_esp8266_wi07_3_adapter_esp": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0073_z2amiller_sensorboard_programmer": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0074_kitspace_12V5A_breakout": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0075_RPi-ATtiny85-Programmer_rpi_attiny85_programmer": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0076_breakout-boards_usb-5v-3v3": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0077_HaveSome_PCB_HaveSomePCB": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0078_Hardware_Playground_buck_led_driver": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0079_Inkjet_InkjetBreakout": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0080_kitspace_RPi_shield": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0081_everled_everled": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0082_firefly-jar_solar_lamp": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0083_DustSensorShield_DustSensorShield": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0084_kitspace__autosave-nunchuk_breakout": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0085_mini-whip_mini-whip-power-feed": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0086_BB-PWR-8009_BB-PWR-8009_revA": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0087_solar-lanterns_proto1": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0088_DA_Lamp_attiny44a_servo_i2c": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0089_cobwebb-junction-box_CobwebbJunctionBox": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0090_keyboard_converter_adapter_ibm4704_converter_adapter_ibm4704": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0091_rufs_dra818v_breakout_board": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0092_DerKnopf_power-supply": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0093_kitspace_nunchuk_breakout": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0094_kitspace_gas_sensor": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0095_PsuFanController_FanController": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0096_karabas-nano_wifi_revA": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0097_bristle_bot_light_follow_bristle_bot": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0098_MSGEQ7-Breakout-Board_MSGEQ7_Breakout_Board": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0099_SparkSwitch_SparkProtectionSwitch": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0100_smt-zvs-driver_IH10-mc": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0101_DerKnopf_remote-control": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0102_ponyser-pcb_Ponyser": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0103_LizardBoard_lizard": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0104_zx-sizif-512-wifi_sizif512-wifi": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0105_filament_extruder_sensor": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0106_IR-Transponder-ATTiny85-v2_Transponder_v2": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0107_fingerprint-with-esp32_quet van tay": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0108_BB-PWR-3608_BB-PWR-3608_revA": {
+      "n_track_widths": 6,
+      "wire_type": "W5+_rich"
+    },
+    "0109_kitspace_CH330": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0110_NodeMcu-v3-LiPoly-LiIon-Backpack_NodeMcuLiPolyBackpack": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0111_yamsek.kicad_i2c_bridge_secondary": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0112_kicad_bbb-melzi": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0113_maytal_Maytal": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0114_POV_POV": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0115_4N35-TTL-Serial-Optoisolator_4N35-TTL-Serial-Optoisolator": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0116_kitspace_power_supply": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0117_Hardware-done-with-kicad_AVRlearn": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0118_LimitSwitchesPlugin_LimitSwitchesPlugin": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0119_rotorcontrol_nanomount": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0120_hardware-designs_solar-harvester": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0121_OpenHardwareExG_ActiveElectrode_OpenHardwareExG_ActiveElectrode": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0122_Usb-Serial-Breakout-Cp2102_cp2102": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0123_uext-esp32_UEXT_ESP32": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0124_nixie-clock_ab18x5-breakout": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0125_kicad-projects_ili9341-breakout": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0126_mini-whip_mini-whip": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0127_NeoWall_NeoWall": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0128_kitspace_4_switch_array": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0129_pi_plant_MCP3002": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0130_Starburst-One_alpha": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0131_busblaster-to-swd_busblaster-to-swd": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0132_TPS63001-Breakout_TPS63001 Breakout 25x25": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0133_esp-leipa_esp-12": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0134_continuity-tester_continuity-tester": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0135_tinyFISH_tinyBRUSH": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0136_navelino-leaf_navelino-leaf": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0137_hardware-designs_soil-moisture-sensor": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0138_Solare-BQ24210_Solare-BQ24210": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0139_HillhacksLantern_LEDLantern": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0140_eBUS-Adapter_Groeger": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0141_TPS63001-Breakout_TPS63001 Breakout": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0142_kitspace_12_24_boost_converter": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0143_kitspace_solenoid_driver": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0144_ottawa-badges-2016_ottawa-badge-tagger-2016": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0145_BML-Badges_BML_01": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0146_pulse_v1_pulse": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0147_LED_port-status_LED_port-status-CA": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0148_LED_port-status_LED_port-status-CA-CC-combo": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0149_smt-zvs-driver_IH10-sl": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0150_ReST32_ReST SD-Module": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0151_BB-PWR-8113_BB-PWR-8113_revA": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0152_mechkeys_isp": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0153_6N137-TTL-Serial-Optoisolator_6N137-TTL-Serial-Optoisolator": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0154_Arduino-Theremin_arduino-theremin-v1": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0155_ToslinkCNC_Toslink PlanetCNC ECO shield": {
+      "n_track_widths": 6,
+      "wire_type": "W5+_rich"
+    },
+    "0156_esp12-breakout_ESP12Breakout": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0157_DIYDAC_DIYDAC": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0158_opentilt_opentilt1": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0159_CAL430FR_CAL430F_watch": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0160_BML-Badges_BML-Badges": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0161_spisolator_spisolator": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0162_AS5043-Encoder_sensor-board": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0163_kika-in-space_analog-test-board": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0164_yamsek.kicad_i2c_bridge_primary": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0165_snappi-zero_snappi-zero": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0166_Phased-Array-Microphone-using-FPGA_SateliteMicrophone": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0167_esp8266_envmonitor_environment-monitor-1.2": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0168_ABOVISP_ABOVISP": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0169_hardware-designs_energy-harvester": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0170_hackaday_esp-14_power_meter__autosave-esp-14": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0171_esp8266-external-temp-sensor_external-temp-sensor": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0172_Wkaku_wkaku": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0173_sensorboard_DiffIR.kicad_pcb_narrow": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0174_sensorboard_DiffIR": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0175_Youyue-858D-plus-FAN-speed-mod_youyue-858d-plus-fan-speed-mod": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0176_BirdAttractor_BirdAttractor_RevA": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0177_kitspace_bbq10breakout": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0178_gamelights_leds": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0179_silverduino-board_kicad": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0180_beer-gauge_sensorboard": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0181_kitspace_pmt_combiner": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0182_Teensy-Hats_Temperature-Monitor-Hat": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0183_KiCad-Like-a-Pro-Tutorial_proj2-sevensegment": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0184_kitspace_push-on-hold-off": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0185_HES-V2__autosave-hes": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0186_HES-V2_hes": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0187_esp8266_envmonitor_environment-monitor": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0188_esp8266_envmonitor_environment-monitor-1.4": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0189_AnalogThermometer_AnalogThermometer": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0190_LAUNCHXL-F28027-isolation-PCB_project1": {
+      "n_track_widths": 6,
+      "wire_type": "W5+_rich"
+    },
+    "0191_deskbot_breakout": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0192_CubeSAT-Reaction-Wheel__autosave-GPIO to motor": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0193_Teensy-Hats_Teensy-7-Segment-Hat": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0194_kitspace_postcard": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0195_kitspace__autosave-postcard": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0196_kitspace_level_shifter": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0197_RFM69HCW_ATSHA204A_Breakout_RFM69HCW_ATSHA204A_Breakout": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0198_RoBoC_CameraAdaptor": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0199_kitspace_USB-LED-Otter": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0200_rufs_spv1040_power_controller": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0201_hardware-designs_nixie-power": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0202_kitspace_filaSens": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0203_MOD-MPU9150_mod-mpu9150": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0204_RFM69-PowerMonitor_RFM69-PowerMonitor": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0205_atmel-programmer_atmel_programmer": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0206_rgb-strip-controller__autosave-rgb-strip": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0207_cap-soil-moisture-v2_soil-moisture2x4": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0208_USB-TypeC-breakout-board_USB-TypeC-breakout-board": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0209_beast-phat_beast-phat": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0210_MAVRIC_Hardware_SoilBoard": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0211_kitspace_Heltec_Node": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0212_kitspace_trans_switch_volt_amp": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0213_kika-in-space_DS8500": {
+      "n_track_widths": 7,
+      "wire_type": "W5+_rich"
+    },
+    "0214_hillhacks2016_badge_badge1": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0215_LED-grid-8x8_LED grid 8x8": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0216_microphone_preamp": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0217_esp8266_link_test_esp_micro85-only": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0218_kitspace_GPSMux": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0219_tbd_tbd": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0220_makerspace-emonth_resistor_board": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0221_akuhei_akuhei": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0222_xwhatits-capsense-controller_model-f-3178-adaptor": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0223_Teensy-3.5-Breakout-Boaard_PropShield_Uno": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0224_one-shift-register_one-shift-register": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0225_mac-pro-conversion_front-panel-power-adapter": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0226_beryl_rain_beryl_rain": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0227_PWRmeter_PWMeter": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0228_yamsek.kicad_matrix_attiny861a": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0229_Minitel_video_output_stage": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0230_Retro1DecodingModules_AddressDecoderModule": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0231_Neptune-Hardware_DataAcquisitionBoard": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0232_ATtiny461Breakout_ATTiny461DevBoard": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0233_KiCad-LTC6802-2_main": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0234_hm-mod-rpi-rtc_hm-mod-rpi-rtc": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0235_miniboard-opamp_miniboard-opamp": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0236_sv650sds_sds_tool": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0237_Paperino_HW_Paperino_shield": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0238_usb2serial-CH340G_USB2TTL-CH340G": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0239_bpnode-bb_BPnode-BB": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0240_ESP-12-breakout_ESP12E-breakout": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0241_FT231X_breakout_FTDI_FT231XS-U_Breakout": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0242_photon_Sprinkler_sprinkler": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0243_sonic3_feram_adapter_sonic3_feram_adapter": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0244_VM-sensor-PT1000_vm-sensor-pt100": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0245_kitspace_DIY_detector": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0246_LongPixel_AnalogDriverMini": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0247_denbit_basic": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0248_PGA2311_pga2311": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0249_RN2483shield_RN2483shield": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0250_JLink-SWD_JLink-SWD": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0251_kitspace_hp_led_switch": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0252_apa102lantern_apa102-lantern-side": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0253_ezusb-logicanalyzer_cypress_logic_analyzer": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0254_kitspace_esp8266": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0255_audio_relay_input_switch_relay_switch": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0256_sms-cart-32k_cart": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0257_xwhatits-capsense-controller_solenoid-driver": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0258_kitspace_ESP8266-PowerMonitor": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0259_kitspace_Potentiometer_mount_16LED": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0260_NiMH-Charger_NiMH Charger": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0261_Practicas-Curso-Kicad_Salguero_Federico2": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0262_low-power-counter_lpcounter": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0263_kitspace_led_driver": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0264_Practicas-Curso-Kicad_Ejercicio_2": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0265_bobc_LCD-panel-adapter-lvc": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0266_m2-electronics_m2pa-tiny": {
+      "n_track_widths": 8,
+      "wire_type": "W5+_rich"
+    },
+    "0267_m2-electronics_m2pa": {
+      "n_track_widths": 7,
+      "wire_type": "W5+_rich"
+    },
+    "0268_m2-electronics_m2pa-instrument": {
+      "n_track_widths": 7,
+      "wire_type": "W5+_rich"
+    },
+    "0269_m2-electronics_m2pa-m3mount": {
+      "n_track_widths": 7,
+      "wire_type": "W5+_rich"
+    },
+    "0270_kitspace_BQ25570_Harvester": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0271_devttys0_IRis": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0272_tinymuseum_museum": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0273_omega-dock-new_omega-dock-new": {
+      "n_track_widths": 7,
+      "wire_type": "W5+_rich"
+    },
+    "0274_kitspace_OpenSpritzer_1.3": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0275_roomba-ESP12E_roomba-esp": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0276_nan-15_top-plate": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0277_kitspace_bobbycar": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0278_1-Wire-Wing-pcb_1-Wire_Wing": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0279_powerfreq-hardware_powerfreq": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0280_APC_AtariPunkConsole": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0281_SynthDrumTrigger_Synth Drum Trigger": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0282_WordClock_v2.0_WordClock_v2": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0283_atmegax8-protoboard_atmegax8-protoboard": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0284_kitspace_PIS": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0285_kitspace_Lcr_addon": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0286_breakout-boards_esp8266-jtag": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0287_OLD-Stepper-motor-board-design-project_Stepper motor driver": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0288_raspberrypi-3-usb-hub_usb_hub": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0289_supply-ldo-adj-single_supply-ldo-adj-single": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0290_m2-electronics_m2rl": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0291_C-BISCUIT_buck-reg-5v": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0292_sb-serial-usb_ch340": {
+      "n_track_widths": 6,
+      "wire_type": "W5+_rich"
+    },
+    "0293_pcb-ks0108-128x64-glcd_circuit": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0294_esp8266-12f-board_esp8266": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0295_arduino_arduino leds": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0296_cdm324_backpack_cdm324": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0297_scimpy_crossover": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0298_kitspace_tt_nano_HAT_b1": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0299_gpsclock_clock": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0300_type5_type5": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0301_flatpack2-adapter_EltekFlatpack2": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0302_disco-dongle_DiscoDongle": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0303_ESP-Breakout_ESP-Breakout": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0304_gepetto_circuito": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0305_raspican_raspican": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0306_pcb-ice40-vga_VGA expansion": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0307_LVDS2TMDS_LVDS2TMDS": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0308_LED-Square_PT4115_LED-Square_PT4115": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0309_ESPLux_Board": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0310_rufs_smart_psu": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0311_soil-moisture-sensor-analog_analog-moist-sensor": {
+      "n_track_widths": 8,
+      "wire_type": "W5+_rich"
+    },
+    "0312_S4A-Mini-board_s4a-mini-board": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0314_nikon_gps_nikon_gps": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0313_Teensy-Hats_Teensy-LCD-LiDAR-Hat": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0315_RASPMINI_RASPmini": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0316_kicad-workshop_fancyboard": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0317_DerKnopf_led-ring": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0318_kitspace_hbridge_driver": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0319_magic-table_etch-a-sketch_cyclone": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0320_kitspace_Arduino_uno_sheild": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0321_polearm-weapon_rod": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0322_USBtin_USBtin": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0323_WemosLoraTracker_wemosGPSrfm": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0324_nodemcu-backstage_NodeMCU Backstage": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0325_nanoSwinSidC_nanoSwinSidC": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0326_Atmel-ICE-Header-Adapter_ice header adapter pcb": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0327_SMDBreakouts_smd_breakout": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0328_SMDBreakouts_smd_breakout_quad": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0329_NightClock_ESPBoard": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0330_thegrid_pole": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0331_Planet_Vocab": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0332_Hardware_Playground_wifi_lights": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0333_gwurrbus_gwurrbus-relay": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0334_esp-serial-terminal_esp-com": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0335_MAVRIC_Hardware_ArduinoPracticeBoard": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0336_AVR-ISP_level-shifter_AVR-ISP_level-shifter": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0337_rfidBoard_rfid": {
+      "n_track_widths": 6,
+      "wire_type": "W5+_rich"
+    },
+    "0338_shutter_Shutter V4": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0339_TTNEnschedeMote_ArduinoNanoRN2483": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0340_kitspace_Brk40p": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0341_vatx_vatx": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0342_hardware-designs_cc430-debug-board": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0343_clock_lcdb4": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0344_mavbridge_mavbridge": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0345_Paperino_HW_paperino_module": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0346_ESP32-Module-Breakout_ESP32S-breakout": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0347_kitspace_peltier": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0348_Eggbot-Spherebot-polargraph-Controller_eggbot-spherebot-polargraph-controller": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0349_kitspace_8_switch_array": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0350_fuzzer_fuzzer": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0351_ESP07-Breakout_ESP07-Breakout": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0352_usb_rs232c_usb_rs232c_rev_a": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0353_RC2014_RC2014 IDE": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0354_rc2014_bank_switcher_z80_cpm_mmu": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0355_imfr-schematics_Telescopio": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0356_kitspace_ideal_diode": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0357_kitspace_dynamixel_shield": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0358_esp12-appliance_mod_esp12-appliance-mod": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0359_kitspace_tt_nano_HAT_b2": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0360_PCB_small_halogen_replacement": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0361_phone_rtty_interface_phone_rtty_rev_b": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0362_prog-cc-100mA_prog-cc-100mA": {
+      "n_track_widths": 6,
+      "wire_type": "W5+_rich"
+    },
+    "0363_OpenBot_openbot": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0364_scimpy_volumebuffer": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0365_DasBlinkinput_Das Blinkinput": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0366_ReST32_ReST RRD-FGC-Adapter": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0367_pcb-usb-ft245r-parallel-adapter_pcb-usb-ft245r-parallel-adapter": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0368_Inkjet_InkjetDriver": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0369_Inkjet__autosave-InkjetDriver": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0370_Biscay_Blueeye_mcu": {
+      "n_track_widths": 6,
+      "wire_type": "W5+_rich"
+    },
+    "0371_Minitel_bbb-adapter": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0372_retrocon_bbb-adapter": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0373_badge2016_Badge_init": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0374_light-painting-wand_light-wand": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0375_eurorack_headphones_eurorack_headphones": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0376_cat-trainer_teensy_base_pcb": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0377_Hardware_Playground_pro_mini": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0378_airqualitystation_hardware": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0379_kicad-esp8266-led-shld_ESP8266_LED_shld": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0380_Minitel_driver_board": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0381_retrocon_driver_board": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0382_LT3652EvalBoard_LT3652EvalBoard": {
+      "n_track_widths": 6,
+      "wire_type": "W5+_rich"
+    },
+    "0383_FRM16_Relay_Module_I2C_Controller_relay_controller": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0384_DerKnopf_digi-pot": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0385_rgb-led_rgb-led-v2": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0386_onion2-breakout_onion2 breakout": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0387_RC2014_RC2014 RAM": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0388_kitspace_piezo_amplifier": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0389_kitspace_bomanz": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0390_radio_antenna-iridium": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0391_ToslinkCNC_toslink_arduino_shield": {
+      "n_track_widths": 8,
+      "wire_type": "W5+_rich"
+    },
+    "0392_ISO-port_ch340-usb-serial-isolated": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0393_boards_shift-register-demo-v2": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0394_LiPoSensor_lipo_sensor": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0395_Arduino_Lipo_Storage_Discharger_Lipo_Storage_Discharger": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0396_kitspace_ss_relay": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0397_wt-rpm_C.H.I.P": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0398_two-daisy-chained-shift-registers_two-shift-registers": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0399_blinky-badge_blinky": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0400_laptimer58_Chickadee": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0401_Hypfer-RGB-W-LED-Controller_led_strip_controller": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0402_DualLM317BenchSupply_DualLM317BenchSupply": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0403_Mini-Ultra-8-MHz_RS-MINI-ULTRA-8M": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0404_Omega2-mini-dock_Omega2 mini-dock": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0405_dust_sensor_dust_sensor": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0406_QRPCard_QRPCard": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0407_MAGFest-2017-Swadges_magfest_badges": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0408_LoRaCatTrack_GPSLoRa": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0409_nextbusclock_NextBusClockV1": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0410_Open-Source-Power-Supply_PowerSupply_PCB": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0411_R1002_R1002": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0412_linklayer_contact": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0413_bmw-ibus-bluetooth_bmw_bt_cdcemu_analog": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0414_tessel-ice40__autosave-project": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0415_pcb-covox-amp_pcb-covox-amp": {
+      "n_track_widths": 6,
+      "wire_type": "W5+_rich"
+    },
+    "0416_kitspace_beehive": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0417_Open-Source-Power-Supply_PowerSupply_PCB_backup": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0418_AVR-ZIF-Programmer_AVR-ZIF-Prog": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0419_basic_esp_board_basic_esp_board": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0420_rufs_aprs_tracker": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0421_custom_cpu--register_custom_cpu--register": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0422_Kefersender_UKW TX": {
+      "n_track_widths": 8,
+      "wire_type": "W5+_rich"
+    },
+    "0423_induction-hob_temperature-sender": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0424_rf-biscuit_rf_biscuit": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0425_Radar-System_fmcw_radar": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0426_kitspace_CO2": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0427_vdcmon_vdcmon": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0428_espeverywhere_espeverywhere": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0429_R1007_R1007": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0430_bldc-gimbal-1d_gimbal-board": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0431_bldc-gimbal-1d_r1_gimbal-board": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0432_RaspberryPi-PoE_PoELLi_PI": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0433_ATmega32_ExploreUltraAvrDevKit_40pin_AVRMCU": {
+      "n_track_widths": 6,
+      "wire_type": "W5+_rich"
+    },
+    "0434_Prototyping_Workshop_Prototyping_PCB": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0435_filament_extruder_extruder": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0436_raspberry-pi-rfm69_rfm69-rpi": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0437_ReST32_combined": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0438_E202VAR-Natural-Radio-Receiver_e202var-vlf-radio-receiver": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0439_scimpy_amp": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0440_Starling_Starling_V1": {
+      "n_track_widths": 8,
+      "wire_type": "W5+_rich"
+    },
+    "0441_kitspace_spike_n_hold": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0442_MAPone_MAP_append": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0443_MAPone_MAPone": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0444_audprog_audprog_v2": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0445_Amiga-A1012-PCB_Amiga-A1012": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0446_kitspace_flypi_v2": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0447_thegrid_thegrid": {
+      "n_track_widths": 8,
+      "wire_type": "W5+_rich"
+    },
+    "0448_uedaino_uedaino": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0449_small-scope-electronics_small-scope": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0450_hw_trials_demo": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0451_kit2-led-cube_led_cube": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0452_ipod-serial-adapter_s1_ipod_serial": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0453_ESP8266-MQTT-battery-monitor-hw_battery-monitor": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0454_komputer-klavier_KomputerKlavier": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0455_STM32F373_LQFP48_STM32_LQFP48": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0456_custom_cpu--ALU_custom_cpu--ALU": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0457_mojo-nes_mojo-nes": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0458_esp8266_network_speaker_esp_network_speaker": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0459_BirdAttractor_BirdAttractor_RevC": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0460_medusa_medusa_rs422_rx": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0461_AzizLight_AzizLight": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0462_HellScribe_HellScribe": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0463_guitar_fret": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0464_pi-zero-stepper-board_pi-zero-stepper-board": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0465_rgb2ypbpr_rgb2ypbpr": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0466_Hardware_Playground_minimal_node_rfm69w": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0467_pmtoy-hardware-pcb_PMToy": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0468_boatcontrol_NonLatchingNO30A": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0469_NRC2016_usb_sio": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0470_ChirpHardware_chirp": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0471_BlueBerry-Zero_blueberry": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0472_T962A-UpgradeBoard_T962A-UpgradeBoard": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0473_data-manager_data-manager": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0474_smt-zvs-driver_IH10": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0475_ESP_BaPoTeSta_ESP_BaPoTeSta": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0476_RX5808_diversityModule": {
+      "n_track_widths": 7,
+      "wire_type": "W5+_rich"
+    },
+    "0477_MeArm-Wireless-PCB_MeArmWireless": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0478_PmodHDMIIn_PmodHDMIIn": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0479_HW-AC-Emeter_ac-power-monitor": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0480_hwstar_ac-power-monitor": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0481_Hardware_Playground_nrf52832_uno": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0482_Hardware_Playground_rfm69w_adapter": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0483_Hardware_Playground_Touch_Switch_1ch_PCB": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0484_MAVRIC_Hardware_pcieduino": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0485_moonpunchorg_pcieduino": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0486_WyoManiacalDisplay_WyoDisplay": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0487_nunchuk_rf_hw_NunchukRF_V3": {
+      "n_track_widths": 6,
+      "wire_type": "W5+_rich"
+    },
+    "0488_stm32_ccd_camera_ccd": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0489_minievse_minievse": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0490_fifogfx_c64cart": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0491_ponchoeduciaaiot_ponchoeduciaaiot": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0492_bt-tnc_tnc": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0493_gdrom_adapter_board_adapter": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0494_Youyue-858D-plus-MCU-adapter_youyue-858d-plus-mcu-adapter": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0495_6volt-5W-solar-cc_6vleadacidsolar": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0496_kitspace_f-91w": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0497_kitspace_threeboard": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0498_kitspace_Spikeling_V2.1": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0499_fan_controller_fan_controller": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0500_LED_port-status_LED_port-status": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0501_led_array_atmega8_led_array": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0502_MYS-PMS7003_MYS-PMS7003": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0503_WS2811LEDMatrix_matrixcontrol": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0504_TeensyProtoboard_TeensyProtoboard": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0505_Dekada_dekada": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0506_Dekada_dekada_1210_example": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0507_Dekada_dekada_TopoR_curves": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0508_kitspace_sympetrum-v2%20NFF1.1": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0509_LiFePO4-Charge-Controller_LiFePO4-Charge-Controller": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0510_pesho_pesho": {
+      "n_track_widths": 12,
+      "wire_type": "W5+_rich"
+    },
+    "0511_boatcontrol_CommonCathode60A": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0512_Protoboard-DIP-for-CHIP_chip-dip-protoboard": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0513_esp32-ethernet_esp32-ethernet": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0514_esp8266_32x32panel_esp_12_f_595": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0515_esp8266_32x32panel_esp_12_f_595_ORDERED": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0516_MicroMaple_MicroMaple": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0517_bobc_MS-F100": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0518_mosavr_pcie1x_backplane": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0519_LogicBoxen_LogicBoxen": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0520_RGBMatrixPanelCPLD-PhotonBackpack_RGBMatrixPanel_CPLD_negative": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0521_RGBMatrixPanelCPLD-PhotonBackpack_RGBMatrixPanel_CPLD_positive": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0522_bypass_crossmix_bypass_crossmix": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0523_hardware-designs_nixie-combo": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0524_Baofeng-Interface_BaofengInterfaceIsolated": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0525_pcb-covox-amp-v2_pcb-covox-amp-v2": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0526_makerspace-emonth_load_box": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0527_WHCS-Base-Station_base-station": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0528_esp8266_esp-output": {
+      "n_track_widths": 9,
+      "wire_type": "W5+_rich"
+    },
+    "0529_kitspace_flypi": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0530_RC2014_RC2014 Tandy Sound Card": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0531_mini_ice40_mini_ice40": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0532_rxadc_14_rxadc_14": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0533_headstage-adapter_headstage adapter": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0534_kitspace_Driverino-Shield": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0535_anima_MotorDrive": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0536_avr-fuser-32_adapter": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0537_rodi-pcb_rodi-pcb": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0538_tdstat_TDstatv2": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0539_antdroid-board_antdroid-board": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0540_CPU-Power-Supply-Mod_CPU_Power_Supply_Mod": {
+      "n_track_widths": 7,
+      "wire_type": "W5+_rich"
+    },
+    "0541_cnlohr_wiflier": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0542_bobc_led_clock": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0543_solar-lora_solar-lora": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0544_wavegen_waveform-generator-rev1": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0545_wavegen_wavegen": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0546_ozinverter_ozinverterkicad": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0547_kitspace_Oak": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0548_kitspace_training_board_v02": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0549_bmw-ibus-bluetooth_bmw_bt_cdcemu_digital": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0550_Box0-hv-analog-breakoutboard_breakout": {
+      "n_track_widths": 7,
+      "wire_type": "W5+_rich"
+    },
+    "0551_KiwiSDR_PCB_ant": {
+      "n_track_widths": 7,
+      "wire_type": "W5+_rich"
+    },
+    "0552_wavegen_wavegen-alt": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0553_ESP32-board_esp32_board": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0554_LED_Clock_AM_led_clock": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0555_analogevse_AnalogEVSE": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0556_UniversalBoard4Nucleo_Nucleo_Universal_Board": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0557_Teensy-3.5-Breakout-Boaard_Teensy35Mega": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0558_cnlohr_wiflier_B": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0559_Biscay_Blueeye_sipm-fpga": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0560_PSU-5V-6V-Dual9V_PSU-5V-6V-Dual9V": {
+      "n_track_widths": 9,
+      "wire_type": "W5+_rich"
+    },
+    "0561_MAVRIC_Hardware_Motherboard": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0562_MAVRIC_Hardware__autosave-Motherboard": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0563_OpAmpPassXsistorBenchSupply_OpAmpPassXsistorBenchSupply": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0564_Inhibition_amplifier": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0565_eeg_brainboard_batteryv0": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0566_TinyTracker_ub-minimal": {
+      "n_track_widths": 7,
+      "wire_type": "W5+_rich"
+    },
+    "0567_kitspace_T32_ref": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0568_ESCPT_data": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0569_stm32-network-rs232_stm32-network-rs232": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0570_bee-light-measurement-matrix_bee-light-measurement-matrix": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0571_Brushless_ESC_Brushless_ESC": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0572_Hardware_Playground_esp8266_uno_relay": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0573_battmanpi_battmanpi": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0574_Hardware_Playground_usb_shield": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0575_kitspace_USBee32-S2": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0576_srambo_1_srambo_1": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0577_Shift-out-32-HC595_Shift-out": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0578_stubby_hex": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0579_Hardware_Playground_esp8266_uno": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0580_nodemcu-basecamp_NodeMCU Basecamp": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0581_a123-battery-integration_BCM": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0582_Sensory_Adaptation_Bot_sa_bot": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0583_elec-power-bms_OSBMS Balancer Rev1": {
+      "n_track_widths": 7,
+      "wire_type": "W5+_rich"
+    },
+    "0584_Hardware_Playground_orange_pi_zero_node": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0585_nichiden27_PISCIUM": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0586_kitspace_aquarius": {
+      "n_track_widths": 9,
+      "wire_type": "W5+_rich"
+    },
+    "0587_xwhatits-capsense-controller_amkey-usb": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0588_DSKY-alarm-panel-replica_DSKY_alarm": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0589_kassenautomat.mdb-interface_mdb-interface": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0590_Mechaduino-DR_Mechaduino DR 1.01": {
+      "n_track_widths": 8,
+      "wire_type": "W5+_rich"
+    },
+    "0591_PoEPi-hardware_pizero-poe": {
+      "n_track_widths": 10,
+      "wire_type": "W5+_rich"
+    },
+    "0592_protoarray_proto_array": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0593_vhf-radio_exp-1": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0594_kitspace_sensor": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0595_LoRaPP_loramod": {
+      "n_track_widths": 8,
+      "wire_type": "W5+_rich"
+    },
+    "0596_stubby_stubby": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0597_UltrasonicSystem_Schematic": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0598_PDB_OSD_HARDWARE_Quadcopter Power Board": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0599_RGBMatrixPanelCPLD-PhotonBackpack_RGBMatrixPanel_CPLD": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0600_Hardware_Playground_rpi_zero": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0601_kitspace_USB-C-Screen-Adapter": {
+      "n_track_widths": 7,
+      "wire_type": "W5+_rich"
+    },
+    "0602_PoEPi-hardware__autosave-pizero-poe": {
+      "n_track_widths": 10,
+      "wire_type": "W5+_rich"
+    },
+    "0603_f.60_keyboard": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0604_recalbox-gpio-board__autosave-board": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0605_recalbox-gpio-board_board": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0606_elec_power_dispatch": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0607_tmk_HHKB_controller": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0608_cdi-tach_cdi-tach": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0609_avr_ledprojector_avr_ledprojection": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0610_bobc_matrix_clock": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0611_avr_ledprojector_avr_ledprojection-0402": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0612_balena-rover-wide-hat_resin-rover": {
+      "n_track_widths": 6,
+      "wire_type": "W5+_rich"
+    },
+    "0613_Teensy-3.5-Breakout-Boaard_TeensyMegaIoShield": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0614_rfcx-sentinel-pcb_Mainboard": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0615_Omega2-Berrydock_berrydock-mini": {
+      "n_track_widths": 10,
+      "wire_type": "W5+_rich"
+    },
+    "0616_MixSID_mixsid": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0617_divergence_meter_dm_nixiebrd": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0618_LMS6002-Pmod_LMS6002-Pmod": {
+      "n_track_widths": 8,
+      "wire_type": "W5+_rich"
+    },
+    "0619_Apple-M0110-BT_Apple M0110": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0620_memsarray_mems_array": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0621_eeg_brainboardv0": {
+      "n_track_widths": 6,
+      "wire_type": "W5+_rich"
+    },
+    "0622_Aria_Aria": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0623_rk86kngmd_rk86kngmd": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0624_elbsupply_elbsupply": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0625_digital_clock_led_clock_v1": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0626_TOBS_HybridChargeController": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0627_divergence_meter_dm_control": {
+      "n_track_widths": 7,
+      "wire_type": "W5+_rich"
+    },
+    "0628_digital_clock_led_clock_3_and_4_digit": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0629_Hardware_Playground_BL_PCB_latest": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0630_gsm-iot-core-hw_gsm-iot-core": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0631_kitspace_dropbot-front-panel": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0633_NRC2016_z80": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0632_TripleDelay2399_TripleDelay2399": {
+      "n_track_widths": 6,
+      "wire_type": "W5+_rich"
+    },
+    "0634_arduino-led-driver_arduino-led-driver": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0635_BUF-DiffToSE-ADAU1966_BUF-DiffToSE-ADAU1966": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0636_kitspace_120-channel-test-board": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0637_Electronics-MainBoard_MainBoard": {
+      "n_track_widths": 8,
+      "wire_type": "W5+_rich"
+    },
+    "0638_DoroidOscillo-Board_Android_Oscilloscope": {
+      "n_track_widths": 11,
+      "wire_type": "W5+_rich"
+    },
+    "0639_pwm-2420-lus_pwm-2420-lus": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0640_kitspace_d20_r0.1": {
+      "n_track_widths": 8,
+      "wire_type": "W5+_rich"
+    },
+    "0641_tiny-8088_Computer": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0642_rjw57_cpu-board": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0643_xmasOrn_xmasOrn": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0644_AmpOne_dev-AmpOne": {
+      "n_track_widths": 7,
+      "wire_type": "W5+_rich"
+    },
+    "0645_Own-Mailbox-Hardware_eth": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0646_juno-chorus-clone_juno-chorus-clone": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0647_Simple_84_Keyboard_84": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0648_zx-sizif-128_sizif128": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0649_kitspace_mppt-1210-hus": {
+      "n_track_widths": 6,
+      "wire_type": "W5+_rich"
+    },
+    "0650_kitspace_PSLab": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0651_youtubeplaybutton_playbutton": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0652_kitspace_lpa96": {
+      "n_track_widths": 4,
+      "wire_type": "W3-4_multi"
+    },
+    "0653_BrushlessESC_esc": {
+      "n_track_widths": 6,
+      "wire_type": "W5+_rich"
+    },
+    "0654_2d_conduction_sk9822-matrix": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0655_ADC-PCM4202-SE_ADC-PCM4202-SE": {
+      "n_track_widths": 15,
+      "wire_type": "W5+_rich"
+    },
+    "0656_Horticulture_Light_EQ_3-Band_light": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0657_mppt-2420-hpx_mppt-2420-hpx": {
+      "n_track_widths": 6,
+      "wire_type": "W5+_rich"
+    },
+    "0658_sweet-sixteen_sweet-sixteen": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0659_ADC-PCM4202_ADC-PCM4202": {
+      "n_track_widths": 11,
+      "wire_type": "W5+_rich"
+    },
+    "0660_bumps_bumps": {
+      "n_track_widths": 21,
+      "wire_type": "W5+_rich"
+    },
+    "0661_mechkeys_MF68+10": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0662_stm32_mech_keyboard_TCKB": {
+      "n_track_widths": 9,
+      "wire_type": "W5+_rich"
+    },
+    "0663_bms-8s50-ic_bms-8s50-ic": {
+      "n_track_widths": 6,
+      "wire_type": "W5+_rich"
+    },
+    "0664_klangorium_logic_noise_playground": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0665_kitspace_d20_tri_r0.2": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0666_kitspace_d20_tri_r0.3": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0667_kitspace_tri_panel_4up_r0.1": {
+      "n_track_widths": 5,
+      "wire_type": "W5+_rich"
+    },
+    "0668_Keyboard_PCB_Keyboard": {
+      "n_track_widths": 7,
+      "wire_type": "W5+_rich"
+    },
+    "0669_timecircuits-hardware_BTTF-TimeCircuits": {
+      "n_track_widths": 6,
+      "wire_type": "W5+_rich"
+    },
+    "0670_wiggleport_wiggle-spine": {
+      "n_track_widths": 6,
+      "wire_type": "W5+_rich"
+    },
+    "0671_VB-IoT1_VB-IoT1_v1": {
+      "n_track_widths": 7,
+      "wire_type": "W5+_rich"
+    },
+    "0672_DAC-ADAU1966_DAC-ADAU1966": {
+      "n_track_widths": 9,
+      "wire_type": "W5+_rich"
+    },
+    "0673_kitspace_40-channel-hv-switching-board": {
+      "n_track_widths": 2,
+      "wire_type": "W2_dual"
+    },
+    "0674_opendous_Upconverter": {
+      "n_track_widths": 19,
+      "wire_type": "W5+_rich"
+    },
+    "0675_DSP-ADAU1452_DSP-ADAU1452": {
+      "n_track_widths": 15,
+      "wire_type": "W5+_rich"
+    },
+    "0676_dorkyboard_keyboard": {
+      "n_track_widths": 1,
+      "wire_type": "W1_uniform"
+    },
+    "0677_kitspace_glasgow": {
+      "n_track_widths": 3,
+      "wire_type": "W3-4_multi"
+    },
+    "0678_oskirby_logicbone": {
+      "n_track_widths": 15,
+      "wire_type": "W5+_rich"
+    },
+    "0679_Aleste-520EX_aleste": {
+      "n_track_widths": 6,
+      "wire_type": "W5+_rich"
+    }
+  },
+  "dataset_dirs": {
+    "train": "${CADAGENT_DATA_ROOT}/pcbench/exacad_sorted",
+    "val": "${CADAGENT_DATA_ROOT}/pcbench/exacad_sorted",
+    "test": "${CADAGENT_DATA_ROOT}/pcbench/exacad_sorted"
+  }
+}

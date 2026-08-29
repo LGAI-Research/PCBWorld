@@ -1,0 +1,46 @@
+# D2-B midboard reward rule — linear-DRV anchor with bbox-normalized
+# wirelength/via efficiency terms. Twin of reward_log_wlnorm.yaml (same
+# efficiency terms, log_per_net DRC) so the pair isolates the DRC-shape axis.
+#
+# Design: every coefficient is an exchange rate against the anchor
+# DRV = 1.0 (linear — constant marginal price, no leniency at high counts,
+# no concave bonus spike at zero):
+#   * unconnected 1.0    — an unrouted edge ALSO counts as an "unconnected"
+#     DRC violation (every unrouted net is dirty from reset — reward.py), so
+#     its all-in price is 2 (unconnected + its DRV); connecting a net while
+#     creating exactly 1 new violation nets +1 (not break-even). NOTE: this
+#     arithmetic holds only under linear DRC 1.0 — under log_per_net the
+#     marginal value of one DRV decays with the net's violation count.
+#   * completion 3.0 fixed (not log(net_count)) — the last edge pays +5
+#     (edge 2 + completion 3); caps the "dirty finish" appetite at <=5 new
+#     violations for the last net.
+#   * wirelength 0.5 per board-long-edge (wirelength_bbox_normalize) —
+#     avoiding 1 DRV justifies up to 2 board-long-edges of detour.
+#   * via 0.2 — 5 vias = 1 DRV.
+#   * invalid_action_penalty 0.01 (= configs/reward default).
+#
+# Watch item: linear DRC is unbounded — early messy policies can reach
+# Phi_drc ~ -30..-50 (the original motivation for log_per_net). Monitor
+# early value loss / DRV counts; add a saturating floor only if it diverges.
+#
+# LAUNCH GOTCHA: campaign train_cell.sh scripts hardcode
+# --wirelength-penalty 0.002 --via-penalty 0.1 — those CLI overrides clobber
+# this file (env applies with_overrides before normalization). Cells using
+# this rule MUST NOT pass those flags.
+
+name: drc_linear_wlnorm
+mode: per_step
+
+potential:
+  completion_bonus: 3.0
+  unconnected_penalty: 1.0
+  wirelength_penalty: 0.5
+  wirelength_bbox_normalize: true
+  via_penalty: 0.2
+  wire_via_emission: per_step
+  drc_shape: linear
+  drc_penalty: 1.0
+  step_penalty: 0.0
+  truncation_mode: none
+  drc_severity_mode: errors_and_promoted
+  invalid_action_penalty: 0.01

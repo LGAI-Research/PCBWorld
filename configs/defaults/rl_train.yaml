@@ -1,0 +1,97 @@
+# RL training orchestration defaults  →  configs.loader.schema.{RLTrainConfig,PPOConfig,GRPOConfig}
+#
+# Train-only knobs (env-core is in env.yaml, network is in rl_policy.yaml). These
+# are the argparse defaults for methods/rl_agent/training/args.py (shared) and the PPO/GRPO
+# entrypoints. The trainer still reads args.<flag>; this YAML is just the single
+# place to see/edit the default numbers.
+
+shared:
+  iterations: 1000
+  # optimization (PPO-style clipped surrogate, both algos)
+  lr: 3.0e-4
+  clip_eps: 0.2
+  entropy_coef: 0.01
+  # normalize each sample's joint entropy by its max achievable entropy
+  # ln(N_valid) (per-head, masked) before the bonus — makes the bonus
+  # action-space-size invariant (e.g. mres 4x candidate ladders)
+  entropy_norm: false
+  batch_size: 64
+  max_grad_norm: 0.5
+  warmup_iters: 0
+  # peak-VRAM budget planner (methods/rl_agent/training/mem_budget.py): calibrate
+  # peak(B,L) on the first buffer, pre-split update minibatches AND rollout
+  # forwards to fit the measured free VRAM (24/48GB auto). Off = reactive
+  # OOM-peel only.
+  mem_budget: false
+  # logging / checkpointing
+  save_freq: 50
+  log_every: 1
+  seed: 42
+  device: auto
+  # inline held-out eval cadence
+  eval_n_rollouts: 5           # rollouts per eval board; fp_mean_of_means is unbiased in N, but max-style metrics are best-of-N and not comparable across different N
+  eval_base_seed: 1000
+  # board / dataset selection
+  boards_order: single
+  boards_json: null       # multi-board mode requires an explicit --boards-json (configs/datasets/)
+  boards_difficulty: easy
+  boards_split: train
+  boards_dataset_dir: null     # deprecated per-run dataset copy override
+  # inline held-out eval cadence (null = auto / once per round-robin pass)
+  eval_split: null
+  eval_every: null
+  eval_boards_per_batch: null
+  eval_board_limit: null
+  # secondary (diagnostic) inline eval set — evaluated each --eval-every alongside
+  # the primary --eval-split, logged under eval2_prefix/*. Does NOT drive best-ckpt.
+  eval2_boards: null           # plain-text board-list file (e.g. real d3-b); null = disabled
+  eval2_prefix: val_d3b        # dashboard prefix for the --eval2-boards set
+  eval3_boards: null           # third diagnostic board-list file (e.g. real d3-a); null = disabled
+  eval3_prefix: val_d3a        # dashboard prefix for the --eval3-boards set
+  eval4_boards: null           # fourth diagnostic board-list file (e.g. d2-b val subset); null = disabled
+  eval4_prefix: val_d2b        # dashboard prefix for the --eval4-boards set
+  eval5_boards: null           # fifth diagnostic board-list file (e.g. d2-a val subset); null = disabled
+  eval5_prefix: val_d2a        # dashboard prefix for the --eval5-boards set
+  # diagnostic-protocol pinning: override max_steps / masking-rule for the
+  # eval2..eval5 sets only (cross-cell comparability when cells vary the train
+  # protocol). null = inherit the run's train protocol.
+  eval_diag_max_steps: null
+  eval_diag_masking_rule: null
+  eval_at_init: false          # eval the initial (zero-shot) policy at iter 0 (logged, excluded from best-ckpt)
+  eval_greedy: true            # greedy(argmax) 1-rollout pass on the primary val set each cadence -> val_greedy/* (diagnostic; --no-eval-greedy)
+  # detached validation: at each eval cadence, queue the policy into <save-dir>/val_queue/
+  # for an external watcher process (methods/rl_agent/training/async_val.py) instead of
+  # evaluating inline; results land in the trainer's own TB/W&B run when they arrive
+  async_val: false
+  # Weights & Biases (wandb = master toggle; default off — opt in with --wandb)
+  wandb: false
+  wandb_project: null
+  wandb_entity: null
+  wandb_group: null
+  wandb_run_name: null
+  wandb_tags: null
+  # vectorized env (--no-vecenv inverts); resume checkpoint path
+  vecenv: true
+  resume: null
+
+ppo:
+  n_epochs: 10
+  n_envs: 4
+  n_steps: 2048
+  gamma: 1.0
+  gae_lambda: 0.95
+  vf_coef: 0.5
+  norm_reward_clip: 10.0
+  # positive master toggles (inverted CLI: --no-normalize-adv / -truncation-bootstrap / -norm-reward)
+  normalize_adv: true
+  truncation_bootstrap: true
+  norm_reward: true
+  log_dir: ./logs/tb/ppo_decoder
+  save_dir: ./checkpoints/ppo_decoder
+
+grpo:
+  n_epochs: 4
+  n_envs: 4
+  group_size: 8
+  log_dir: ./logs/tb/grpo_decoder
+  save_dir: ./checkpoints/grpo_decoder

@@ -1,0 +1,45 @@
+# cadagent LLM (verl) training defaults  →  configs.loader.schema.LLMTrainConfig
+#
+# The cadagent-specific slice of the verl Hydra config — the ``env.cadagent.*``
+# block plus the ``env.*`` knobs cadagent reads. This is the single place to
+# see/edit the ``config.env.cadagent.*`` defaults consumed by the verl-agent
+# patch (agent_system/.../env_manager.py) and by the LLM rollout manager
+# (methods/llm_agent/training/manager.py). The verl launch script
+# (external/verl-agent-patch/examples/run_cadagent.sh) supplies per-run
+# overrides via ``+env.cadagent.<key>=...``.
+#
+# Read into the dataclass with LLMTrainConfig.from_verl_config(cfg); the verl
+# config keeps its omegaconf surface, this is only the defaults source — exactly
+# like rl_train.yaml for the RL trainer and llm.yaml for LLM eval.
+
+# env-core (PCBWorld build knobs; env_kwargs for build_cadagent_envs)
+max_steps: 200            # read from config.env.max_steps
+masking_rule: strict
+reward_rule: default
+state_format: sexpr       # LLM-only observation serialization (sexpr|xml)
+corner_mode: 0            # engine code 0..3 (0=MITERED_45, 2=MITERED_90)
+via_penalty: null         # null = use reward-config value
+reward_noise_std: 0.0
+emit_drc_tokens: true
+
+# prompt (consumed by methods/llm_agent/training/manager.py)
+prompt_version: v1
+history_length: 0         # read from config.env.history_length
+
+# board scheduling — train (BoardScheduler / BoardSchedulerConfig)
+boards_order: single      # single | round_robin | per_env_random | per_env_epoch
+boards_json: null         # multi-board mode requires an explicit --boards-json
+boards_difficulty: easy
+boards_split: train
+
+# board scheduling — val (val_boards_split null = inherit boards_split)
+val_boards_order: single
+val_boards_split: null
+
+# episode scoring + guided decoding
+score_train_episodes: false   # per-episode DRC scoring for TRAIN rollouts (val always on)
+guided_decoding_grammar: null # name in methods.llm_agent.wrappers.grammar GRAMMARS (vLLM constrained decode)
+
+# misc
+seed: 0                   # read from config.env.seed (BoardScheduler seeding)
+board_path: null          # required runtime input (env.cadagent.board_path); no default

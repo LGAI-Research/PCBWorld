@@ -1,0 +1,24 @@
+# RL eval orchestration defaults  →  configs.loader.schema.RLEvalConfig
+#
+# Eval-pipeline-only knobs (env/policy come from the checkpoint at eval time;
+# see env.yaml / rl_policy.yaml). These are the defaults the eval CLI / helpers
+# read. NOTE: "on"/"off" are quoted so PyYAML keeps them as strings, not bools.
+
+rollout_mode: serial
+n_envs: 1
+env_drc: null               # null = inherit ckpt's emit_drc_tokens; "on"/"off" to force
+inline_drc: "off"           # where DRC scoring runs (inline vs post-hoc Stage 2)
+reward_config: drc_dense_errors_only_eval   # DRC scoring reward (configs/reward/*.yaml)
+check_angle: 45             # no-ckpt fallback; normally inherits ckpt corner_mode
+selection_method: final_potential
+override_n_max_slots: 1280  # lift the ckpt's trained slot cap at inference; null = inherit
+save_artifacts: "on"
+output_root: outputs/eval_overall
+device: auto
+early_stop_finish_no_progress: 0
+early_stop_no_geometry_progress: 0
+# Best-checkpoint selection — the SINGLE canonical criterion shared by RL
+# (PPO+GRPO inline best-ckpt) AND LLM (verl trainer.best_metric_key). "the
+# largest fp gain is best": maximize the val final-potential aggregate.
+best_metric_key: val/fp_mean_of_means
+best_metric_mode: max

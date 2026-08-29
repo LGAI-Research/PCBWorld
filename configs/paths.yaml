@@ -1,0 +1,37 @@
+# Single source of truth for dataset (input) and output paths.
+#
+# Resolver: configs/loader/paths.py — resolve_dataset(name) / stage_dataset(name).
+# Every value supports shell-style ${ENV:-default} override (expanded at load time).
+#
+# Relative roots (./var/...) are anchored to the repo root, not the cwd.
+
+campaign: ${CADAGENT_CAMPAIGN:-kdd}        # namespaces OUTPUT only (out/ckpt); inputs are campaign-shared.
+
+roots:
+  # Read-only canonical inputs. The datasets are NOT distributed with this repo;
+  # set CADAGENT_DATA_ROOT to the root of your own copy, laid out with the `sub`
+  # paths listed under `datasets:` below. There is no baked-in default: when a
+  # dataset is requested without a staged copy and this variable is unset, the
+  # resolver fails loudly naming CADAGENT_DATA_ROOT.
+  data:   ${CADAGENT_DATA_ROOT:-}
+  staged: ${CADAGENT_STAGED_ROOT:-./var/datasets}       # local real-copy cache (campaign-shared).
+  out:    ${CADAGENT_OUT_ROOT:-./var/results}           # writable outputs; resolver appends <campaign>.
+  ckpt:   ${CADAGENT_CKPT_ROOT:-./var/checkpoints}      # checkpoints; resolver appends <campaign>.
+
+# Logical dataset name -> path relative to a root (same sub under data and staged,
+# so stage_dataset can copy data/<sub> -> staged/<sub> verbatim). Together these
+# define the directory layout expected under CADAGENT_DATA_ROOT.
+datasets:
+  # methods/baselines/rule_based/_lib/datasets.py
+  synth_2L_v2:      {sub: synthetic/synth_2L_v2}
+  # D2-A-100k: 100k-train clean-seed (linear) sibling of synth_2L_v2 (the paper's
+  # D2-A) — same distribution, 10x train, disjoint linear seed bands.
+  D2-A-100k: {sub: synthetic/D2-A-100k}
+  # DSN mirror of synth_2L_v2 (SPECCTRA exports consumed by the rule-based runners).
+  synth_2L_v2_dsn:  {sub: synthetic/synth_2L_v2_dsn}
+  pcbench_exacad:   {sub: pcbench/exacad_sorted}
+  # methods/llm_agent/rollout/plan_only.py (LLM response summaries replayed by the
+  # plan-only driver; the dirs inside keep their legacy apiseq_* names)
+  plan_only_responses: {sub: cadagent_baseline_summaries}
+  # NOTE: grid-parameterized synth_1L families (synth_1L_grid{grid}_5net_v02[_dsn]) are
+  # templated per call site, so they are wired there rather than registered here.

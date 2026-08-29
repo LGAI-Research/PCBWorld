@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PCBWorld — Supplementary Videos</title>
+<style>
+  body {
+    font-family: Georgia, "Times New Roman", serif;
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 2.5rem 1.5rem 4rem;
+    color: #1a1a1a;
+    background: #fdfdfd;
+    line-height: 1.55;
+  }
+  h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+  .subtitle { color: #555; margin-top: 0; font-size: 0.95rem; }
+  h2 { font-size: 1.1rem; margin-top: 2.2rem; border-bottom: 1px solid #ddd; padding-bottom: 0.3rem; }
+  video {
+    display: block;
+    margin: 0 auto;
+    max-width: 100%;
+    max-height: 65vh;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #000;
+  }
+  .caption { font-size: 0.9rem; color: #444; margin-top: 0.5rem; }
+  code { font-family: "Courier New", monospace; font-size: 0.9em; background: #f0f0f0; padding: 0 0.2em; }
+</style>
+</head>
+<body>
+
+<h1>PCBWorld — Supplementary Videos</h1>
+<p class="subtitle">Media appendix to the supplementary material (Appendix&nbsp;N, <em>Visualization gallery and LLM failure traces</em>)</p>
+
+<p>
+The two videos below accompany the case studies in Appendix&nbsp;N of the supplementary material.
+Each video shows a tool-using LLM agent (GPT-5.4, interactive mode) routing a real production board (D3-A) in PCBWorld.
+The agent acts step by step through the engine's native routing operations and receives per-operation engine feedback; both episodes end in a successfully routed board.
+</p>
+
+<h2>Video 1 — Case Study 1 board (<code>0018_hy_adapter</code>, Figure&nbsp;28)</h2>
+<video controls muted preload="metadata" src="0018_Hardware_Playground_hy_adapter_episode_00_env_00_GPT_success.mp4"></video>
+<p class="caption">A successful episode on the Case Study 1 board, where the first net-selection decision largely determines the routing outcome.</p>
+
+<h2>Video 2 — Case Study 2 board (<code>0100_smt-zvs-driver_IH10-mc</code>, Figure&nbsp;29)</h2>
+<video controls muted preload="metadata" src="0100_smt-zvs-driver_IH10-mc_GPT_success.mp4"></video>
+<p class="caption">A successful episode on the Case Study 2 board, where the agent avoids congestion through early-stage planning.</p>
+
+</body>
+</html>

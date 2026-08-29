@@ -1,0 +1,31 @@
+# Eval-only variant of the Transformer 2L training reward.
+#
+# Training (PPO on Synth2L) used drc_dense_promoted with these per-run
+# overrides — see docs/QUICKSTART.md ("Canonical training settings"):
+#   wirelength_penalty: 0.002
+#   via_penalty:        0.1
+# That config kept drc_severity_mode=errors_and_promoted so the agent was
+# penalised for ERROR-severity DRVs AND the three promoted warnings
+# (track_dangling / via_dangling / net_conflict). This file bakes in those
+# training overrides AND flips the DRC severity gate to ``errors_only`` so
+# eval scoring (Φ and clean_pass) is decided by genuine DRC errors —
+# promoted warnings and track-angle violations are reported separately but
+# do NOT subtract from Φ here. Same potential shape as training otherwise,
+# so Φ values stay directly comparable across Ours / FreeRouting / KRT.
+
+name: drc_dense_errors_only_eval
+mode: per_step
+
+potential:
+  completion_bonus_log_scale: 1.0
+  unconnected_penalty: 1.0
+  wirelength_penalty: 0.002
+  via_penalty: 0.1
+  wire_via_emission: per_step
+  drc_shape: log_per_net
+  drc_log_scale: 1.0
+  drc_log_agg_scale: 3.0
+  drc_log_offset: 2.0
+  step_penalty: 0.0
+  truncation_mode: none
+  drc_severity_mode: errors_only

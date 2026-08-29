@@ -1,0 +1,38 @@
+(version 1)
+
+# Extracted from sample_drc_violation.kicad_pro
+# Netclass Default / POWER: clearance 0.15mm
+(rule "Default Clearance"
+  (constraint clearance (min 0.15mm))
+)
+
+# Track width
+(rule "POWER Track Width"
+  (condition "A.NetClass == 'POWER'")
+  (constraint track_width (min 0.4mm))
+)
+(rule "Default Track Width"
+  (constraint track_width (min 0.19812mm))
+)
+
+# Via size
+(rule "POWER Via"
+  (condition "A.NetClass == 'POWER'")
+  (constraint via_diameter (min 0.8mm))
+  (constraint hole_size (min 0.4mm))
+)
+(rule "Default Via"
+  (constraint via_diameter (min 0.5mm))
+  (constraint hole_size (min 0.4mm))
+)
+
+# Board-level rules
+(rule "Edge Clearance"
+  (constraint edge_clearance (min 0.01mm))
+)
+(rule "Hole To Hole"
+  (constraint hole_to_hole (min 0.25mm))
+)
+(rule "Annular Width"
+  (constraint annular_width (min 0.05mm))
+)

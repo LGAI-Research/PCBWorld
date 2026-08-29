@@ -1,0 +1,21 @@
+# D2-B midboard reward rule — drc_dense_promoted with invalid_action_penalty 0.1.
+# Promoted from configs/reward/drc_dense_promoted.yaml (invalid_action_penalty
+# 0.01 → 0.1); the 0.1 magnitude is fixed across all 8 factorial cases.
+
+name: drc_dense_promoted_invpen01
+mode: per_step
+
+potential:
+  completion_bonus_log_scale: 1.0
+  unconnected_penalty: 1.0
+  wirelength_penalty: 0.0
+  via_penalty: 0.0
+  wire_via_emission: per_step
+  drc_shape: log_per_net
+  drc_log_scale: 1.0
+  drc_log_agg_scale: 3.0
+  drc_log_offset: 2.0
+  step_penalty: 0.0
+  truncation_mode: none
+  drc_severity_mode: errors_and_promoted
+  invalid_action_penalty: 0.1

@@ -1,0 +1,36 @@
+# D2-B midboard reward rule — reward.yaml (drc_dense_promoted_invpen01) with
+# bbox-normalized wirelength/via efficiency terms. DRC shape unchanged
+# (log_per_net 1/3/2) so the comparison against the linear-anchor cell
+# (reward_linear_wlnorm.yaml) isolates the DRC-shape axis.
+#
+# Efficiency terms:
+#   * wirelength 0.5 per board-long-edge of copper (wirelength_bbox_normalize:
+#     env divides by max(bbox_w, bbox_h) at init) — scale-invariant, unlike an
+#     absolute per-mm penalty.
+#   * via 0.2 (5 vias = 1 linear DRV).
+#   * invalid_action_penalty 0.01 (= configs/reward default; the 0.1 of
+#     reward.yaml is dropped).
+#
+# LAUNCH GOTCHA: campaign train_cell.sh scripts hardcode
+# --wirelength-penalty 0.002 --via-penalty 0.1 — those CLI overrides clobber
+# this file (env applies with_overrides before normalization). Cells using
+# this rule MUST NOT pass those flags.
+
+name: drc_dense_promoted_wlnorm
+mode: per_step
+
+potential:
+  completion_bonus_log_scale: 1.0
+  unconnected_penalty: 1.0
+  wirelength_penalty: 0.5
+  wirelength_bbox_normalize: true
+  via_penalty: 0.2
+  wire_via_emission: per_step
+  drc_shape: log_per_net
+  drc_log_scale: 1.0
+  drc_log_agg_scale: 3.0
+  drc_log_offset: 2.0
+  step_penalty: 0.0
+  truncation_mode: none
+  drc_severity_mode: errors_and_promoted
+  invalid_action_penalty: 0.01

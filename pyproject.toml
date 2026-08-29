@@ -1,0 +1,63 @@
+[project]
+name = "pcbworld"
+# Kept in sync with the README.md <!--VERSION--> marker; enforced by
+# tools/docs/check_docs.py (version-sync).
+version = "1.0.0"
+requires-python = ">=3.12"
+
+# All direct dependencies are pinned (==) to the versions measured in the working
+# `cadagent` env; `requirements.txt` is the fully resolved lock generated from this file
+# (uv pip compile, linux x86_64 / py3.12). Bump pins here, then regenerate the lock.
+dependencies = [
+    # --- engine / env core ---
+    "kicad-python==0.6.0",
+    "numpy==2.2.6",
+    "pyyaml==6.0.3",
+    "filelock==3.25.2",
+    "cloudpickle==3.1.2",
+    "psutil==7.2.2",
+    "tqdm==4.67.3",
+    "requests==2.33.1",
+    "pydantic==2.12.5",
+    "gymnasium==1.2.3",
+    # --- rendering / figures ---
+    # rasterises kicad-cli PDF exports (pcb_world/rendering); BSD/Apache-licensed
+    "pypdfium2==5.12.1",
+    "pillow==12.1.1",
+    "matplotlib==3.10.8",
+    "pandas==3.0.1",
+    # --- training stack ---
+    # torch 2.8.x is required: flash-attn 2.8.1 is compiled against torch 2.8 ABI
+    # and is not compatible with torch 2.9+.
+    "torch==2.8.0",
+    "tensorboard==2.20.0",
+    # Ray is needed by CadagentEnvs (Ray-based vectorized environment).
+    "ray[default]==2.54.1",
+    # tensordict is used by verl's rollout buffer.
+    "tensordict==0.10.0",
+    # vllm is the LLM inference backend for verl-agent training.
+    "vllm==0.11.0",
+    "transformers==5.5.3",
+    # flash-attn: pre-built wheel for CUDA 12 / torch 2.8 / Python 3.12 / Linux x86_64.
+    # Platform marker ensures this is silently skipped on non-Linux or non-x86_64 hosts.
+    "flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.1/flash_attn-2.8.1+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # --- LLM agent APIs / logging ---
+    "openai==2.31.0",
+    "anthropic==0.111.0",
+    "google-genai==2.9.0",
+    "wandb==0.26.1",
+    # --- rule-based baselines (single-env merge) ---
+    # upstream KRT route.py needs shapely; scipy/psutil/cupy already arrive via vllm/ray
+    "shapely==2.1.2",
+    # --- tooling / tests ---
+    # provides the `pynvml` module used by tools/diagnostics/speed_profiler
+    "nvidia-ml-py==13.610.43",
+    "pytest==8.4.2",
+    "pytest-xdist==3.8.0",
+    # build-time only, but engine/build_rl_router.sh hard-checks `import pybind11`
+    "pybind11==3.0.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]   # collected recursively
+addopts = "-n 32 --dist loadfile"   # parallel via pytest-xdist; disable with -n 0 (needed for --pdb/-s). 32 > 16 on the 64-core hosts (26.4s -> 21.3s); -n auto (=64) is SLOWER (29s, worker-startup bound)

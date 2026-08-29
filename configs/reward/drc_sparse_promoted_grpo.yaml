@@ -1,0 +1,34 @@
+# Terminal-mode version of drc_dense_promoted — GRPO only.
+# Penalizes ERROR plus the three promoted warnings (track_dangling,
+# via_dangling, net_conflict), with r_t = -step_penalty on every step and
+# r_T = Φ(s_final) at the end of the episode.
+# In terminal mode the wire_via_emission axis has no effect (everything is
+# delivered once, at the end of the episode).
+#
+# truncation_mode: full — on truncation the env emits Φ(s_final) as an explicit
+# reward, exactly as on termination. GRPO has no critic / GAE bootstrap, so the
+# terminal Φ has to come from the env for learning to work.
+#
+# PPO terminal runs use drc_sparse_promoted_ppo (truncation_mode: none) instead
+# — the SB3-idiomatic path where the critic's V(s_next) bootstrap absorbs future
+# Φ. The YAML is split only so that each algorithm implements the same terminal
+# reward in the way that is self-consistent for it.
+#
+# Alias: reward_config.py's _NAME_COMPAT maps the bare name
+# `drc_sparse_promoted` to this file. New scripts should spell out the
+# _grpo / _ppo suffix.
+
+name: drc_sparse_promoted_grpo
+mode: terminal
+
+potential:
+  completion_bonus_log_scale: 1.0
+  unconnected_penalty: 1.0
+  wirelength_penalty: 0.0
+  drc_shape: log_per_net
+  drc_log_scale: 1.0
+  drc_log_agg_scale: 3.0
+  drc_log_offset: 2.0
+  step_penalty: 0.0
+  truncation_mode: full
+  drc_severity_mode: errors_and_promoted

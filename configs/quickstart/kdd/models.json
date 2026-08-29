@@ -1,0 +1,6 @@
+{
+  "gpt-5.4":      {"api_provider": "openai",   "api_model": "gpt-5.4"},
+  "gpt-5.4-mini": {"api_provider": "openai",   "api_model": "gpt-5.4-mini"},
+  "gpt-5.4-nano": {"api_provider": "openai",   "api_model": "gpt-5.4-nano"},
+  "qwen3.5-397b": {"api_provider": "together", "api_model": "Qwen/Qwen3-235B-A22B"}
+}
