@@ -8,16 +8,16 @@ and the GUI panes that a human reads.
 Two outputs:
 
   - :func:`render_obs_human` walks the obs dict in the SAME ORDER as the
-    tokenizer's ``forward`` loop, so the lines line up 1:1 with the tokens
-    the policy sees. CAND lines are numbered with the same index space the
-    policy's pointer head samples against — printing ``[CAND 7]`` means
-    pointer_idx=7 will land there.
+    tokenizer's ``forward`` loop (state_tokenizer_batched.py:236-540), so
+    the lines line up 1:1 with the tokens the policy sees. CAND lines are
+    numbered with the same index space the policy's pointer head samples
+    against — printing ``[CAND 7]`` means pointer_idx=7 will land there.
 
   - :func:`render_action_human` formats ``(action_type, pointer_idx,
     routing_mode)`` plus the resolved candidate coordinate into one line
     suitable for the history pane.
 
-Lives next to the policy so any tokenizer schema change is reviewed
+Lives in ``policy/rl/`` so any tokenizer schema change is reviewed
 alongside the renderer that mirrors it.
 """
 
@@ -32,7 +32,7 @@ from methods.rl_agent.models.v1.embedding import CandidateType, EntityType, Stru
 # Enum-ish integer → label maps
 # ---------------------------------------------------------------------------
 
-# KiCad PNS router strategies (pcb_world/engine/kicad_engine.py).
+# KiCad PNS router strategies (envs/engine_api/kicad_engine.py:142-144).
 _ROUTING_MODE_NAMES = {
     0: "mark_obstacles",
     1: "shove",
@@ -46,7 +46,7 @@ _NET_PHASE_NAMES = {
     2: "routing",         # actively routing
 }
 
-# CandidateType labels (methods/rl_agent/models/v1/embedding.py).
+# CandidateType labels (policy/rl/token_vocabulary.py:85-93).
 _CAND_TYPE_NAMES = {
     CandidateType.PAD_POINT.value:     "pad",
     CandidateType.TRACK_ENDPOINT.value: "track_end",
@@ -121,7 +121,8 @@ def _indent(level: int) -> str:
 
 def _format_state_sexpr_rl(obs: dict) -> str:
     """Emit the obs as an S-expression mirroring exactly what
-    :class:`BatchedStateTokenizer` reads. Always raw mm values.
+    :class:`BatchedStateTokenizer` reads (state_tokenizer_batched.py:237-510).
+    Always raw mm values.
 
     Intentionally diverges from :func:`methods.llm_agent.wrappers.state_converter.format_state_sexpr`:
 
@@ -535,7 +536,7 @@ def count_state_entities(
     Does not deduct truncations applied by ``max_*`` rendering caps — the
     intent is to report the count the *policy* sees, not the *user*.
     ``obstacle_obs`` / ``action_history_len`` mirror the policy's tokenizer
-    knobs (defaults = a single-entry action history, no OBSTACLE tokens).
+    knobs (defaults = legacy PREV_ACTION policy, no OBSTACLE tokens).
     """
     n = 0
     bs = obs.get("board_static", {}) or {}
@@ -559,7 +560,7 @@ def count_state_entities(
         n += len(ng.get("points") or [])
     n += len(obs.get("drc_violations") or [])
     n += 1  # HEAD
-    # CAND count is per-step variable; counted via candidate_pool.
+    # CAND count is per-step variable; counted via candidate_builder.
     from pcb_world.vec.candidate_pool import (
         collect_raw_candidates, build_directional_candidates,
     )
@@ -577,8 +578,8 @@ def count_state_entities(
     n += len(collect_raw_candidates(obs, cur_net, extra))
     # ACTION_HISTORY: 3 sub-tokens (at, pt, mode) per entry; the model pads
     # to its configured window with idle sentinels, so the policy always
-    # consumes 3*K regardless of how full the obs history is (K=1 == a single
-    # previous-action triple).
+    # consumes 3*K regardless of how full the obs history is (K=1 == the
+    # legacy PREV_ACTION triple).
     n += 3 * max(int(action_history_len), 1)
     n += 2  # VAL + SOD structural
     return n

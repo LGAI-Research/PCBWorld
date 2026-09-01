@@ -47,6 +47,7 @@ dependencies:
   - nng
   - unixodbc
   - libsecret
+  - git-lfs
   # GL headers + loader for the wx/GL build (libglvnd). Do NOT substitute the
   # mesa-libgl-cos7-* packages: they are CentOS 7 builds and pull in a glibc
   # 2.17 sysroot, which then makes the compiler's math.h shim redeclare

@@ -3,8 +3,8 @@
 Thin CLI wrapper: builds the argument parser and delegates the training loop to
 :class:`methods.rl_agent.training.loop.PPOTrainer` (shared core in
 :class:`methods.rl_agent.training.loop.RLTrainer` / :class:`methods._shared.trainer.base.Trainer`).
-The clipped-objective PPO update with a critic head, GAE, and truncation
-bootstrap lives in the trainer; see those classes for the loop.
+The standard SB3-style clipped-objective PPO with a critic head, GAE, and
+truncation bootstrap now lives in the trainer; see those classes for the loop.
 
 Usage::
 
@@ -44,10 +44,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Disable per-minibatch advantage normalization (SB3 default is on)")
     p.add_argument("--no-truncation-bootstrap", action="store_true", default=False,
                    help="Disable V(s_next) bootstrap at truncation boundaries "
-                        "(treats truncation as termination with V=0)")
+                        "(legacy: treat truncation as termination with V=0)")
 
-    # Reward normalization (VecNormalize-style discounted-return scaling,
-    # on by default).
+    # Reward normalization (SB3 VecNormalize-equivalent — on by default,
+    # matching MLP `train.py` which uses VecNormalize(norm_reward=True)).
     p.add_argument("--no-norm-reward", action="store_true", default=False,
                    help="Disable SB3-style discounted-return reward normalization")
 
@@ -94,6 +94,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
                             "max-autotune-no-cudagraphs"],
                    help="torch.compile mode ('default' recommended — best in "
                         "measurements).")
+    p.add_argument("--attn", default="sdpa", choices=["sdpa", "flex"],
+                   help="State-pass attention kernel. 'flex' = flex_attention "
+                        "over a key-padding BlockMask (skips all-padding key "
+                        "blocks; ~1.2-1.5x on the transformer body, best with "
+                        "--bf16 --compile-regions efficient). Not bit-identical "
+                        "to sdpa (bf16-level kernel differences). Wired via "
+                        "KiCadRLModel.configure_speed.")
     p.add_argument("--update-gpus", type=int, default=1,
                    help="Rank-shard only the PPO update phase across N GPUs "
                         "(default 1 = current single-GPU path unchanged). "
@@ -101,7 +108,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         "alone; the N-1 workers (cuda:1..) do only updates. One "
                         "manual grad allreduce per minibatch keeps it numerically "
                         "equivalent to single-GPU (tests/test_ddp_equivalence.py). "
-                        "Incompatible with --mem-budget.")
+                        "Incompatible with --mem-budget (phase 1).")
     p.add_argument("--max-wallclock-sec", type=float, default=None,
                    help="Stop training after the iteration that first crosses "
                         "this wallclock budget (seconds). policy_last.pt is "

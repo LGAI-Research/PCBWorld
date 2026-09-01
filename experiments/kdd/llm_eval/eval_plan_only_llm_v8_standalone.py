@@ -1,13 +1,21 @@
-"""Plan-only (API-Seq) via LLM (no-train): open-loop CAD-API action sequence + replay.
+"""API-Seq v8 — standalone (no v1/v2/v3 imports).
 
-Standalone: state extraction, API call, action parser, env replay, per-board
-metrics, multi-k aggregator, together / openai providers and ``--reaggregate``
-all live in this file, with the system prompt inlined into the source.
+Single self-contained file: v1's full pipeline (state extraction,
+API call, action parser, env replay, per-board metrics, multi-k aggregator,
+together / openai providers, --reaggregate) with the v8 prompt inlined
+directly into the source, so the file runs standalone with no chained
+version needed on PYTHONPATH.
 
-Sister script to ``eval_engine_free_llm_v3_standalone.py`` (CAD-Gen). Where
-CAD-Gen asks the model for a finished board (raw segments + vias), API-Seq
-asks the model for the *sequence of CAD API calls* that would produce one —
-single shot, without showing intermediate routing state, masks, or candidates.
+Sister of eval_engine_free_llm_v3_standalone.py.
+
+Original v1 docstring follows.
+
+Plan-only (API-Seq) via LLM (no-train): open-loop CAD-API action sequence + replay.
+
+Sister script to ``eval_cadgen_llm.py``. Where CAD-Gen asks the model
+for a finished board (raw segments + vias), API-Seq asks the model for
+the *sequence of CAD API calls* that would produce one — single shot,
+without showing intermediate routing state, masks, or candidates.
 
 The LLM sees only:
     1. the initial board (static section: footprints, pads, nets),
@@ -16,7 +24,7 @@ The LLM sees only:
 
 Then we parse its action list, replay it through ``PCBWorld``, and
 score the final routed board with the same metric definitions as
-the CAD-Gen script (success / routability / DRV / wirelength).
+``eval_cadgen_llm.py`` (success / routability / DRV / wirelength).
 
 Per-board protocol:
     1. construct ``PCBWorld``, reset → render the *initial* board state
@@ -31,7 +39,7 @@ Per-board protocol:
            final reward snapshot,
         e. save the rolled-out PCB to ``sample_NN.kicad_pcb``.
     5. aggregate over N samples (pass@N, routability@N best/mean) — same
-       definitions as the CAD-Gen script.
+       definitions as eval_cadgen_llm.py.
 
 Outputs land in --output:
     output/per_board/<board_id>/sample_<i>.{kicad_pcb,kicad_pro,json,txt}
@@ -56,7 +64,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-_THIS_DIR = Path(__file__).resolve().parent.parent.parent  # llm_eval→kdd→experiments
+_THIS_DIR = Path(__file__).resolve().parent.parent.parent  # llm_eval→paper_repro→scripts→repo
 _KICAD_RL_DIR = _THIS_DIR / "build_rl" / "pcbnew" / "python" / "rl"
 for p in (_THIS_DIR, _KICAD_RL_DIR):
     s = str(p)
@@ -423,7 +431,7 @@ def build_user_prompt(target_board_static: str, examples: list[FewShotExample]) 
 
 
 # ---------------------------------------------------------------------------
-# OpenAI client
+# OpenAI client (mirrors eval_cadgen_llm.call_openai)
 # ---------------------------------------------------------------------------
 
 def call_openai(
@@ -569,8 +577,9 @@ def replay_actions_and_eval(
 ) -> dict:
     """Roll a fresh env, replay ``actions``, score the final state.
 
-    The returned metric dict uses the same field names as the CAD-Gen
-    script's per-sample JSONs, so the two are directly comparable.
+    Mirrors the metric shape of ``eval_pcb_file.evaluate`` (used by
+    ``eval_cadgen_llm.py``) so per-sample JSONs across the two scripts
+    are directly comparable.
     """
     env = _build_env(board_path)
     try:
@@ -602,7 +611,7 @@ def replay_actions_and_eval(
                 steps_rejected += 1
             steps_run += 1
 
-        # Final state snapshot.
+        # Final state snapshot (matches eval_pcb_file.evaluate fields).
         snap = env._engine.get_reward_snapshot(run_drc=True)
         u_t = snap.unrouted_count
         track_count = snap.track_count
@@ -662,7 +671,7 @@ def _failure_metrics(error: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Per-board orchestration
+# Per-board orchestration  (shape mirrors eval_cadgen_llm)
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -837,7 +846,7 @@ def run_one_board(
 
 
 # ---------------------------------------------------------------------------
-# Summary + overall stats   (same output schema as the CAD-Gen script)
+# Summary + overall stats   (identical schema to eval_cadgen_llm)
 # ---------------------------------------------------------------------------
 
 _SUMMARY_FIELDS = [

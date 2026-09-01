@@ -122,8 +122,11 @@ curl -L -o external/freerouting/freerouting-2.1.0.jar \
 #### 2. `KRT_ROOT` (KiCadRoutingTools install tree)
 
 The KRT wrapper forwards to `route.py` inside an external KRT checkout. The
-default `KRT_ROOT` is `external/KiCadRoutingTools` — the pinned checkout made by
-`tools/setup/fetch_baselines.sh`. To use a checkout elsewhere:
+default `KRT_ROOT` is the pinned `external/KiCadRoutingTools` checkout
+(`tools/setup/fetch_baselines.sh`); when that is absent, the runner and
+`setup_env.sh` fall back to the `krt_tool` entry of
+[`configs/paths.yaml`](../../../configs/paths.yaml) (under the shared data
+root). To use another checkout:
 
 ```bash
 export KRT_ROOT=/path/to/KRT
@@ -153,15 +156,17 @@ exist next to each raw `.kicad_pcb`. To produce them from a fresh
 import `pcbnew` (the KiCad Python module, ships with the KiCad app).
 
 ```bash
-# Example: pcbnew Python typically lives at /usr/lib/python3/dist-packages
-/usr/bin/python3 engine/pcbnew_prep/make_dsn_orp_v3.py        # PCBench
-/usr/bin/python3 engine/pcbnew_prep/make_dsn_orp_synth.py     # synthetic_2L
-/usr/bin/python3 engine/pcbnew_prep/make_dsn_orp_synth_1l.py  # synthetic_1L
+# the engine's own pcbnew (BUILD_CLI=1 BUILD_PCBNEW=1 bash engine/build_rl_router.sh):
+PYTHONPATH=build_rl/pcbnew python engine/pcbnew_prep/make_dsn_orp_v3.py        # PCBench
+PYTHONPATH=build_rl/pcbnew python engine/pcbnew_prep/make_dsn_orp_synth.py     # synthetic_2L
+PYTHONPATH=build_rl/pcbnew python engine/pcbnew_prep/make_dsn_orp_synth_1l.py  # synthetic_1L
 ```
 
-`pcbnew` is not pip/conda-installable — install KiCad (v9 recommended) on
-the host. See `engine/pcbnew_prep/README.md` (in the engine repository) for
-details.
+Any interpreter that imports `pcbnew` works — the engine's build, or a host KiCad's
+`/usr/bin/python3`. `run_orthoroute_pipeline.py` resolves the interpreter the same way
+for its Stage 1, and a resolved interpreter that cannot import `pcbnew` is an error
+there rather than something worked around. See `engine/pcbnew_prep/README.md` (in the
+engine repository) for details.
 
 #### 5. Dataset roots (env vars)
 
@@ -179,8 +184,10 @@ export SYNTH1L_DSN_ROOT_50=/path/to/synth_1L_grid50_5net_v02_dsn
 # (similarly for grid 10 / 100 / 200 / 500)
 ```
 
-Defaults baked into [`_lib/datasets.py`](_lib/datasets.py) point at the
-project's NFS mount; outside users **must** override them.
+When a var is unset, [`_lib/datasets.py`](_lib/datasets.py) falls back to the
+matching logical dataset in [`configs/paths.yaml`](../../../configs/paths.yaml)
+(under the shared data root, which `CADAGENT_DATA_ROOT` overrides); with an
+empty data root, resolution fails loudly naming the variable.
 
 ## CLI
 

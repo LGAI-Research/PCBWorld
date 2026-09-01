@@ -1009,6 +1009,53 @@ class TestDirectionalCandidatesRegression:
         finally:
             env.close()
 
+    def test_mres8_offboard_mask_on_fixture_board(self) -> None:
+        """directional_candidates="mres8" + offboard_mask=True: the 25 / 50 mm
+        rungs leave the fixture board; the wrapper embeds exactly those
+        directional indices under obs["_masks"]["offboard"], the pool itself
+        is unchanged (a mask, not a filter), and the default knob masks nothing.
+        """
+        _skip_if_no_env()
+        from pcb_world.core.env import PCBWorld
+        from pcb_world.vec.candidate_pool import CTYPE_DIRECTIONAL
+
+        for knob in (True, False):
+            env = PCBWorld(board_path=_FIXTURE_BOARD, max_steps=20)
+            try:
+                wrapper = KiCadRLWrapper(
+                    env, directional_candidates="mres8", offboard_mask=knob,
+                )
+                wrapper.reset()
+                wrapper.step(np.array([ACT_NET_SELECT, 0, -1], dtype=np.int64))
+                obs, *_ = wrapper.step(
+                    np.array([ACT_START_ROUTE, 0, -1], dtype=np.int64),
+                )
+                bs = obs["board_static"]
+                x0, y0 = bs["bbox_x"], bs["bbox_y"]
+                x1, y1 = x0 + bs["bbox_w"], y0 + bs["bbox_h"]
+                hx, hy = obs["router_head"]["current_xy"]
+                pool = wrapper.cand_mm_list
+                # the 50 mm rung is in the pool either way (mask != filter)
+                assert any(abs(x - (hx + 50.0)) < 1e-6 and abs(y - hy) < 1e-6
+                           for x, y, _l in pool)
+                got = obs["_masks"]["offboard"]
+                assert got.dtype == np.int64
+                assert np.array_equal(got, wrapper.offboard_pointer_indices())
+                if not knob:
+                    assert got.shape == (0,)
+                    continue
+                want = {
+                    i for i, ((x, y, _l), ct) in enumerate(zip(pool, wrapper._cand_ctype))
+                    if ct == CTYPE_DIRECTIONAL
+                    and not (x0 <= x <= x1 and y0 <= y <= y1)
+                }
+                assert want, "fixture board should not contain a 50 mm rung"
+                assert set(got.tolist()) == want
+                # existing copper (pads / track ends) is never masked
+                assert all(wrapper._cand_ctype[i] == CTYPE_DIRECTIONAL for i in got)
+            finally:
+                env.close()
+
     def test_aug_present_immediately_after_reset(self) -> None:
         """obs returned from reset() must already have _aug attached
         and _refresh_cache must have used it.

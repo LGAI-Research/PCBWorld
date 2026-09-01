@@ -4,10 +4,10 @@ The batched implementation must produce **bit-equivalent** TokenizerOutput
 to the per-obs StateTokenizer when both share the same vocab weights.
 This is the headline correctness check for the batched tokenizer.
 
-Tolerance: ``atol=1e-4`` for ``token_embeddings`` — above the float32 noise
-level of 1e-6 because batched matmul reduces in a different order than
-per-obs matmul; observed diffs are ≤1.2e-6 across all tested configurations,
-so the budget is comfortably met.
+Tolerance: ``atol=1e-4`` for ``token_embeddings`` (loosened from float32
+noise level 1e-6 because batched matmul has different reduction order
+than per-obs matmul; in practice we observe ≤1.2e-6 across all tested
+configurations, so the budget is comfortably met).
 """
 
 from __future__ import annotations
@@ -400,7 +400,8 @@ class TestThtPadEncoding:
 
     1. produce a non-degenerate (non-(0,0)) feature pair, so the policy net
        sees a real layer-range signal,
-    2. distinguish 2-copper THT from 4-copper THT,
+    2. distinguish 2-copper THT from 4-copper THT (the failure mode of the
+       earlier 2-dim "span-remainder" proposal),
     3. equal what a thru-via barrel of the same span would feed in.
     """
 
@@ -465,8 +466,8 @@ class TestThtPadEncoding:
     def test_tht_pad_distinguishable_across_copper_layers(self):
         """THT on 2-layer board != THT on 4-layer board.
 
-        A degenerate layer-range encoding would collapse both to the same
-        feature pair, leaving the policy net unable to tell them apart.
+        Guards against the degenerate 2-dim "span-remainder" encoding that
+        would have collapsed both to (0, 0).
         """
         obs2 = self._make_obs_with_tht_pad(copper_layers=2)
         obs4 = self._make_obs_with_tht_pad(copper_layers=4)

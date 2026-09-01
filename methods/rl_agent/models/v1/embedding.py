@@ -1,6 +1,6 @@
 """Token vocabulary for the Decoder-Only PCB routing policy.
 
-Single-token-per-entity design:
+Single-token-per-entity layout:
 
   * Each entity (pad, track, via, head, candidate, ratsnest, net, edge,
     board) collapses into ONE token whose embedding is::

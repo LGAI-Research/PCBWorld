@@ -11,15 +11,25 @@ set of .kicad_pro entries needed to re-run the DRC check, and copies every
 sample that passes into <PCBENCH_NEWDRC_OUT>/<name>/.
 
 Overridden entries (two categories):
-  [A] checks introduced in v9 — rule_severities -> ignore
+  [A] checks introduced in v9 — rule_severities → ignore
       solder_mask_bridge, drill_out_of_range, malformed_courtyard
 
-  [B] thresholds tightened in v9 — rule_severities -> ignore + rules floor -> 0
+  [B] thresholds tightened in v9 — rule_severities → ignore + rules floor → 0
       annular_width, courtyards_overlap, copper_edge_clearance, hole_clearance
+  [C] hole-to-hole minimum — the pcbnew round trip (convert_v9.py) leaves KiCad's
+      default 0.25 mm, stricter than many boards' copper clearance; routers and
+      DRC honor the .kicad_pro as authoritative, so it is floored at the Default
+      net-class clearance (capped at 0.25): a drill pair may sit as close as two
+      tracks may. This is the value the paper's D3 set carried (672 of 679).
 
 Zone refill is unnecessary: processed.kicad_pcb carries no zones (one
 exception aside).
+
+The DRC runs through the ``kicad-cli`` that ``kicad_tools`` resolves (default: the
+engine's BUILD_CLI=1 build, else ``kicad-cli`` on PATH; override with KICAD_CLI).
 """
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -29,6 +39,7 @@ import tempfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
+import kicad_tools
 
 def _env_dir(name: str) -> Path:
     val = os.environ.get(name)
@@ -39,7 +50,10 @@ def _env_dir(name: str) -> Path:
         )
     return Path(val)
 
-# [A] checks introduced in v9: rule_severities -> ignore
+V9_DIR  = _env_dir("PCBENCH_V9_ROOT")     # KiCad-9-format PCBench boards (input)
+OUT_DIR = _env_dir("PCBENCH_NEWDRC_OUT")  # DRC-passing boards are copied here (output)
+
+# [A] checks introduced in v9: rule_severities → ignore
 SEVERITY_PATCH = {
     "solder_mask_bridge":  "ignore",
     "drill_out_of_range":  "ignore",
@@ -50,15 +64,26 @@ SEVERITY_PATCH = {
     "hole_clearance":      "ignore",   # [B]
 }
 
-# [B] defaults tightened in v9: rules floor -> 0 (applied together with ignore)
+# [B] defaults tightened in v9: rules floor → 0 (applied together with ignore)
 RULES_PATCH = {
     "min_via_annular_width":     0.0,
     "min_copper_edge_clearance": 0.0,
     "min_hole_clearance":        0.0,
 }
+# [C] hole-to-hole minimum = min(KiCad default, Default net-class clearance)
+HOLE_TO_HOLE_DEFAULT_MM = 0.25
+
+
+def hole_to_hole_min(pro: dict) -> float | None:
+    """[C]: the Default net class clearance, capped at KiCad's default."""
+    classes = pro.get("net_settings", {}).get("classes", []) or []
+    default = next((c for c in classes if c.get("name") == "Default"), None)
+    clearance = (default or {}).get("clearance")
+    if clearance is None:
+        return None
+    return min(HOLE_TO_HOLE_DEFAULT_MM, float(clearance))
 
 DRC_TIMEOUT = 60
-WORKERS = 16
 
 
 def patch_pro(src_pro: Path, dst_pro: Path) -> None:
@@ -68,13 +93,16 @@ def patch_pro(src_pro: Path, dst_pro: Path) -> None:
 
     ds = pro.setdefault("board", {}).setdefault("design_settings", {})
 
-    # rule_severities
+    # rule_severities patch
     sev = ds.setdefault("rule_severities", {})
     sev.update(SEVERITY_PATCH)
 
-    # rules
+    # rules patch
     rules = ds.setdefault("rules", {})
     rules.update(RULES_PATCH)
+    h2h = hole_to_hole_min(pro)
+    if h2h is not None:
+        rules["min_hole_to_hole"] = h2h   # [C]
 
     with open(dst_pro, "w", encoding="utf-8") as f:
         json.dump(pro, f)
@@ -85,7 +113,7 @@ def run_drc(pcb: Path) -> list[dict]:
     out = pcb.with_suffix(".drc.json")
     try:
         subprocess.run(
-            ["kicad-cli", "pcb", "drc", "--format", "json",
+            [kicad_tools.kicad_cli(), "pcb", "drc", "--format", "json",
              "--severity-error", "--output", str(out), str(pcb)],
             capture_output=True, timeout=DRC_TIMEOUT,
         )
@@ -100,8 +128,8 @@ def run_drc(pcb: Path) -> list[dict]:
         return []
 
 
-def process_sample(name: str, v9_dir: Path, out_dir: Path) -> dict:
-    src_dir = v9_dir / name
+def process_sample(name: str) -> dict:
+    src_dir = V9_DIR / name
     pcb_src = src_dir / "processed.kicad_pcb"
     pro_src = src_dir / "processed.kicad_pro"
 
@@ -119,7 +147,7 @@ def process_sample(name: str, v9_dir: Path, out_dir: Path) -> dict:
         ok = len(viols) == 0
 
         if ok:
-            dst = out_dir / name
+            dst = OUT_DIR / name
             if dst.exists():
                 shutil.rmtree(dst)
             dst.mkdir(parents=True)
@@ -145,24 +173,26 @@ def process_sample(name: str, v9_dir: Path, out_dir: Path) -> dict:
 
 
 def main():
-    argparse.ArgumentParser(
+    p = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Input/output directories come from the environment:\n"
-               "  PCBENCH_V9_ROOT     KiCad-9-format PCBench boards (input)\n"
-               "  PCBENCH_NEWDRC_OUT  DRC-passing boards are copied here (output)",
-    ).parse_args()
+    )
+    p.add_argument("--limit", type=int, default=0,
+                   help="0=all, N=only the first N boards (sorted by name)")
+    p.add_argument("--workers", type=int, default=16)
+    args = p.parse_args()
 
-    v9_dir = _env_dir("PCBENCH_V9_ROOT")
-    out_dir = _env_dir("PCBENCH_NEWDRC_OUT")
-    out_dir.mkdir(parents=True, exist_ok=True)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    kicad_tools.announce(need_pcbnew=False)
 
-    samples = sorted(e for e in os.listdir(v9_dir) if (v9_dir / e).is_dir())
-    print(f"Processing {len(samples)} samples with {WORKERS} workers...")
+    samples = sorted(e for e in os.listdir(V9_DIR) if (V9_DIR / e).is_dir())
+    if args.limit:
+        samples = samples[:args.limit]
+    print(f"Processing {len(samples)} samples with {args.workers} workers...")
 
     results, ok, done = [], 0, 0
-    with ProcessPoolExecutor(max_workers=WORKERS) as ex:
-        futs = {ex.submit(process_sample, s, v9_dir, out_dir): s for s in samples}
+    with ProcessPoolExecutor(max_workers=args.workers) as ex:
+        futs = {ex.submit(process_sample, s): s for s in samples}
         for f in as_completed(futs):
             r = f.result()
             results.append(r)
@@ -175,9 +205,9 @@ def main():
     results.sort(key=lambda r: r["name"])
     failures = [r for r in results if r.get("status") != "ok"]
 
-    with open(out_dir / "_results.json", "w", encoding="utf-8") as f:
+    with open(OUT_DIR / "_results.json", "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
-    with open(out_dir / "_failures.json", "w", encoding="utf-8") as f:
+    with open(OUT_DIR / "_failures.json", "w", encoding="utf-8") as f:
         json.dump(failures, f, indent=2, ensure_ascii=False)
 
     # Tally the failure causes

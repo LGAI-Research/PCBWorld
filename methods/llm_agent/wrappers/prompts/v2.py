@@ -1,14 +1,19 @@
 # --------------------- CadAgent V2 (KiCad PCB Routing) --------------------- #
 #
-# Selected with CADAGENT_PROMPT_VERSION=v2. Exported names are identical to the
-# V1/V3 prompt modules, so the three are drop-in interchangeable. This version
-# documents the 6 actions with their signatures, the action-masking precondition
-# table and the m/p/w routing modes, and carries one full-detail few-shot
-# example (a 7-step via-crossing walkthrough with real sexpr state).
+# V2 augmentations over V1 (cadagent.py):
+#  1) Action Reference — 6 actions documented with signatures and semantics
+#  2) Action Masking Rules — YAML-style precondition table
+#  3) Routing Modes — m/p/w each described
+#  4) Few-shot example — 7-step Via Crossing walkthrough with real sexpr state
+#
+# Interface-compatible with V1 (drop-in via CADAGENT_PROMPT_VERSION=v2 switch
+# in cadagent.py). All exported names match V1. CADAGENT_USER_PROMPT keeps the
+# wschoi-branch history format `{current_step} / {valid_step_count}` to match
+# rollout/cadagent.py and env_manager.py callers.
 # -----------------------------------------------------------------------------
 
 # ======================================================================
-# Board state format descriptions
+# Board state format descriptions (same as V1)
 # ======================================================================
 
 _STATE_FORMAT_DESC_XML = """\
@@ -463,8 +468,9 @@ CADAGENT_USER_PROMPT_NO_HIS = """\
 Choose exactly one from:
 {valid_actions}"""
 
-# Placeholders match the .format() kwargs passed by rollout/cadagent.py and the
-# env manager: {current_step} + {valid_step_count} for the history header.
+# NOTE: wschoi-branch history format uses {current_step} + {valid_step_count}
+# (not V2-upstream's {step_count} + {history_length}). Matches the .format()
+# kwargs in rollout/cadagent.py and agent_system/environments/env_manager.py.
 CADAGENT_USER_PROMPT = """\
 ## Step {current_step}
 {dynamic_observation}

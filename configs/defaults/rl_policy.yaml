@@ -22,11 +22,11 @@ coord_encoding: fourier
 mlp_hidden: 128
 disable_slot_emb: false
 # Slot-table size = upper bound on nets per board (matches the ckpt's
-# slot_emb_table row count); 512 leaves headroom for real boards (d3b tops out
-# at 109 nets). Checkpoints without the key fall back to a literal 64 in
-# from_checkpoint, so changing this default stays load-compatible. The slot_perm
-# augmentation is a fixed 64-permutation and is incompatible with != 64 (the
-# trainer checks this).
+# slot_emb_table row count); default 512 leaves headroom for real boards (d3b
+# tops out at 109 nets). Checkpoints without the key fall back to a
+# literal 64 in from_checkpoint, so changing this default stays load-compatible.
+# The slot_perm augmentation is a fixed 64-permutation and is incompatible with
+# != 64 (the trainer checks this).
 n_max_slots: 512
 policy_net_select: false
 same_net_bias: false
@@ -42,7 +42,7 @@ legacy_net_encoding: false
 # the state_dict at ckpt load (shared proj shapes are unchanged, so presence —
 # not shape — is the signal).
 legacy_edge_encoding: false
-# HEAD-token time scalar. "step_ratio" (step/max_steps),
+# HEAD-token time scalar. "step_ratio" (legacy: step/max_steps),
 # "log_remaining" (log1p(steps_remaining)/log1p(time_feature_cap) — max_steps-
 # invariant, so boards with different step budgets share one time coordinate),
 # "sin_remaining" (steps_remaining/cap through a dedicated sinusoidal ladder
@@ -60,9 +60,9 @@ time_feature_cap: 10000
 # each, newest first; short histories pad with the idle sentinel). Age is
 # encoded as Fourier(age/MAX_HISTORY)→proj — no K-shaped weights, so K is a
 # plain config knob (checkpoints stay load-compatible across K; MAX_HISTORY=32
-# frozen in models.v1.spec). Default 1 = a single-step prev-action window (the
-# encoding still adds net-slot + age markers) — history ablations raise it via
-# --action-history-len. Old prev-action
+# frozen in models.v1.spec). Default 1 = the historical prev-action single-step
+# window (compat-conservative; new encoding still adds net-slot + age markers) —
+# history ablations raise it via --action-history-len. Old prev-action
 # checkpoints (no history_age_proj in the state_dict) load as
 # legacy_action_history=true + K=1 — bit-identical single-entry encoding,
 # slot/age-free.

@@ -4,21 +4,21 @@ The critic is trained on normalized rewards. The trainer only divides by the
 running std of the discounted returns and does not subtract the mean
 (RewardNormalizer: "mean is NOT subtracted"), so denormalization is the single
 factor V_raw = sigma * V~ — regressing the realized return G on sigma*V~ with a
-free intercept gives a slope near 1 (0.98~1.42), which confirms it. The scale
-alone cannot supply the constant: a completed board has 0 residual return while
-its measured V~ is +0.920 (maytal) to -1.007 (NiMH). Hence
+free intercept gives a slope near 1 (0.98~1.42), which confirms it. What was
+missing was the constant: a completed board has 0 residual return while its
+measured V~ is +0.920 (maytal) to -1.007 (NiMH). Hence
 
     boot = trust * scale * (V~(s) - offset)
 
 What this file pins:
-  1. the defaults (offset 0, trust 1) are bit-identical to plain scale * V
+  1. the defaults (offset 0, trust 1) are bit-identical to the previous behavior
   2. with offset at the anchor, a completed state bootstraps to exactly 0
   3. trust scales the bootstrap linearly, and turns it off entirely at 0
   4. a terminal leaf is always path_return, independent of trust/offset (no bootstrap)
 
   5. a single-child root finishes in one simulation (no budget on a forced move)
   6. budget accounting of the three invalid modes (pop / drop / penalize)
-  7. the removed knobs stay removed (below)
+  7. the rejected knobs stay removed (below)
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ SIG, K = 8.5969, 0.9278          # d2b ckpt reward-norm std, maytal completed-st
 
 
 def test_default_is_plain_scale():
-    """With offset=0 and trust=1 the bootstrap is plain scale*V."""
+    """With offset=0 and trust=1 the bootstrap is plain scale*V, as before."""
     cfg = MctsConfig(gamma=0.9, critic_scale=5.0)
     assert _bootstrap_from(None, cfg, 0.0, 1.0, 2.0) == 10.0
     assert _bootstrap_from(None, cfg, 3.0, 0.9 ** 3, 2.0) == pytest.approx(3.0 + 0.729 * 10.0)
@@ -74,8 +74,19 @@ def test_terminal_leaf_never_bootstraps(cfg):
 
 
 def test_removed_knobs_are_gone():
-    """None of these knobs exist on MctsConfig; the guard keeps them from
-    reappearing."""
+    """Knobs judged ineffective and reverted must not come back.
+
+    roll_* was a leaf-evaluation rule that advanced a leaf reached over a
+    ΔΦ = 0 edge to the first ΔΦ != 0 step instead of bootstrapping it in
+    place. It genuinely widened the sibling-Q gap (0.001 -> 0.138 on
+    net_select d0, holding under argmax too, so not sampling noise) and
+    reported 0.000 on truly symmetric branches — the estimator behaved
+    correctly. Yet it lost to base on all 3 boards: rout 1.000/0.447/0.816
+    (base) vs 1.000/0.421/0.447 (argmax roll), wallclock 1.7~3x. The reason:
+    that very decision in base collapses to argmax(g + logit) = prior
+    sampling at a q-hat gap of 0.001 — on ΔΦ ≡ 0 nodes prior sampling beats
+    the 1-step-lookahead ΔΦ ranking.
+    """
     for gone in ("q_range_floor", "bootstrap_gamma", "terminal_bootstrap",
                  "roll_to_informative", "roll_max_steps", "roll_try_cap",
                  "roll_greedy"):

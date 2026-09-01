@@ -240,6 +240,25 @@ class TestDirectionalModes:
         )
         assert cands == full[: len(cands)]
 
+    def test_mres8_ladder(self):
+        # Log-scale 1-2-5 ladder, every rung a multiple of the 0.2 mm
+        # generation grid; 8 dirs x 8 rungs = 64 candidates.
+        ladder = DIRECTIONAL_DISTANCE_PRESETS["mres8"]
+        assert ladder == (0.2, 0.4, 1.0, 2.0, 5.0, 10.0, 25.0, 50.0)
+        assert parse_directional_mode("mres8") == (None, ladder)
+        hx, hy = 50.0, 50.0
+        cands = build_directional_candidates(
+            (hx, hy), current_layer=1, mode="mres8",
+        )
+        assert len(cands) == 8 * 8
+        for i, (x, y, layer, ctype) in enumerate(cands):
+            assert layer == 1 and ctype == CTYPE_DIRECTIONAL
+            # distance-major emission: all 8 dirs at ladder[0] first
+            assert max(abs(x - hx), abs(y - hy)) == pytest.approx(ladder[i // 8])
+            # diagonals are (d, d) offsets, so each axis offset is on the grid
+            for off in (x - hx, y - hy):
+                assert abs(off / 0.2 - round(off / 0.2)) < 1e-6
+
     def test_mode_none_is_default_ring(self):
         assert build_directional_candidates((10.0, 20.0), 1, mode=None) == (
             build_directional_candidates((10.0, 20.0), 1)

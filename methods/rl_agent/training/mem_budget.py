@@ -20,10 +20,12 @@ Two independent instances are expected per trainer: the *update* model
 (teacher-forced fwd+bwd, activations saved) and the *rollout* model (no-grad
 forward — a completely different linear coefficient).
 
-The quadratic term exists because the 2-zone attention mask is materialized as
-a dense ``(B, 1, L, L)`` tensor (``models/v1/blocks.py``); the linear term
-(saved activations) dominates below roughly L~8k at the default model size, so
-neither term alone is a safe budget metric.
+The quadratic term is the attention kernel's workspace (the state pass feeds
+SDPA a broadcast ``(B, 1, 1, L)`` mask, so no ``L^2`` tensor of our own is in
+it — ``models/v1/blocks.py::padding_attn_mask``); the linear term (saved
+activations) dominates below roughly L~8k at the default model size, so
+neither term alone is a safe budget metric. Both coefficients are measured,
+so a change on either side is absorbed by the fit.
 
 ``SAFETY`` is a module constant, deliberately not a config knob: it covers the
 allocated-vs-reserved gap (fragmentation, kernel workspaces) which is neither
@@ -61,17 +63,17 @@ SAFETY = 0.8            # headroom for the allocated-peak vs reserved/fragmentat
 MIN_FIT_POINTS = 4      # 3 coefficients + 1; fewer -> refuse to fit
 # Probe B values reach toward real minibatch sizes: fitting at B<=8 and
 # extrapolating 64x (to batch 512) let the ill-conditioned quadratic term blow
-# up ~20x on d2a. B=64 keeps the extrapolation within ~8x.
+# up ~20x on d2a (260713 A/B). B=64 keeps the extrapolation within ~8x.
 PROBE_B_VALUES = (4, 16, 64)
 _RING_SIZE = 256        # observation ring buffer (drop-oldest)
 _REFIT_EVERY = 16       # refit after this many new observations
-# cudaMemGetInfo stalls ~45ms/call when async GPU work is in flight (idle it
-# is ~0.02ms) — a per-step/minibatch call turns the planner into a device
-# synchronizer. Capacity is therefore cached with a TTL:
+# cudaMemGetInfo stalls ~45ms/call when async GPU work is in flight (measured
+# 260713 dissect; idle it is ~0.02ms) — a per-step/minibatch call turns the
+# planner into a device synchronizer. Capacity is therefore cached with a TTL:
 # worst case one ~45ms stall per TTL window (<1%), while neighbour-process
 # VRAM changes still propagate within seconds.
 _CAPACITY_TTL_S = 5.0
-# Confidence-bound capacity: the effective safety is
+# Confidence-bound capacity (2026-07-13): the effective safety is
 # SAFETY / q99(measured/predicted) clamped to <= SAFETY_MAX — i.e. capacity
 # targets P(true peak > allowed) ~ 1%. Cold start (< _RESID_MIN_N residual
 # points) falls back to plain SAFETY. Measured motivation: the probe-only fit

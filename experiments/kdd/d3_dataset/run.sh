@@ -24,8 +24,9 @@ set -euo pipefail
 source "$(dirname "$0")/../../_lib/env.sh"
 cd "$CADAGENT_REPO_ROOT"
 
-# Real-PCB corpus: T3_SORTED_DIR wins, else $CADAGENT_DATA_ROOT/pcbench/exacad_sorted.
-SORTED_DIR="${T3_SORTED_DIR:-${CADAGENT_DATA_ROOT:?set CADAGENT_DATA_ROOT to your dataset root, or pass T3_SORTED_DIR}/pcbench/exacad_sorted}"
+# Real-PCB corpus: T3_SORTED_DIR wins, else the pcbench_exacad dataset from
+# configs/paths.yaml (CADAGENT_DATA_ROOT overrides the root; empty root fails loudly).
+SORTED_DIR="${T3_SORTED_DIR:-$("$PYTHON_BIN" -m configs.loader.paths resolve pcbench_exacad)}"
 CSV=""
 OUT="${OUT:-configs/datasets/d3.json}"
 EXTRA=()

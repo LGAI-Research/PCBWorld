@@ -1,10 +1,11 @@
 """Stage-1 RL rollout driver (thin eval-side orchestration).
 
-``eval_transformer`` batches ``(board, rollout)`` jobs into waves, drives the
-per-board rollout loop (``methods.rl_agent.rollout.transformer._run_one_batch``),
-flushes per-rollout rows, and optionally aggregates. The rollout *loop* itself
-lives in ``methods/rl_agent/rollout/transformer.py``; this module is the
-method-agnostic scoring orchestration of the ``eval/`` layer.
+Extracted from ``methods/rl_agent/rollout/transformer.py`` (the ``eval_transformer``
+function): batch ``(board, rollout)`` jobs into waves, drive the per-board rollout
+loop (``methods.rl_agent.rollout.transformer._run_one_batch``), flush per-rollout
+rows, and optionally aggregate. The rollout *loop* itself stays in
+``methods/rl_agent/rollout/transformer.py``; this module is method-agnostic scoring
+orchestration (the ``eval/`` layer).
 """
 from __future__ import annotations
 
@@ -43,10 +44,10 @@ def plan_job_schedule(
     ``board.index`` and ``rollout_idx`` (not slot/wave position) and aggregation
     groups by ``board_index``.
 
-    ``boards_per_batch``: when given, caps a wave to whole-board granularity
-    (``boards_per_batch * n_rollouts`` slots) as a memory knob; the default
-    (None) fills ``n_envs`` with no gaps. There is no ``n_envs >= n_rollouts``
-    requirement — ``n_envs`` alone bounds a wave.
+    ``boards_per_batch`` (legacy): when given, caps a wave to whole-board
+    granularity (``boards_per_batch * n_rollouts`` slots) as a memory knob; the
+    default (None) fills ``n_envs`` with no gaps. Unlike the old packing there is
+    no ``n_envs >= n_rollouts`` requirement — ``n_envs`` alone bounds a wave.
     """
     def _pads(b: BoardSpec) -> int:
         try:
@@ -71,7 +72,8 @@ def assert_env_kwargs_as_recorded(
     ``env_records/val_env.yaml`` is written at trainer startup by *computing*
     what validation will use; this is the sink confirming that computation the
     first time a real val pool is built. Without it the record would stay a
-    plausible-looking guess.
+    plausible-looking guess — which is exactly how the knobs audited on
+    2026-08-20 went unnoticed.
     """
     absent = "<absent>"
     delta = {

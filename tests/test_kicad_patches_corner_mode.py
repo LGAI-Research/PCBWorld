@@ -17,19 +17,9 @@ from pathlib import Path
 
 import pytest
 
-from pcb_world.engine import engine_home
-
-# The engine is a separate repository, pinned as the engine/ submodule. The
-# files inspected here are its source, so there is nothing to inspect until it
-# is fetched — a missing input, not a regression.
-ENGINE_HOME = Path(engine_home())
-PATCH_DIR = ENGINE_HOME / "kicad-patches" / "kicad" / "pcbnew" / "router"
-BUILD_SCRIPT = ENGINE_HOME / "build_rl_router.sh"
-
-pytestmark = pytest.mark.skipif(
-    not BUILD_SCRIPT.exists(),
-    reason=f"engine not checked out at {ENGINE_HOME} — run "
-           "`git submodule update --init --recursive`")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+PATCH_DIR = REPO_ROOT / "engine" / "kicad-patches" / "kicad" / "pcbnew" / "router"
+BUILD_SCRIPT = REPO_ROOT / "engine" / "build_rl_router.sh"
 
 # Each entry: (patched filename, list of substrings that MUST appear in the
 # patched copy). Markers are content unique to our fix that wouldn't be

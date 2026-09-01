@@ -10264,8 +10264,8 @@
     ]
   },
   "dataset_dirs": {
-    "train": "${CADAGENT_DATA_ROOT}/synthetic/synth_1L/train",
-    "val": "${CADAGENT_DATA_ROOT}/synthetic/synth_1L/val",
-    "test": "${CADAGENT_DATA_ROOT}/synthetic/synth_1L/test"
+    "train": "pcb_dataset/synth_1L/train",
+    "val": "pcb_dataset/synth_1L/val",
+    "test": "pcb_dataset/synth_1L/test"
   }
 }

@@ -313,7 +313,7 @@ def success_from(
     ``success = u_t == 0``) and the env's ``info["success"]``: the voluntary
     all-nets-closed finish (give-up) terminates with unrouted > 0 and is NOT
     a success. When ``unrouted_count`` is unknown (None/NaN), falls back to
-    ``terminated`` alone (producers that emit no routed-state count).
+    ``terminated`` alone (legacy producers without a routed-state count).
     """
     if crashed:
         return False

@@ -22,17 +22,18 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from matplotlib.ticker import MaxNLocator
 
-from configs.loader.paths import data_root_path
+from configs.loader.paths import resolve_dataset_or_empty
 
 # Input metrics CSV (env-overridable, mirrors rq4's EXPR_ROOT convention).
-# The benchmark results tree is not shipped with the repo: EVAL_METRICS_CSV, or
-# the same file under $CADAGENT_DATA_ROOT, or "" (checked before use).
-DEFAULT_METRICS_CSV = os.environ.get("EVAL_METRICS_CSV") or data_root_path(
-    "KDD_benchmark", "bench_results", "bench_results_260501",
-    "bench_results_official_kicadpcb", "_kicad_gym_summaries", "eval_metrics.csv",
+# Default: the kdd_gym_summaries dataset from configs/paths.yaml
+# (CADAGENT_DATA_ROOT overrides its root; "" — checked before use — when the
+# root is empty).
+_summaries = resolve_dataset_or_empty("kdd_gym_summaries")
+DEFAULT_METRICS_CSV = os.environ.get("EVAL_METRICS_CSV") or (
+    str(Path(_summaries) / "eval_metrics.csv") if _summaries else ""
 )
 # Output lives under <overleaf-root>/figs, same as plot_reward_factorial.py.
-DEFAULT_OVERLEAF_ROOT = os.environ.get("OVERLEAF_ROOT", "var/results/kdd/paper_outputs")
+DEFAULT_OVERLEAF_ROOT = os.environ.get("OVERLEAF_ROOT", "papers/cadagent-overleaf")
 OUTPUT_STEM = "gpt_levels_t2_t3a"
 
 # GPT family — distinct hue per methodology, reusing the rq4_factorial

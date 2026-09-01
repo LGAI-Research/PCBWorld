@@ -96,6 +96,7 @@ _SKIP_DIRS = {
 }
 _SKIP_PREFIXES = (
     "engine/",                    # the engine submodule — checked separately
+    ".claude/",                   # Claude Code working files — dev-only, never exported
     "external/RAGEN/",            # third-party framework checkouts
     "external/verl-agent/",
     "external/OrthoRoute/",

@@ -43,11 +43,15 @@ TARGET_RUN_TEMPLATES = (
 )
 TARGET_RUN_NAMES = {template.format(seed=seed) for template in TARGET_RUN_TEMPLATES for seed in SEEDS}
 
-# The packaged benchmark tree is not shipped with the repo: EXPR_ROOT, or
-# $CADAGENT_DATA_ROOT/KDD_benchmark/experimental_results, or "" (checked before use).
+from configs.loader.paths import resolve_dataset_or_empty
+
+# Packaged benchmark results: EXPR_ROOT overrides, else the kdd_bench dataset
+# from configs/paths.yaml (CADAGENT_DATA_ROOT overrides its root; "" — checked
+# before use — when the root is empty).
+_bench_root = resolve_dataset_or_empty("kdd_bench")
 DEFAULT_EXPR_ROOT = Path(
     os.environ.get("EXPR_ROOT")
-    or data_root_path("KDD_benchmark", "experimental_results")
+    or (Path(_bench_root) / "experimental_results" if _bench_root else "")
 )
 DEFAULT_TB_ROOTS = (
     str(DEFAULT_EXPR_ROOT / "training_logs/reward_ablation/tensorboard_logs/v56_dense_scale_wirevia_20260429_155706"),

@@ -9,7 +9,7 @@ can flip tie-breaks and make otherwise-identical episodes route differently —
 exactly the "flips with unrelated in-process engine history" caveat pinned in
 ``test_scripted_routing.py``.
 
-``PCBWorld.reset()`` calls ``engine.rewind_kiid_to_episode_start()`` as its
+``PCBWorld.reset()`` now calls ``engine.rewind_kiid_to_episode_start()`` as its
 last engine step, rewinding the generator to the construction-time position so
 every episode draws the SAME stream. These tests lock that contract in.
 """

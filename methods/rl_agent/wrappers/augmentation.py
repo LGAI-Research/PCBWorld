@@ -129,11 +129,12 @@ def sample_bbox_shifted(
     fixed — so the constraint is evaluated by transforming the outline and
     testing the (unmoved) points against it.
 
-    Two properties this test must have: it constrains points against the real
-    Edge.Cuts outline, not its axis-aligned bbox (on non-rectangular boards a
-    bbox-only test admits points well outside the outline), and it constrains
-    EVERY fixed point — OBSTACLE entities and net-less NC pads as well as net
-    pads. The scaled bbox is kept only as a cheap NECESSARY pre-filter
+    Two things the axis-aligned-bbox version of this test got wrong (260819
+    audit): it accepted samples that push a point outside the real Edge.Cuts
+    outline on non-rectangular boards (``d2b_geo`` / ``d2bv_geo``: 3.5-4.6% of
+    episodes, up to 11mm out), and it constrained net pads only — OBSTACLE
+    entities and net-less NC pads (a further 5.2%) were free to leave the
+    board. The scaled bbox is kept only as a cheap NECESSARY pre-filter
     (outline ⊆ bbox, so a bbox reject is an outline reject).
     """
     bs = raw_obs["board_static"]

@@ -395,8 +395,8 @@ def aggregate_boards(cell_dir, selection_mode: str = "final_potential"):
         rows = list(csv.DictReader(f))
     if not rows:
         raise ValueError(f"empty per_rollout.csv under {cell_dir}")
-    # Column alias: a per_rollout.csv carrying ``clean_success`` is exposed
-    # under the paper name ``clean_pass`` (var/ is read-only, never rewritten).
+    # Legacy column alias: pre-rename per_rollout.csv (var/ is read-only, never
+    # rewritten) carries ``clean_success``; expose it under the paper name.
     for row in rows:
         if "clean_pass" not in row and "clean_success" in row:
             row["clean_pass"] = row["clean_success"]
@@ -524,9 +524,9 @@ def _safe_stdev(xs: Iterable[float]) -> float:
 def aggregate(per_sample: list[dict]) -> dict:
     """Mean/stdev/sums + DRV type counters across :func:`evaluate_one` results.
 
-    Nested-dict aggregator: operates on the rich ``evaluate_one`` output, not
-    the flat canonical rows that :func:`eval.aggregation.aggregate_inline`
-    consumes. Used by the rule-based-router summary path.
+    Legacy nested-dict aggregator (operates on the rich ``evaluate_one`` output,
+    not the flat canonical rows that :func:`eval.aggregation.aggregate_inline`
+    consumes). Used by the rule-based-router summary path.
     """
     ok = [s for s in per_sample if "error" not in s]
     n_total = len(per_sample)

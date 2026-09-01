@@ -65,4 +65,4 @@ The hyperparameters those runs used are recorded in `cases.sh`
 ## Provenance
 
 Checkpoint and dataset provenance for the published D1 numbers:
-[experiments/kdd/PROVENANCE.md](../PROVENANCE.md) §1–§2.
+the checkpoint/dataset provenance record, which is kept outside the public tree.

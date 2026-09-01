@@ -261,7 +261,7 @@ class TestGatedTransformerLayer:
         assert torch.allclose(x, x_orig)
 
     def test_with_combined_mask(self):
-        """Full pipeline: 2zone + padding → combined → layer."""
+        """Full pipeline: 3zone + padding → combined → layer."""
         layer = GatedTransformerLayer(64, 4, 256)
         B, L = 2, 12
         x = torch.randn(B, L, 64)
@@ -724,7 +724,7 @@ class TestActAndValue:
         assert torch.isfinite(values).all()
 
     def test_act_wrapper_matches_act_and_value(self):
-        """act() must produce identical actions/log_probs to act_and_value()."""
+        """The legacy act() must produce identical actions/log_probs as the new method."""
         torch.manual_seed(0)
         policy = _tiny_policy()
         policy.eval()
@@ -824,9 +824,11 @@ class TestEntropyNorm:
         assert torch.allclose(ent_n, torch.zeros_like(ent_n), atol=1e-6)
 
     def test_mixed_deterministic_row_backward_finite_bf16(self):
-        # A deterministic row (max_ent == 0) mixed into a batch keeps its
-        # denominator at 1, so the eps-clamped division has no channel to
-        # amplify bf16 residual gradients into inf/NaN (fwd 0, bwd finite).
+        # Regression measured 260813 A5: with a deterministic (max_ent == 0)
+        # row mixed into the batch, the eps-clamped division amplified bf16
+        # residual gradients ~1e8x → grad inf/NaN. After the fix a
+        # deterministic row's denominator is 1, so there must be no
+        # amplification channel (fwd 0, bwd finite).
         policy = _tiny_policy()
         obs_list = _batch_obs(current_net_phase=2, is_routing=True)
         actions = torch.tensor(
@@ -935,13 +937,13 @@ class TestCriticGradientFlow:
             p.grad is not None and p.grad.abs().sum().item() > 0
             for p in backbone
         )
-        assert any_grad, "Policy loss did not reach backbone — backbone params must receive gradients"
+        assert any_grad, "Policy loss did not reach backbone — refactor broke gradient flow"
 
     def test_critic_intermediate_layers_have_normal_gain(self):
         """Multi-layer critic MLP must NOT be shrunk to gain=0.01.
 
-        An init_weights pattern matching the bare 'head' substring would shrink
-        every critic_head.* Linear.
+        Regression for the bug where init_weights pattern matched 'head'
+        substring and shrunk all critic_head.* Linears.
         """
         policy = _tiny_policy_with_critic()
         # The first Linear in critic_head (index 1, after LayerNorm at 0).
@@ -981,8 +983,8 @@ def _batch_obs_varying_seq_lens() -> list[dict]:
 class TestVariableSeqLenBatch:
     """Policy must accept batches with varying seq_lens.
 
-    ``_extract_scalar_bounds`` returns ``n_state_max`` and SOD is extracted
-    per-row via ``H_state[arange_B, seq_lens - 1]``.
+    The fix: ``_extract_scalar_bounds`` returns ``n_state_max`` and SOD is
+    extracted per-row via ``H_state[arange_B, seq_lens - 1]``.
     """
 
     def test_tokenizer_produces_different_seq_lens(self):

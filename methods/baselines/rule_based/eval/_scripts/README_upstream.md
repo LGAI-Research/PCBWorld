@@ -343,7 +343,7 @@ is the correct one.
 
 - `aggregate.py` — canonical RQ2 aggregator (single-source-of-truth for paper Table 2 + Table A1).
 - `aggregate_eval.py` — general-purpose per-method aggregator with `single` / `rl` modes (upstream).
-- `aggregate_routable_only.py` — re-aggregator with `routability == 1.0` filter (upstream, paths now env-overridable via `RQ2_EVAL_ROOT` / `RQ2_OUT_ROOT` / `RQ2_FAIR95`).
+- `aggregate_routable_only.py` — re-aggregator with `routability == 1.0` filter (upstream; `RQ2_EVAL_ROOT` / `RQ2_OUT_ROOT` are now REQUIRED env vars — no baked-in tree defaults — and `RQ2_FAIR95` stays overridable).
 - `pcbench_fair95.txt` — 95-board fair-comparison subset used by the paper.
 - `README_upstream.md` — this file (upstream evaluation notes).
 

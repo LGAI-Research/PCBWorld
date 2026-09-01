@@ -32,8 +32,9 @@ export EXPR_ROOT="$PWD/var/results/kdd"
 > The defaults in `experiments/_lib/env.sh` (sourced by the dispatch scripts; also sets
 > PYTHONPATH/LD_LIBRARY_PATH) point at the same in-repo `var/` roots. To use an external
 > staged tree, override explicitly, e.g. `DATASET_ROOT=$KDD_BENCH_ROOT/dataset`, where
-> `$KDD_BENCH_ROOT` is wherever you keep that tree — it has no default and nothing reads
-> it directly; it is only a convenience name for writing the overrides below.
+> `$KDD_BENCH_ROOT` is wherever you keep that tree — `experiments/_lib/env.sh` defaults it
+> to `$CADAGENT_DATA_ROOT/KDD_benchmark` (the `kdd_bench` dataset of `configs/paths.yaml`)
+> when the data root is set, and it is otherwise only a convenience name for the overrides below.
 
 **Two root schemes, and how they relate.** `DATASET_ROOT` / `CKPT_ROOT` / `EXPR_ROOT` are
 the **shell variables the `experiments/` dispatch scripts read** — they name the three
@@ -41,7 +42,8 @@ in-repo `var/` trees this reproduction reads and writes. `CADAGENT_DATA_ROOT` (u
 throughout [README.md](../README.md) and resolved by `configs/loader/paths.py`) is a
 different thing: it points at the **read-only dataset corpus** — your own copy of the
 synthetic and PCBench board sets, laid out with the `sub` paths in
-`configs/paths.yaml`. Python code that resolves a logical dataset name (`d2a`,
+`configs/paths.yaml` (README §2 generates the synthetic sets; README §3 rebuilds the
+PCBench D3 set from a public clone with `tools/datagen/pcbench_prep/`). Python code that resolves a logical dataset name (`d2a`,
 `synth_2L_v2`, …) goes through `CADAGENT_DATA_ROOT`; the shell dispatch scripts pass
 explicit directories built from `DATASET_ROOT`. Point `DATASET_ROOT` at
 `$CADAGENT_DATA_ROOT` when the two trees are the same copy:

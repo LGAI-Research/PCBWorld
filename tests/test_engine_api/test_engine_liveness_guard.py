@@ -2,7 +2,7 @@
 
 Two live routers in one process share KiCad global state (the PNS::ROUTER
 singleton, BOARD/VIA aliasing): the stale one's late destruction nulls the live
-router's singleton and segfaults it mid-routing. The guard
+router's singleton and segfaults it mid-routing (260722 MCTS crash). The guard
 turns that into deterministic, attributable failures at construction time:
 
   - a second live engine → RuntimeError naming the offender's creation site

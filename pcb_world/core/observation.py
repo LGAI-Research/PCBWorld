@@ -35,8 +35,8 @@ from pcb_world.engine.containers import (
     RoutingSessionState,
 )
 
-# Flag: warn once per process when the loaded .so lacks
-# RatsnestEdge.layer1/2 — see _rats_layers.
+# Flag: warn once per process when a legacy .so (predating
+# RatsnestEdge.layer1/2) is detected — see _rats_layers.
 _WARNED_LEGACY_RATS_LAYER = False
 
 
@@ -127,7 +127,8 @@ class Rectangle:
         # pts holds polygon outline vertices only for polygon shapes (rule-area
         # keepout zones); plain pads/rects leave it empty. Emit the key ONLY when
         # populated, so pad obs stay byte-identical to the RL indexed-obs path — which
-        # never carries pts, a visualization-only field the RL/LLM paths ignore.
+        # never carries pts, a visualizer-only field the RL/LLM paths ignore. (Sole
+        # dict consumer, the rollout visualizer, already reads it as ``o.get("pts")``.)
         if self.pts:
             d["pts"] = [list(p) for p in self.pts]
         return d
@@ -174,7 +175,8 @@ class Via:
 # Board-level design rules are exposed via ``board_static["board_constraints"]``
 # (populated by env.py from the engine). Per-net constraints live on
 # ``NetContext.constraints`` — real per-netclass resolved values (opt-in via
-# the env ``net_constraint_obs`` knob).
+# the env ``net_constraint_obs`` knob), unlike the pre-refactor version that
+# merely duplicated the board-level view per net.
 
 
 # ---------------------------------------------------------------------------
@@ -238,8 +240,8 @@ class NetContext:
     pads: list[Rectangle] = field(default_factory=list)
     # Resolved per-net DRC constraints (netclass value, KiCad inherit →
     # Default fallback, BDS global-min clamp) — the values the engine is
-    # actually driven with on net_select. ``None`` (default) leaves them out
-    # of the observation entirely; populated by env.py only when
+    # actually driven with on net_select. ``None`` (default) keeps the
+    # legacy observation byte-identical; populated by env.py only when
     # ``net_constraint_obs`` is on. Keys: track_width / clearance /
     # via_diameter / via_drill (mm).
     constraints: dict | None = None
@@ -347,7 +349,7 @@ class BoardStatic:
         ``unconnected_pads`` — they stay visible as obstacles (the router
         still physically clears from them) but drop out of the routable-net
         list, ratsnest, and termination accounting. ``None`` (default) keeps
-        every net_code>0 pad as a routable net (whole-board path).
+        every net_code>0 pad as a routable net (byte-identical legacy path).
 
         All coordinates and dimensions are in mm (no normalization).
 
@@ -478,7 +480,7 @@ def build_net_geometry(
     signal (and ``net_valid_mask``) covers only the target nets. Tracks/vias are
     kept for EVERY net regardless — existing copper on non-target / kept nets
     stays visible (obstacle context + viewer render). ``None`` (default) keeps
-    every net's ratsnest too (whole-board path).
+    every net's ratsnest too (legacy path).
 
     Returns:
         dict[net_code -> NetGeometry] with mm coordinates and
@@ -499,7 +501,7 @@ def build_net_geometry(
 
         The engine reports edge.layer1/layer2 (PCB_LAYER_ID, -1 = multi-layer)
         when the binding provides them; a binding lacking the fields falls
-        back to the constant 1 and warns once per process.
+        back to the legacy constant 1 and warns once per process.
         """
         lay1 = getattr(e, "layer1", None)
         if lay1 is None:

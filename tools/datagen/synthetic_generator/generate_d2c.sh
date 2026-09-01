@@ -3,7 +3,8 @@
 #
 # What sets it apart from d2b is not "bigger/denser" but **which axes are
 # matched**. The values below come from measuring the 50 d3b boards on the same
-# axes as d2a/d2b (see README, "Matching the real-board (d3b) distribution"):
+# axes as d2a/d2b (measurement basis: README, "Matching the real-board (d3b)
+# distribution"):
 #
 #   pads per net    Zipf s=2.955 (MLE; KS 0.034 < 0.044 critical @n=953) plus a
 #                   tail correction of 16:0.018
@@ -11,14 +12,15 @@
 #   spatial locality --net-locality 0.7 + size decay 10
 #                   -> 2-pin net span / board diagonal 0.20 (d3b 0.20; d2b 0.39)
 #   board content   nets 20.1 / pads 62.8 / connections 42.7  (d3b 19.1 / 68.7 / 43.7)
-#   pad size        sampled per board in 1.0-1.9mm -> median 1.43 (d3b 1.40,
+#   pad size        sampled per board in 1.0~1.9mm -> median 1.43 (d3b 1.40,
 #                   p75 1.70, a match)
-#   board scale     38-58mm rectangles. The board is drawn AFTER the nets and
+#   board scale     38~58mm rectangles. The board is drawn AFTER the nets and
 #                   enlarged to fit their pad count, staying under the RSA limit
 #                   (_min_area_for_pads) — drawing the size independently makes
 #                   placement impossible on boards where Zipf drew several large
-#                   nets (131 pads at 99% of saturation cannot be placed).
-#                   Result: density p25-p90 3.5-6.2 (d3b 2.8-14.6),
+#                   nets (the old code failed at board 17,198 of 100k with 131
+#                   pads at 99% saturation).
+#                   Result: density p25~p90 3.5~6.2 (d3b 2.8~14.6),
 #                   W+H 76.9 (d3b 83.9)
 #
 # **Vias deliberately depart from d3b.** The d3b via-free routability ceiling is
@@ -49,7 +51,7 @@ COMMON=(--mode grid --pitch-formula c+w
         --net-locality 0.7 --net-locality-decay 10
         --size-board-for-pads
         --seed-mode linear)
-# linear seed bands: train 0.., val 1e9.., test 2e9.. (README "Seed modes")
+# linear seed bands: train 0.., val 1e9.., test 2e9.. (README "seed modes" convention)
 gen(){ local split="$1" n="$2" seed="$3"
   echo "$(date '+%H:%M:%S') [$split] $n boards (seed base $seed)"
   python "$GEN" "${COMMON[@]}" --n "$n" --seed "$seed" --out-dir "$OUT/_raw_$split" > "$OUT/_raw_$split.log" 2>&1

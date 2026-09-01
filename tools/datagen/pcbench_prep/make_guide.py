@@ -36,6 +36,9 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+# kicad-cli (every DRC trial) and the pcbnew interpreter (zone refill) come from
+# kicad_tools: the engine's own build by default, KICAD_CLI / PCBNEW_PYTHON override.
+import kicad_tools
 try:
     from setup_drvzero import remove_routing as legacy_remove_routing
 except Exception:
@@ -45,7 +48,7 @@ except Exception:
 N_TRIAL = 5
 MM2DSN = 1000
 
-# .kicad_pcb 'setup' legacy DRC field -> modern pro rules key
+# .kicad_pcb 'setup' legacy DRC field → modern pro rules key
 LEGACY_SETUP_TO_RULES = {
     'trace_min': 'min_track_width',
     'trace_clearance': 'min_clearance',
@@ -55,7 +58,7 @@ LEGACY_SETUP_TO_RULES = {
     'uvia_min_drill': 'min_microvia_drill',
 }
 
-# KiCad pro net_settings.classes parameter name -> internal representation
+# KiCad pro net_settings.classes parameter name → internal representation
 PRO_CLASS_KEYS = {
     'clearance': 'clearance',
     'track_width': 'track_width',
@@ -95,7 +98,7 @@ def _balanced_block_end(content, start):
 
 
 def extract_net_id_to_name(content):
-    """Top-level (net id name) declarations of a kicad_pcb -> {id: name}."""
+    """Top-level (net id name) declarations of a kicad_pcb → {id: name}."""
     result = {}
     for m in re.finditer(
             r'^\s*\(net\s+(\d+)\s+("(?:[^"\\]|\\.)*"|[^)"]+)\)',
@@ -129,7 +132,7 @@ def extract_net_width_range(content):
 
 
 def extract_uuid_to_net(content):
-    """Track item (segment/arc/via) UUID -> net id."""
+    """Track item (segment/arc/via) UUID → net id."""
     out = {}
     for tag in ('(segment', '(arc', '(via'):
         idx = 0
@@ -240,7 +243,7 @@ def extract_pro_net_classes(pro_data):
         for pro_k, internal_k in PRO_CLASS_KEYS.items():
             if pro_k in c and c[pro_k] is not None:
                 params[internal_k] = float(c[pro_k])
-        # unify the internal representation: track_width -> trace_width
+        # unify the internal representation: track_width → trace_width
         if 'track_width' in params:
             params['trace_width'] = params.pop('track_width')
         class_params[name] = params
@@ -248,7 +251,7 @@ def extract_pro_net_classes(pro_data):
             if net_name:
                 net_to_class[net_name] = name
 
-    # netclass_patterns: normally where the net -> class mapping is defined.
+    # netclass_patterns: normally where the net→class mapping is defined.
     patterns = []
     raw_pats = (pro_data.get('net_settings', {})
                         .get('netclass_patterns', []) or [])
@@ -266,13 +269,14 @@ def _kicad_pattern_match(pattern, name):
     """KiCad netclass pattern matching.
 
     Patterns support *, ? and character classes [..], and are case-sensitive.
-    fnmatchcase behaves the same as KiCad's EDA_PATTERN_MATCH_WILDCARD.
+    fnmatchcase behaves effectively the same as KiCad's
+    EDA_PATTERN_MATCH_WILDCARD.
     """
     return fnmatch.fnmatchcase(name, pattern)
 
 
 def derive_net_to_class(net_id_to_name, explicit, patterns, class_params):
-    """net -> class mapping.
+    """net → class mapping.
 
     Priority: explicit `nets` list > netclass_patterns (first match) > Default.
     """
@@ -418,7 +422,7 @@ def build_guide_pro(orig_pro, groups, class_info):
     orig_by_name = {c['name']: c for c in orig_classes if isinstance(c, dict) and 'name' in c}
     default_template = orig_by_name.get('Default', {})
 
-    # reverse map net_name -> guide class name (used to rewrite the patterns)
+    # reverse map net_name → guide class name (used to rewrite the patterns)
     net_to_guide_class = {}
     new_classes = []
     for key in sorted(groups, key=lambda k: (k[0], class_info[k][0])):
@@ -431,7 +435,7 @@ def build_guide_pro(orig_pro, groups, class_info):
         new_cls = json.loads(json.dumps(template)) if template else {}
         new_cls['name'] = cname
         new_cls['track_width'] = w
-        # overwrite the preserved parameters (internal -> pro keys)
+        # overwrite the preserved parameters (internal → pro keys)
         for internal_k, val in params.items():
             pro_k = INTERNAL_TO_PRO.get(internal_k)
             if pro_k:
@@ -551,7 +555,7 @@ def _refill_zones(pcb_src, pro_src, dst_pcb, dst_pro, helper):
         pass
     try:
         subprocess.run(
-            ['/usr/bin/python3', str(helper), str(pcb_src), str(dst_pcb)],
+            [kicad_tools.pcbnew_python(), str(helper), str(pcb_src), str(dst_pcb)],
             capture_output=True, timeout=180, check=False)
     except subprocess.TimeoutExpired:
         return False
@@ -583,8 +587,14 @@ def run_drc(pcb_content, pro_data, tmpdir, tag='drc'):
     out = tmp / f'{tag}.json'
     try:
         subprocess.run(
-            ['kicad-cli', 'pcb', 'drc', '--format', 'json',
-             '--severity-error', '--output', str(out), str(target)],
+            # --all-track-errors: by default kicad-cli reports only the first
+            # clearance violation per track, and the copper-clearance test runs
+            # on a thread pool, so WHICH one is first is a race between runs.
+            # The offender nets are derived from this list, so the full list is
+            # required for the guide search to be deterministic.
+            [kicad_tools.kicad_cli(), 'pcb', 'drc', '--format', 'json',
+             '--severity-error', '--all-track-errors',
+             '--output', str(out), str(target)],
             capture_output=True, timeout=180, check=False)
     except Exception:
         return None
@@ -607,6 +617,31 @@ def drc_passes(counts):
     return sum(counts.values()) == 0
 
 
+# A stock KiCad's DRC engine stops reporting a violation type once this many have
+# been reported (drc_engine.cpp: ERROR_LIMIT 199, EXTENDED_ERROR_LIMIT 499 for
+# clearance / unconnected_items; kicad-cli cannot raise it). The tests run on a
+# thread pool, so WHICH violations make it in before the cap is a race between
+# runs. A capped list is therefore not a usable offender list. The engine's own
+# kicad-cli (the default, see kicad_tools) lifts the caps — its drc_engine.cpp
+# patch reports every violation — so there drc_truncated() is switched off
+# (kicad_cli_uncapped()) and the complete list picks the offender nets even past
+# these values; with a stock kicad-cli the guard stays on for determinism.
+DRC_REPORT_CAP_DEFAULT = 199
+DRC_REPORT_CAP = {'clearance': 499, 'unconnected_items': 499}
+
+
+def drc_truncated(counts):
+    """True when a count reached a stock KiCad's per-type report cap (see above).
+
+    With the engine's uncapped kicad-cli the counts are complete: nothing is
+    treated as truncated, and the offender path is used even past the cap values.
+    """
+    if kicad_tools.kicad_cli_uncapped():
+        return False
+    return any(n >= DRC_REPORT_CAP.get(t, DRC_REPORT_CAP_DEFAULT)
+               for t, n in counts.items())
+
+
 # ─────────────────────────────────────────────
 # Board processing
 # ─────────────────────────────────────────────
@@ -614,7 +649,7 @@ def drc_passes(counts):
 def _detect_default_width(class_params, observed_widths):
     """Default width, used for nets without segments and for class naming.
 
-    Priority: Default class trace_width -> smallest observed width -> 0.25
+    Priority: Default class trace_width → smallest observed width → 0.25
     """
     default = class_params.get('Default', {})
     tw = default.get('trace_width')
@@ -625,19 +660,37 @@ def _detect_default_width(class_params, observed_widths):
     return 0.25
 
 
-def _compute_widths_per_t(t_per_net, net_wrange, default_w, min_track_w=0.0):
+def _compute_widths_per_t(t_per_net, net_wrange, default_w, min_track_w=0.0,
+                          net_to_class=None, class_params=None):
     """Width per net from its t (0 = max, 1 = min).
 
     A net with no segments is pinned to default_w regardless of t.
-    The lower floor is the wider of the net's own observed minimum and the
-    board's min_track_width rule; a net class's trace_width is deliberately
-    not a floor, so the widths the boards ship with are reproducible.
+    min_track_w: the min_track_width rule value — acts as the lower floor.
     """
     widths = {}
     for nid, t in t_per_net.items():
         if nid in net_wrange:
             mn, mx = net_wrange[nid]
-            mn_floor = max(mn, min_track_w)
+            # Enforce floor: observed min, global min_track_w, and
+            # the original class trace_width (if available).
+            cls_name = None
+            cls_min = 0.0
+            if net_to_class and class_params:
+                # net_to_class maps net name -> class name; but keys in
+                # net_wrange are net ids (strings). The caller may pass
+                # net_to_class as a mapping from net id->class or name->class.
+                # Our process_board passes net_to_class as name mapping, so
+                # try both lookups.
+                # First try to find by net id (string) in net_to_class.
+                if nid in net_to_class:
+                    cls_name = net_to_class.get(nid)
+                else:
+                    # try reverse: net id -> net name resolution is handled
+                    # by caller if needed; fall back to None.
+                    cls_name = None
+                if cls_name and cls_name in class_params:
+                    cls_min = class_params.get(cls_name, {}).get('trace_width', 0.0) or 0.0
+            mn_floor = max(mn, min_track_w, cls_min)
             widths[nid] = mx * (1 - t) + mn_floor * t
         else:
             widths[nid] = default_w
@@ -680,7 +733,7 @@ def process_board(folder, input_stem='processed_v9', guide_suffix='_guide',
         pcb_classes, pcb_n2c = extract_pcb_net_class_blocks(content)
         pro_classes, pro_n2c, pro_patterns = extract_pro_net_classes(pro_data)
 
-        # v9: no pcb net_class -> prefer pro / legacy: prefer pcb
+        # v9: no pcb net_class → prefer pro / legacy: prefer pcb
         is_v9 = (len(pcb_classes) == 0 and len(pro_classes) > 0)
         if is_v9:
             class_params = pro_classes
@@ -745,7 +798,8 @@ def process_board(folder, input_stem='processed_v9', guide_suffix='_guide',
             offender_history = []  # debug trace
             for trial in range(N_TRIAL):
                 net_widths = _compute_widths_per_t(
-                    t_per_net, net_wrange, default_w, min_track_w)
+                    t_per_net, net_wrange, default_w, min_track_w,
+                    net_to_class=net_to_class, class_params=class_params)
                 modified_pcb = apply_net_widths_to_tracks(
                     content, net_widths)
 
@@ -784,7 +838,10 @@ def process_board(folder, input_stem='processed_v9', guide_suffix='_guide',
                     break
 
                 # identify the violating nets -> narrow only those by a step.
-                offender_ids = extract_offending_net_ids(
+                # A capped violation list (drc_truncated) is a run-dependent
+                # subset, so it is not used: every reducible net narrows.
+                truncated = drc_truncated(trial_counts)
+                offender_ids = set() if truncated else extract_offending_net_ids(
                     drc_result['violations'], uuid_to_net, net_name_to_id)
                 # reducible: nets with t < 1 present in net_wrange (segments).
                 targets = [nid for nid in offender_ids
@@ -792,13 +849,13 @@ def process_board(folder, input_stem='processed_v9', guide_suffix='_guide',
                            and nid in net_wrange
                            and t_per_net[nid] < 1.0]
                 if not targets:
-                    # nothing identified, or all at min -> narrow all (fallback).
+                    # nothing identified, capped, or all at min -> narrow all.
                     targets = [nid for nid in t_per_net
                                if nid in net_wrange
                                and t_per_net[nid] < 1.0]
                 offender_history.append(
                     {'trial': trial, 'offenders': len(offender_ids),
-                     'reduced': len(targets)})
+                     'reduced': len(targets), 'truncated': truncated})
                 for nid in targets:
                     t_per_net[nid] = min(1.0, t_per_net[nid] + step)
 
@@ -810,7 +867,8 @@ def process_board(folder, input_stem='processed_v9', guide_suffix='_guide',
                 final_t = {nid: (1.0 if nid in net_wrange else t)
                            for nid, t in t_per_net.items()}
                 final_widths = _compute_widths_per_t(
-                    final_t, net_wrange, default_w, min_track_w)
+                    final_t, net_wrange, default_w, min_track_w,
+                    net_to_class=net_to_class, class_params=class_params)
                 final_pcb = apply_net_widths_to_tracks(
                     content, final_widths)
                 final_groups = build_groups(
@@ -839,11 +897,16 @@ def process_board(folder, input_stem='processed_v9', guide_suffix='_guide',
                         final_accepted = final_record
                         final_accepted['trial'] = N_TRIAL + 1
                     else:
-                        # both fail -> keep whichever has fewer violations.
+                        # both fail -> keep whichever has fewer violations;
+                        # a capped count is a race, so it ranks as infinite
+                        # (both capped -> final_min, the deterministic choice).
                         last_v = (sum(last['counts'].values())
-                                  if last else float('inf'))
-                        final_v = sum(final_counts.values())
-                        if last is None or final_v < last_v:
+                                  if last and not drc_truncated(last['counts'])
+                                  else float('inf'))
+                        final_v = (sum(final_counts.values())
+                                   if not drc_truncated(final_counts)
+                                   else float('inf'))
+                        if last is None or final_v <= last_v:
                             accepted = final_record
                             accepted['trial'] = N_TRIAL + 1
                         else:
@@ -923,6 +986,7 @@ def main():
     if args.limit:
         folders = folders[:args.limit]
 
+    kicad_tools.announce()
     print(f'Processing {len(folders)} boards under {base}')
     print(f'  stem={args.stem}  suffix={args.suffix}  workers={args.workers}')
     print(f'  log={args.log}')

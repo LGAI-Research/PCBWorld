@@ -33,13 +33,17 @@ from methods.rl_agent.models.v1.blocks import (
     build_2zone_mask,
     build_slot_membership,
     combine_masks,
+    flex_padding_block_mask,
+    padded_len,
+    padding_attn_mask,
+    same_net_score_mod,
     init_weights,
 )
 from methods.rl_agent.models.v1.tokenizer import BatchedStateTokenizer
 from methods.rl_agent.models.v1.encoding import TokenizerOutput
 
-# The action-space contract lives in the v1 spec; re-exported here so callers
-# can import it (``SLOT_USAGE`` etc.) alongside the model.
+# Action-space contract relocated to the v1 spec (C1-models step 1). Re-exported
+# here so existing ``from ...decoder_only_policy import SLOT_USAGE`` etc. keep working.
 from methods.rl_agent.models.v1.spec import (  # noqa: F401
     NUM_ACTION_TYPES,
     ACT_NET_SELECT,
@@ -98,6 +102,35 @@ class _StateEnc:
 # ---------------------------------------------------------------------------
 # KiCadRLModel
 # ---------------------------------------------------------------------------
+def _blocked_columns(
+    valid: torch.Tensor, idx: torch.Tensor, n_cols: int,
+) -> torch.Tensor:
+    """``(B, n_cols)`` bool: True where a valid ``idx`` entry names that column.
+
+    Branch-free on purpose. The obvious form — ``if valid.any(): logits[rows,
+    cols] = -inf`` — reads a device tensor into a Python bool, which (a) syncs
+    the device on every call and (b) forks the compiled graph on the outcome,
+    so the ``heads`` compile region burns a recompile slot each time the batch
+    flips between "something to block" and "nothing to block".
+
+    Entries with ``valid == False`` are routed to a scratch column ``n_cols``
+    that is sliced off, so duplicate indices cannot let an invalid entry
+    overwrite a valid one (plain ``scatter_`` is last-write-wins).
+
+    Args:
+        valid: ``(B, K)`` bool — which ``idx`` entries count.
+        idx: ``(B, K)`` int64 column indices; clamped into range.
+        n_cols: width of the logits tensor being masked.
+    """
+    B = idx.size(0)
+    tgt = torch.where(
+        valid, idx.clamp(min=0, max=n_cols - 1), idx.new_full((), n_cols),
+    )
+    out = torch.zeros(B, n_cols + 1, dtype=torch.bool, device=idx.device)
+    out.scatter_(1, tgt, True)
+    return out[:, :n_cols]
+
+
 class KiCadRLModel(nn.Module):
     """Decoder-Only Transformer policy with pointer-network action selection.
 
@@ -148,8 +181,8 @@ class KiCadRLModel(nn.Module):
         self.use_critic = use_critic
         self.detach_critic = detach_critic
         # When True, the policy's net_select pointer is propagated to the env
-        # (learned net ordering). When False, KiCadRLWrapper overrides it
-        # with a random unrouted-net pick.
+        # (learned net ordering). Default False keeps the behavior where
+        # KiCadRLWrapper overrides it with a random unrouted-net pick.
         # Training-loop helpers read this to decide whether to fetch
         # per-env ``net_valid_mask`` from the vec env pool.
         self.policy_net_select = bool(policy_net_select)
@@ -198,6 +231,8 @@ class KiCadRLModel(nn.Module):
         # are the torch.compile seams ('stack'/'decode' regions); the 'heads'
         # region compiles the pointer/value helpers in place.
         self.bf16_compute = False
+        # 'sdpa' | 'flex' — kernel of the state pass (see configure_speed).
+        self.attn_impl = "sdpa"
         self._stack_fn = self._stack_impl
         self._decode_fn = self._decode_impl
 
@@ -250,22 +285,48 @@ class KiCadRLModel(nn.Module):
         bf16: bool = False,
         compile_regions: tuple[str, ...] | list[str] = (),
         compile_mode: str = "default",
+        attn: str = "sdpa",
     ) -> None:
-        """Wire the bf16/torch.compile experiment knobs (idempotent-ish; call
-        once, right after construction and .to(device)).
+        """Wire the bf16/torch.compile/attention-kernel knobs (idempotent-ish;
+        call once, right after construction and .to(device)).
 
         Args:
             bf16: autocast(bfloat16) around stack + incremental decode; heads
                 and all probability math stay fp32.
+            attn: state-pass attention kernel — ``'sdpa'`` (default; additive
+                key-padding mask) or ``'flex'`` (flex_attention over a
+                key-padding BlockMask: padded key blocks are skipped and the
+                fused kernel is faster even without skipping; ~1.2-1.5x on the
+                transformer body). flex changes the floating-point reduction
+                order, so outputs move within bf16 precision (~1.5 ULP of
+                fp32 either way) — not bit-identical to sdpa. Sequences are
+                padded to a multiple of ``FLEX_BLOCK``; flex and the stack are
+                compiled ``dynamic=True`` (a static graph per ``(B, L_pad)``
+                blew through the recompile limit under ``--mem-budget``
+                chunking and fell back to eager flex — 3x slower than sdpa
+                and score-matrix memory; see ``blocks.compiled_flex_attention``).
+                Incremental decode stays on SDPA (appended queries are a
+                handful of tokens).
+
+        Dynamo recompile limits: whenever any region is compiled (or flex is
+        on) the per-frame ``recompile_limit`` is raised 8 -> 128 (accumulated
+        256 -> 512). Past the limit dynamo prints one warning and silently
+        runs the frame eager. The default 8 is exceeded in practice by the
+        'heads' region alone: dynamo specializes every 0/1-sized dim per
+        tensor (``cand_block_idx`` / ``row_block_idx`` K, net/cand counts),
+        and the combinations multiply — seen falling back within the first
+        warmup iteration of a d3b run. Extra graphs cost seconds of one-time
+        compile, an eager 'heads' costs every call.
             compile_regions: subset of {'stack', 'decode', 'heads', 'encode'} —
                 'stack' = full-pass layer loop, 'decode' = incremental
                 K/V-append loop, 'heads' = pointer/value helpers, 'encode' =
                 tokenizer ``vocab.encode_*`` entity encoders (Fourier ladders
                 + projections; the dict/H2D glue in ``_encode_all`` stays
                 eager — only the pure tensor encoders are compiled).
-                The alias ``'efficient'`` expands to
-                {'stack', 'decode', 'heads'}; ``'encode'`` is deliberately
-                excluded from it — compiling the encoders measures slower.
+                The alias ``'efficient'`` expands to the adopted combo
+                {'stack','decode','heads'} (the measured A/B winner);
+                ``'encode'`` is deliberately excluded — it measured as a
+                regression.
             compile_mode: 'default' | 'reduce-overhead' | 'max-autotune'
                 (torch.compile mode; 'default' passes mode=None).
         """
@@ -274,7 +335,22 @@ class KiCadRLModel(nn.Module):
             regions = (regions - {"efficient"}) | {"stack", "decode", "heads"}
         unknown = regions - {"stack", "decode", "heads", "encode"}
         assert not unknown, f"unknown compile regions: {unknown}"
+        assert attn in ("sdpa", "flex"), f"unknown attn kernel: {attn!r}"
         self.bf16_compute = bool(bf16)
+        self.attn_impl = attn
+        if attn == "flex":
+            d_head = self.d_model // self.n_heads
+            assert d_head >= 16, (
+                f"attn='flex' needs head_dim >= 16 (flex kernel limit), got "
+                f"d_model={self.d_model} / n_heads={self.n_heads} = {d_head}"
+            )
+        if regions or attn == "flex":
+            import torch._dynamo as dynamo
+            cfg = dynamo.config
+            cfg.recompile_limit = max(cfg.recompile_limit, 128)
+            cfg.accumulated_recompile_limit = max(
+                cfg.accumulated_recompile_limit, 512,
+            )
         mode = None if compile_mode == "default" else compile_mode
         if "stack" in regions:
             self._stack_fn = torch.compile(
@@ -327,37 +403,82 @@ class KiCadRLModel(nn.Module):
             ``(B, L, d)`` hidden states after all layers; with
             ``return_cache``, a ``(hidden, cache)`` tuple.
         """
-        _, L, _ = embs.shape
-        zone = build_2zone_mask(n_state, L).to(embs.device)
-        attn_mask = combine_masks(zone, key_padding_mask)  # (B, 1, L, L)
-        if attn_mask.dtype != embs.dtype:
-            # combine_masks builds float32; match embs so SDPA accepts the
-            # mask under non-default dtypes (e.g. float64 equivalence tests).
-            attn_mask = attn_mask.to(embs.dtype)
+        B, L, _ = embs.shape
+        attn_mask = block_mask = None
+        if n_state >= L and self.attn_impl == "flex":
+            # flex_attention over a key-padding BlockMask. Pad the sequence to
+            # a FLEX_BLOCK multiple (bounded shape set for the static-shape
+            # compile; the extra rows are masked keys and discarded queries)
+            # and slice the hiddens + K/V cache back to L below, so nothing
+            # downstream sees L_pad. lens assumes suffix padding (tokenizer
+            # contract; see flex_padding_block_mask).
+            L_pad = padded_len(L)
+            if L_pad != L:
+                embs = F.pad(embs, (0, 0, 0, L_pad - L))
+                key_padding_mask = torch.cat(
+                    [key_padding_mask,
+                     key_padding_mask.new_ones(B, L_pad - L)], dim=1,
+                )
+            lens = (~key_padding_mask).sum(1)
+            block_mask = flex_padding_block_mask(lens, L_pad)
+        elif n_state >= L:
+            # All-state sequence: build_2zone_mask is all-zero, so the dense
+            # (B, 1, L, L) it feeds combine_masks holds nothing but the
+            # key-padding row repeated L times. Keep that row broadcast —
+            # identical values, no L^2 tensor per forward. This is the only
+            # regime _encode_state ever passes; action tokens go through
+            # _decode_appended instead.
+            attn_mask = padding_attn_mask(key_padding_mask, embs.dtype)
+        else:
+            zone = build_2zone_mask(n_state, L).to(embs.device)
+            attn_mask = combine_masks(zone, key_padding_mask)  # (B, 1, L, L)
+            if attn_mask.dtype != embs.dtype:
+                # combine_masks builds float32; match embs so SDPA accepts the
+                # mask under non-default dtypes (e.g. float64 equivalence tests).
+                attn_mask = attn_mask.to(embs.dtype)
         # Per-head same-net additive bias (opt-in). slot_ids covers state
         # tokens; appended action tokens get slot -1 (no-slot).
-        same_net_aug = None
+        same_net_aug = score_mod = None
         if self.same_net_bias is not None and slot_ids is not None:
-            B = embs.size(0)
-            if slot_ids.size(1) < L:
+            L_in = embs.size(1)  # == L_pad on the flex path
+            if slot_ids.size(1) < L_in:
                 pad = torch.full(
-                    (B, L - slot_ids.size(1)), -1,
+                    (B, L_in - slot_ids.size(1)), -1,
                     dtype=slot_ids.dtype, device=slot_ids.device,
                 )
                 slot_ids = torch.cat([slot_ids, pad], dim=1)
-            # Absorb α_h·MMᵀ into q/k channels — exact reformulation of the
-            # additive same-net bias (blocks.build_slot_membership); the
-            # (B,H,L,L) bias tensor is never built. Shared M across all layers.
-            same_net_aug = (build_slot_membership(slot_ids), self.same_net_bias.alpha)
+            if block_mask is not None:
+                # flex: add α_h·1[same-net] to the logits inside the kernel.
+                # The q/k-channel absorption below would widen the head dim by
+                # K_pad (up to the board's net count) — rounded to a power of
+                # two by the flex template, it exhausts shared memory and
+                # recompiles per distinct K_pad (blocks.same_net_score_mod).
+                score_mod = same_net_score_mod(slot_ids, self.same_net_bias.alpha)
+            else:
+                # Absorb α_h·MMᵀ into q/k channels — exact reformulation of
+                # the additive same-net bias (blocks.build_slot_membership);
+                # the (B,H,L,L) bias tensor is never built. Shared M across
+                # all layers.
+                same_net_aug = (build_slot_membership(slot_ids), self.same_net_bias.alpha)
         if self.bf16_compute:
             # SDPA requires mask dtype == query dtype; under autocast the
             # projections emit bf16. -inf is representable in bf16.
-            attn_mask = attn_mask.to(torch.bfloat16)
+            if attn_mask is not None:
+                attn_mask = attn_mask.to(torch.bfloat16)
             with torch.autocast("cuda", dtype=torch.bfloat16):
-                x, kv = self._stack_fn(embs, attn_mask, same_net_aug, return_cache)
+                x, kv = self._stack_fn(embs, attn_mask, same_net_aug,
+                                       return_cache, block_mask, score_mod)
             x = x.float()
         else:
-            x, kv = self._stack_fn(embs, attn_mask, same_net_aug, return_cache)
+            x, kv = self._stack_fn(embs, attn_mask, same_net_aug,
+                                   return_cache, block_mask, score_mod)
+        if block_mask is not None and x.size(1) != L:
+            # Drop the FLEX_BLOCK padding again (views; the cache keeps the
+            # exact shapes the sdpa path produces).
+            x = x[:, :L]
+            key_padding_mask = key_padding_mask[:, :L]
+            if kv is not None:
+                kv = [(k[:, :, :L], v[:, :, :L]) for k, v in kv]
         if not return_cache:
             return x
         return x, _DecodeCache(kv=kv, key_padding_mask=key_padding_mask)
@@ -365,20 +486,23 @@ class KiCadRLModel(nn.Module):
     def _stack_impl(
         self,
         x: torch.Tensor,
-        attn_mask: torch.Tensor,
+        attn_mask: torch.Tensor | None,
         same_net_aug: tuple[torch.Tensor, torch.Tensor] | None,
         return_kv: bool,
+        block_mask=None,
+        score_mod=None,
     ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]] | None]:
         """Layer-stack loop — the 'stack' torch.compile target (pure tensors)."""
         if not return_kv:
             for layer in self.layers:
-                x = layer(x, attn_mask=attn_mask, same_net_aug=same_net_aug)
+                x = layer(x, attn_mask=attn_mask, same_net_aug=same_net_aug,
+                          block_mask=block_mask, score_mod=score_mod)
             return x, None
         kv: list[tuple[torch.Tensor, torch.Tensor]] = []
         for layer in self.layers:
             x, layer_kv = layer(
                 x, attn_mask=attn_mask, same_net_aug=same_net_aug,
-                return_kv=True,
+                return_kv=True, block_mask=block_mask, score_mod=score_mod,
             )
             kv.append(layer_kv)
         return x, kv
@@ -565,8 +689,9 @@ class KiCadRLModel(nn.Module):
                 same point. Only affects cand-based rows;
                 ``is_net_select`` rows are unchanged.
 
-                A ``(B,)`` tensor is also accepted (auto-promoted to
-                ``(B, 1)``).
+                A legacy ``(B,)`` tensor is also accepted (auto-promoted
+                to ``(B, 1)``) so older checkpoints / callers keep
+                working.
         """
         net_logits = self._pointer_logits(h_at, H_state, net_indices)   # (B, M)
         cand_logits = self._pointer_logits(h_at, H_state, cand_indices)  # (B, N)
@@ -604,32 +729,26 @@ class KiCadRLModel(nn.Module):
             rb = row_block_idx.reshape(cand_logits.size(0), -1)
             N = cand_logits.size(1)
             valid = (rb >= 0) & (rb < N) & row_block_gate.reshape(-1, 1)
-            if bool(valid.any()):
-                cand_logits = cand_logits.clone()
-                rows = (torch.arange(cand_logits.size(0), device=cand_logits.device)
-                        .unsqueeze(1).expand_as(rb)[valid])
-                cand_logits[rows, rb[valid]] = float("-inf")
+            cand_logits = cand_logits.masked_fill(
+                _blocked_columns(valid, rb, N), float("-inf"),
+            )
 
         # Same-point masking: zero out every (row, col) where col >= 0.
         # Must happen BEFORE the net/cand where() so net_select rows stay
-        # untouched. Accepts (B, K) or (B,) shape.
+        # untouched. Accepts (B, K) or legacy (B,) shape.
         if cand_block_idx is not None and cand_logits.size(1) > 0:
             cbi = cand_block_idx
             if cbi.dim() == 1:
                 cbi = cbi.unsqueeze(1)  # (B,) → (B, 1)
             if cbi.size(1) > 0:
+                # NOTE: unlike the row-gated block above, an out-of-range index
+                # IS blocked here (clamped onto the last column) — preserved
+                # from the original indexing form.
                 valid = cbi >= 0  # (B, K) bool
-                if valid.any():
-                    cand_logits = cand_logits.clone()
-                    N = cand_logits.size(1)
-                    # Build flat (row, col) index lists for each valid entry.
-                    rows_grid = (
-                        torch.arange(cbi.size(0), device=cbi.device)
-                        .unsqueeze(1).expand_as(cbi)
-                    )
-                    rows = rows_grid[valid]
-                    cols = cbi[valid].clamp(min=0, max=N - 1)
-                    cand_logits[rows, cols] = float("-inf")
+                N = cand_logits.size(1)
+                cand_logits = cand_logits.masked_fill(
+                    _blocked_columns(valid, cbi, N), float("-inf"),
+                )
 
         M = net_indices.size(1)
         N = cand_indices.size(1)
@@ -828,8 +947,8 @@ class KiCadRLModel(nn.Module):
                 make_line / make_via / next start_route cannot re-pick
                 it. The trainer collects
                 :meth:`KiCadRLWrapper.start_route_pointer_indices`
-                per env and stacks the result. A ``(B,)`` tensor is also
-                accepted (auto-promoted to ``(B, 1)``).
+                per env and stacks the result. A legacy ``(B,)`` tensor
+                is also accepted (auto-promoted to ``(B, 1)``).
 
         Returns:
             actions: ``(B, 3)`` int64 — [action_type, pointer_idx, routing_mode].
@@ -967,7 +1086,7 @@ class KiCadRLModel(nn.Module):
         allow_net_select_lp: bool = False,
         walked: dict | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Thin wrapper around :meth:`act_and_value`.
+        """Backwards-compatible wrapper around :meth:`act_and_value`.
 
         Returns ``(actions, log_probs)`` — drops the value tensor.
         """
@@ -1175,10 +1294,10 @@ class KiCadRLModel(nn.Module):
             # A deterministic row (max_ent == 0) has entropy 0 as well, but
             # an eps-clamped division amplifies that row's residual bf16 ~ε
             # gradient by 1/eps → grad inf → clip_grad_norm's inf*0=NaN
-            # chain corrupts the weights. max_ent is the log of an integer
-            # count, so it is either 0 or ≥ ln2: only the zero rows get
-            # denominator 1, which removes the amplification channel. The
-            # division runs in fp32.
+            # chain corrupts the weights (measured: 260813 A5 iter-1).
+            # max_ent is the log of an integer count, so it is either 0 or
+            # ≥ ln2: only the zero rows get denominator 1, which removes the
+            # amplification channel. The division runs in fp32.
             denom = torch.where(
                 max_ent > 0, max_ent, torch.ones_like(max_ent),
             )
@@ -1361,7 +1480,7 @@ class KiCadRLModel(nn.Module):
         net_valid_mask: torch.Tensor | None = None,
         allow_net_select_lp: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Thin wrapper around :meth:`evaluate_actions_and_value`.
+        """Backwards-compatible wrapper around :meth:`evaluate_actions_and_value`.
 
         Returns ``(log_probs, entropy)`` — drops the value tensor.
         """

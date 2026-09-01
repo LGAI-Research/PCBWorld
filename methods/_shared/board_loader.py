@@ -45,8 +45,9 @@ def load_boards_from_dir_or_list(
       * nested: ``<dir>/<board>/processed_v9_guide_v3.kicad_pcb`` (real PCBs)
 
     The manifest variant reads one path per non-comment line; entries may name
-    their location as ``${CADAGENT_DATA_ROOT}/...`` to stay portable across
-    machines.
+    their location as ``${CADAGENT_DATA_ROOT}/...`` (resolved through
+    ``configs.loader.paths``: env var wins, the paths.yaml default falls back)
+    so the tracked lists carry no machine-specific absolute root.
     """
     paths: list[Path] = []
     if boards_dir is not None:
@@ -218,8 +219,8 @@ def resolve_board_list(
     ds = expand_data_path(ds)
 
     # board_filename arg wins over boards_json metadata; either enables the
-    # per-board-dir layout. None (default) selects the flat <bid>.kicad_pcb
-    # layout used by the synthetic datasets.
+    # per-board-dir layout. None (default) keeps the flat <bid>.kicad_pcb
+    # layout so synth datasets stay byte-identical to the legacy behavior.
     bn = board_filename if board_filename is not None else split_data.get("board_filename")
 
     def _board_path(bid: str) -> str:
@@ -278,8 +279,8 @@ def resolve_board_list(
     resolved.sort(key=lambda x: x[1])
     n_total = len(resolved)
     print(f"[boards] round_robin over {n_total} boards (ascending pads):")
-    # Full listing only for small pools — one line per board would be a ~15MB
-    # launch log for a 100k-board train pool. Large pools show head/tail + elision.
+    # Full listing only for small pools — a 100k-board train pool dumped one
+    # line per board (~15MB launch log). Large pools show head/tail + elision.
     if n_total <= 50:
         idx = list(range(n_total))
     else:

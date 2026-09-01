@@ -1,14 +1,16 @@
 """Batched State Tokenizer.
 
-Turns a batch of observations into token embeddings with **one
-``vocab.encode_TYPE`` call per entity type** instead of one call per
-observation, so the GPU launch count scales with the number of entity
-types rather than with the number of observations.
+Drop-in replacement for ``StateTokenizer`` that processes a batch of
+observations with **one ``vocab.encode_TYPE`` call per entity type**
+instead of one per observation. The per-obs Python loop in the original
+([state_tokenizer.py:171-173](state_tokenizer.py)) is the dominant cost
+of training (98 % of forward time at the v19 aug_small profile); this
+module replaces ~330 k tiny GPU launches per iter with ~300 batched
+launches.
 
-Produces **bit-equivalent** ``TokenizerOutput`` to the per-obs reference
-tokenizer (``tests/helpers/reference_tokenizer.py``) when both share the
-same ``vocab`` weights — checked by
-``tests/test_state_tokenizer_batched.py``.
+Designed to produce **bit-equivalent** ``TokenizerOutput`` to
+``StateTokenizer`` when both share the same ``vocab`` weights — verified
+by ``tests/test_state_tokenizer_batched.py``.
 
 Phases (per ``forward(obs_list)``):
   1. CPU walk: one Python pass over obs_list, building per-type buffers
@@ -130,11 +132,14 @@ class _SmallBlockBufs:
     not here — each walk handles them its own way (per-entity loop vs
     vectorized finalize).
 
-    Every ``emit_*`` returns the updated ``pos``. The properties finalize
-    each field as a **numpy array** (f64/i64), the same container the
-    heavy types use, so the walk cache (merge/bounds/gather) runs through
-    a single numpy path with no per-type branching. Bit-identity between
-    the two walks is guarded by tests/test_indexed_tokenizer.py.
+    Every ``emit_*`` returns the updated ``pos``, with the same ops and
+    order as the previous inline copies (bit-identity guard:
+    tests/test_indexed_tokenizer.py). The properties finalize each field
+    as a **numpy array** (f64/i64), the same container the heavy types
+    use, so the walk cache (merge/bounds/gather) runs through a single
+    numpy path with no per-type branching (the downstream
+    ``np.asarray``→f32 cast in ``_encode_all`` yields the same values as
+    the earlier list inputs did — bit-identity preserved).
     """
 
     def __init__(self, tok) -> None:
@@ -285,8 +290,8 @@ class _SmallBlockBufs:
         # "idle" sentinel with success=True so the policy can distinguish
         # "no record" from a real past step; the age index still advances.
         # ``slot_of(net_code) -> slot`` binds an entry to its net's slot
-        # embedding (SameNetBias); in legacy prev-action mode the single
-        # entry is slot-free.
+        # embedding (SameNetBias); legacy prev-action mode keeps the
+        # historical slot-free single entry (bit-identity).
         vocab = self._tok.vocab
         legacy = vocab.legacy_action_history
         for age in range(vocab.action_history_len):
@@ -443,10 +448,10 @@ class BatchedStateTokenizer(nn.Module):
             obstacle_obs=obstacle_obs,
             shape_obs=shape_obs,
         )
-        # Emission gate for OBSTACLE tokens (netless blockers): off (default)
-        # ⇒ no OBSTACLE token is emitted. shape_obs gates only the
-        # encoder-side additive channel; the walk always carries the
-        # shape_id columns (fixed tuple arity).
+        # Emission gate for OBSTACLE tokens (netless blockers). Off (default)
+        # ⇒ zero tokens emitted ⇒ token stream byte-identical to pre-knob
+        # tokenizers. shape_obs gates only the encoder-side additive channel;
+        # the walk always carries the shape_id columns (fixed tuple arity).
         self.obstacle_obs = bool(obstacle_obs)
         self.shape_obs = bool(shape_obs)
         self.d_model = d_model
@@ -459,7 +464,7 @@ class BatchedStateTokenizer(nn.Module):
         self._time_cap = float(time_feature_cap)
         self._time_cap_log = math.log1p(float(time_feature_cap))
 
-    # No static cache to clear (API parity with the reference tokenizer).
+    # API parity with StateTokenizer
     def clear_static_cache(self) -> None:
         pass
 
@@ -1059,7 +1064,7 @@ class BatchedStateTokenizer(nn.Module):
                 e_off.append(s_off)
                 e_refs.append(bs["edge_pt"]); e_w.append(bs["edge_w"])
                 em = bs.get("edge_mid")
-                if em is None:  # indexed obs with no edge_mid table: all straight
+                if em is None:  # pre-arc indexed obs: all straight
                     em = np.full((E,), -1, dtype=np.int64)
                 e_mid.append(em)
                 pos += E
@@ -1784,8 +1789,9 @@ class BatchedStateTokenizer(nn.Module):
 
         # ---- ACTION_HISTORY (3 tokens per entry, K entries per obs) ----
         # Only emitted when the policy threads its action_type_head.weight
-        # through forward() for weight tying. Without it the positions are
-        # left as zeros (pre-LN), which the transformer treats as noise.
+        # through forward() for weight tying. If missing, positions are
+        # left as zeros (pre-LN), which the transformer treats as noise —
+        # backward-compatible with old callers that don't pass the weight.
         # Each entry's 3 tokens share the entry's net slot (SameNetBias /
         # slot embedding); legacy prev-action mode emits slot=-1 throughout.
         (pa_type, pa_succ, pa_xy, pa_ld, pa_has_ptr, pa_mode, pa_age,
@@ -1899,7 +1905,9 @@ class BatchedStateTokenizer(nn.Module):
         # max_seq = min(max(seq_lens), max_seq_len)); the only violation is an
         # obs exceeding the cap, which flat-index truncation cannot express
         # (it would silently write into the NEXT row's range) — fail loudly
-        # instead.
+        # instead. The old per-type GPU keep-check was vacuous
+        # ((flat_idx % max_seq) < max_seq is always true) and cost one
+        # host-device sync per entity type.
         if seq_lens_py and max(seq_lens_py) > max_seq:
             raise ValueError(
                 f"seq_len {max(seq_lens_py)} exceeds max_seq_len "
@@ -1915,8 +1923,9 @@ class BatchedStateTokenizer(nn.Module):
                 slot_ids_flat.index_copy_(0, flat_idx, slot_t)
 
         # Build key_padding_mask. (Padded positions are filled AFTER
-        # LayerNorm: a padded slot holds the raw pad_embed, with no
-        # LayerNorm and no slot contribution.)
+        # LayerNorm to match StateTokenizer's behaviour, which keeps
+        # padded slots as the raw pad_embed without LayerNorm or slot
+        # contribution.)
         seq_lens = torch.tensor(seq_lens_py, dtype=torch.long, device=device)
         seq_lens = seq_lens.clamp(max=max_seq)
         positions = torch.arange(max_seq, device=device).unsqueeze(0)  # (1, S)
@@ -1962,8 +1971,8 @@ class BatchedStateTokenizer(nn.Module):
                 out + self.vocab.slot_scale * slot_contrib,
             )
 
-        # Fill padded positions with raw pad_emb AFTER LayerNorm — these
-        # positions stay un-normalized.
+        # Fill padded positions with raw pad_emb AFTER LayerNorm — the
+        # per-obs StateTokenizer keeps these positions un-normalized.
         if seq_lens_py and min(seq_lens_py) < max_seq:  # == key_padding_mask.any(), no sync
             out = out.masked_scatter(
                 key_padding_mask.unsqueeze(-1),

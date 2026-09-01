@@ -5,9 +5,9 @@
 #                rectilinear polygon ~20% | gr_circle ~2%  (gr_rect: never)
 #   internal cutouts ~5% · NPTH mounting holes ~25% (drill 3.2 dominant) ·
 #   oval-drill slots ~10% · diversified THT pads (drill 0.8-1.0, oval/rect)
-# Rates/ranges: outline_geometry.py constants (census of real d3a/d3b
-# boards). Placement respects outline/holes (keepouts), capacity is derated
-# by usable area — pads/cm² lands ~1.5% below the non-geo d2b pool.
+# Rates/ranges: outline_geometry.py constants (2026-08-16 census of real
+# d3a/d3b boards). Placement respects outline/holes (keepouts), capacity is
+# derated by usable area — pilot 260816: pads/cm² -1.5% vs original d2b.
 #
 # ASPECT_SIGMA=0.60 additionally draws a non-square board box (log(long/short)
 # ~ |N(0, sigma)|, area unchanged) and writes to the `_ar` dataset roots. The

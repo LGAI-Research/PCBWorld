@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Speed-profiler front door — the ``train.py``/``eval.py`` peer.
+"""Speed-profiler front door — the ``train.py``/``eval.py``/``visualize.py`` peer.
 
 Thin dispatch only; the implementation lives in
 ``tools/diagnostics/speed_profiler/``. Profiles the Decoder-only PPO training loop
@@ -8,7 +8,7 @@ real PPOTrainer code paths.
 
 Usage:
     python scripts/profile.py --dataset d2a --n-envs 64
-    python scripts/profile.py --dataset d3b --n-envs 128 --host-tag l40 --waterfall
+    python scripts/profile.py --dataset d2b --n-envs 128 --host-tag l40 --waterfall
     python scripts/profile.py --help
 
 Needs the ``cadagent`` conda env + the built router on PYTHONPATH/LD_LIBRARY_PATH.
@@ -24,7 +24,7 @@ _REPO_ROOT = os.path.abspath(os.path.join(_HERE, ".."))
 # sys.path[0] when run as ``python scripts/profile.py``, so a later
 # ``import profile`` (torch._dynamo -> cProfile -> import profile) would resolve
 # to THIS file and crash. Drop scripts/ from sys.path and put the repo root first
-# (the same shadowing hazard applies to the repo's ``eval`` package).
+# (the same shadowing hazard the ``eval`` package has with the builtin).
 sys.path[:] = [p for p in sys.path if os.path.abspath(p or ".") != _HERE]
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)

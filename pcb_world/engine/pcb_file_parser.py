@@ -1,12 +1,12 @@
-"""Engine-backed view of board state in the parser dict shape.
+"""Engine-backed view of board state in legacy parser dict shape.
 
 ``KiCadEngine`` (kicad_rl_router) is the single source of truth for board
 state. This module reshapes the engine's output into the dict layout that
-``BoardStatic.from_board`` and the tests expect.
+``BoardStatic.from_board`` and existing tests expect.
 
 Pads carry **human** layer IDs (1=Top, N=Bottom) — engine natives use
 ``PCB_LAYER_ID`` (board IDs), so we wrap them in thin shims that
-present those attribute names.
+present the same attribute names the legacy parser produced.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from pcb_world.engine.utils import (  # noqa: F401  re-exports
 #: Edge.Cuts arcs/circles are represented in ``board_edges`` (and therefore in
 #: the obs ``boardlines``):
 #:   "tess"   — C++-side error-bounded tessellation into straight segments
-#:              (m_MaxError = 0.005 mm; circles as 32-gons). The default.
+#:              (m_MaxError = 0.005 mm; circles as 32-gons). Legacy/current path.
 #:   "poly16" — fixed 16-segments-per-90° re-tessellation, rebuilt Python-side
 #:              from engine arc primitives.
 #:   "arc"    — one entry per arc/circle, carrying the on-arc midpoint
@@ -34,7 +34,7 @@ OUTLINE_MODES = ("poly16", "tess", "arc")
 
 @dataclass
 class BoardEdge:
-    """One outline (Edge.Cuts) segment in mm.
+    """One outline (Edge.Cuts) segment in mm — legacy dict shape.
 
     ``x3_mm``/``y3_mm`` (outline_mode="arc" only): the on-arc midpoint of an
     arc entry — KiCad's native 3-point arc form. ``None`` = straight segment.
@@ -53,8 +53,9 @@ class BoardEdge:
 class _PadView:
     """Engine ``PadInfo`` re-exposed with a *human* ``layer`` ID.
 
-    Thru-hole pads carry layer ``0`` (sentinel: "spans the whole copper
-    stack"); SMD/connect pads carry the human layer they sit on.
+    The legacy parser placed thru-hole pads on layer ``0`` (sentinel:
+    "spans the whole copper stack"); SMD/connect pads on the human
+    layer they sit on. This wrapper preserves that contract.
     """
 
     __slots__ = ("_p", "layer")
@@ -327,10 +328,11 @@ def _board_edges_from_shapes(shapes, mode: str) -> tuple[list[BoardEdge], list[t
 
 
 def parse_pcb_file(pcb_path: str | Path, engine, outline_mode: str = "tess") -> dict:
-    """Build the parser dict from a live ``KiCadEngine``.
+    """Build the legacy parser dict from a live ``KiCadEngine``.
 
-    ``pcb_path`` is not read here — the engine has already loaded the
-    file; it only appears in the error messages below.
+    ``pcb_path`` is accepted only to keep the call-site signature stable
+    across the migration; it is not read here — the engine has already
+    loaded the file.
 
     ``outline_mode`` selects the Edge.Cuts representation in ``board_edges``
     (see :data:`OUTLINE_MODES`); everything downstream of ``board_edges`` is
@@ -400,8 +402,8 @@ def parse_pcb_file(pcb_path: str | Path, engine, outline_mode: str = "tess") -> 
             f"outline_mode must be one of {OUTLINE_MODES}, got {outline_mode!r}"
         )
 
-    # bbox is computed from the board outline (Edge.Cuts polylines), not
-    # from the engine's whole-board bbox.
+    # Match the legacy parser: bbox is computed from the board outline
+    # (Edge.Cuts polylines), not from the engine's whole-board bbox.
     if not board_edges:
         raise ValueError(
             f"Board parsing failed: no Edge.Cuts outline segments found "
@@ -423,8 +425,8 @@ def parse_pcb_file(pcb_path: str | Path, engine, outline_mode: str = "tess") -> 
         copper_layers=engine_meta.copper_layers,
     )
 
-    # Include net_code 0 ("") so callers that iterate over net_names
-    # see the unnamed net as a key.
+    # Match legacy: include net_code 0 ("") so callers that iterate
+    # over net_names see the same set of keys as before.
     net_names = {0: ""}
     net_names.update(engine.get_net_names())
 

@@ -2,7 +2,7 @@
 # Table 2 — INTERACTIVE column.
 #
 # By design, Table 2's interactive column reuses Table 1(b)'s LLM rollouts
-# verbatim. This wrapper is just an
+# verbatim (the earlier quick-start recipe). This wrapper is just an
 # alias so the Table 2 commands in the docs stay self-consistent — for any
 # real divergence, edit table1/llm/run.sh.
 set -euo pipefail

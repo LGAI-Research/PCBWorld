@@ -8,7 +8,7 @@ returns False. Mirrors ``ROUTER::Finish``, which commits only on exact arrival.
 
 Fixtures (a raw ``RLRouter`` keeps their pre-routed copper — unlike ``PCBWorld``,
 which clears tracks on load):
-  * ``donut_cutout_board`` — a rounded-square cutout (arc corners) in
+  * ``donut_cutout_board`` — a rounded-square cutout (arc corners, 0046-like) in
     the middle; a straight top->bottom net jams against the tessellated arc edge
     and cannot detour around it. reject_if_stuck=False leaves a partial stub;
     reject_if_stuck=True commits nothing.
@@ -16,6 +16,8 @@ which clears tracks on load):
     the other can only be drawn by crossing it (no detour) and is rejected.
   * ``simple_routing_board`` — clear routes, used to prove reachable targets
     (full connections and mid-route waypoints) still commit under the flag.
+
+Regression guard for the make_line stuck-invalidation.
 """
 
 import pytest
@@ -58,7 +60,7 @@ def test_reject_aborts_without_partial_stub():
 
 
 def test_default_leaves_partial_stub():
-    """reject_if_stuck=False (default): commits a stub that connects nothing."""
+    """reject_if_stuck=False (default): legacy commits a stub that connects nothing."""
     r = _router("donut_cutout_board")
     r.start_route(*DONUT_TOP, _layer(r, *DONUT_TOP))
     tracks_before = r.get_track_count()

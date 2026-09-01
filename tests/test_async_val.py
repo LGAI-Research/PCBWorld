@@ -149,8 +149,9 @@ def test_wandb_async_merges_into_current_step():
 
 
 # ---------------------------------------------------------------------------
-# Teardown gating: only a COMPLETED fit may signal train_done — an aborted run
-# that marked it would shut the watcher down for the restarted cell too.
+# Teardown gating: only a COMPLETED fit may signal train_done (260825 incident
+# — a crashed run left train_done behind, the watcher exited, and the
+# restarted cell ran with no watcher at all)
 # ---------------------------------------------------------------------------
 
 class _StubTrainer:

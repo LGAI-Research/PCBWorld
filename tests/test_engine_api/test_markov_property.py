@@ -1,10 +1,10 @@
-"""Markov-property C++ APIs and their integration with obs and reward.
+"""Markov Property restoration verification tests.
 
-Covers the route_head, current_net_code, routing_target and wip_segments
-bindings, and how the reward system consumes them.
+Tests the new C++ APIs (route_head, current_net_code, routing_target,
+wip_segments) and their integration into the observation and reward systems.
 
 Run:
-    PYTHONPATH=build_rl/pcbnew/python/rl:. pytest tests/test_engine_api/test_markov_property.py -v
+    PYTHONPATH=build_rl/pcbnew/python/rl:. pytest test/test_markov_property.py -v
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import math
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 # Ensure build path is on sys.path
@@ -177,7 +178,12 @@ class TestWipSegmentsAPI:
 
 
 # ===========================================================================
-# Test Group 2: Reward distance shaping
+# Test Group 2: Observation integration
+# ===========================================================================
+
+
+# ===========================================================================
+# Test Group 3: Reward distance shaping
 # ===========================================================================
 
 
@@ -265,5 +271,10 @@ class TestDistanceShaping:
 
         r = rf.compute(before, after, prev_distance=None, curr_distance=None)
         assert r == pytest.approx(0.0), f"Expected 0.0 with None distances, got {r}"
+
+
+# ===========================================================================
+# Test Group 4: E2E integration — full routing cycle
+# ===========================================================================
 
 

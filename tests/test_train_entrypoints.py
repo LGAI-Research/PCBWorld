@@ -30,7 +30,7 @@ def test_table1_dispatch_reaches_a_launch(method, tmp_path):
          "--method", method, "--seed", "42",
          "--output-root", str(tmp_path), "--dry-run"],
         cwd=REPO, capture_output=True, text=True, timeout=120,
-        env={**os.environ, "WANDB": "0"},
+        env={**os.environ, "NO_WANDB": "1"},
     )
     assert proc.returncode == 0, (
         f"dispatch failed\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}")

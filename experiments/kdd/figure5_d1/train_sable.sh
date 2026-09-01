@@ -8,8 +8,6 @@ cd "$CADAGENT_REPO_ROOT"
 
 GRID_SIZE="${GRID_SIZE:-10}"
 SEED="${SEED:-42}"
-# External runner — not part of this tree; the preflight below reports it.
-RUNNER="scripts/run_v56_mava_sable.py"
 TRAIN_NPZ="${TRAIN_NPZ:-${DATASET_ROOT}/synthetic/connector_v2/grid${GRID_SIZE}/train.npz}"
 EVAL_NPZ="${EVAL_NPZ:-${DATASET_ROOT}/synthetic/connector_v2/grid${GRID_SIZE}/val.npz}"
 OUTPUT_DIR="${OUTPUT_DIR:-${LOCAL_OUT}/training_logs/d1_grid/sable/grid${GRID_SIZE}/seed${SEED}}"
@@ -51,18 +49,10 @@ if [[ "$SMOKE" == "1" ]]; then
   NUM_EVAL=1
 fi
 
-# Preflight — retraining this baseline needs a runner and a Mava source tree
-# that are not part of this repository, plus a Connector-v2 corpus that is not
-# distributed here. Checked before any work (and before --dry-run prints a
-# command that could not run).
-d1_need "SABLE/Mava runner (not part of this repository)" "$RUNNER"
-d1_need "Mava source tree (--mava-src)" "$MAVA_SRC"
-d1_need "Connector-v2 train arrays (grid ${GRID_SIZE})" "$TRAIN_NPZ"
-d1_need "Connector-v2 val arrays (grid ${GRID_SIZE})" "$EVAL_NPZ"
-d1_preflight
-
 cmd=(
-  "$PY" "$RUNNER"
+  # TODO(Phase 2): scripts/run_v56_mava_sable.py + scripts/v56_connector_fixed.py were
+  # pruned from this branch; restore from `develop` (see experiments/README.md) before a real run.
+  "$PY" scripts/run_v56_mava_sable.py
   --train-npz "$TRAIN_NPZ"
   --eval-npz "$EVAL_NPZ"
   --out-json "${OUTPUT_DIR}/metrics.json"

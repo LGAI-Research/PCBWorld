@@ -10,8 +10,8 @@ This module owns two things outright — the per-board metric computation and th
 sink-agnostic summary type — so the kernel is self-contained:
 
   * :func:`compute_metrics` — score a live KiCad engine against design rules
-    (engine -> metric dict). Used by the evaluator's disk/inline DRC paths and
-    by the LLM episode-end scoring path.
+    (engine -> metric dict). Used by the evaluator's disk/inline DRC paths and,
+    going forward, by the LLM episode-end scoring path.
   * :class:`EvalSummary` — the canonical, sink-agnostic evaluation summary.
     Holds the aggregated ``overall``/``per_board`` (plus raw ``per_rollout`` for
     export) and projects them to ``<prefix>/<key>`` scalar tags for any
@@ -92,11 +92,11 @@ _SEV_NAME = {_SEV_ERROR: "ERROR", _SEV_WARNING: "WARNING"}
 #   45-degree miter corner          = 135 deg
 #   90-degree right-angle corner    =  90 deg
 #
-# The C++ DRC provider for track_angle is not compiled into the rl
-# shared library (kicad_rl_router.so is built without
+# The C++ DRC provider for track_angle is NOT compiled into the rl
+# shared library at this time (kicad_rl_router.so is built without
 # drc_test_provider_track_angle.cpp), so a .kicad_dru with a
-# track_angle constraint silently no-ops: this Python heuristic is the
-# only path that actually flags violations.
+# track_angle constraint silently no-ops. Until that is rebuilt, this
+# Python heuristic is the only path that actually flags violations.
 _ANGLE_TOL_DEG = 0.5
 _ALLOWED_ANGLES = {
     45: (135.0, 180.0),  # octilinear: 45-degree miter or straight only
@@ -171,8 +171,8 @@ def _check_routing_angles(
     The single-range KiCad ``track_angle`` constraint cannot express
     the discontinuous allowed sets we need (e.g. {90, 180} for
     orthogonal-only or {135, 180} for 45-only); even if it could, the
-    rl shared library does not include the C++ provider, making this
-    Python path the only working option.
+    rl shared library does not currently include the C++ provider,
+    making this Python path the only working option.
     """
     from collections import defaultdict
 
@@ -590,7 +590,7 @@ def _jsonable(value: Any) -> Any:
 def _as_finite_float(value: Any) -> float | None:
     """Coerce a loggable scalar to a finite float, or ``None`` to skip it.
 
-    The projection rule shared with ``emit_tensorboard``:
+    Mirrors the projection rule used historically by ``emit_tensorboard``:
     booleans become ``0.0``/``1.0``, finite ints/floats pass through, and
     everything else (strings, ``None``, NaN/inf) is dropped. ``bool`` is checked
     first because it is a subclass of ``int``.
@@ -708,8 +708,8 @@ class EvalSummary:
         carries twice — dropped from dashboards only, never from CSV/JSON).
         Per-board metrics are restricted to
         :data:`eval.eval_utils.CADAGENT_VALUE_METRIC_FIELDS` and emitted as
-        ``<prefix>/per_board/<board_id>/<key>`` — the same field selection
-        ``emit_tensorboard`` uses, so dashboard tags stay stable.
+        ``<prefix>/per_board/<board_id>/<key>`` — matching the historical
+        ``emit_tensorboard`` field selection so dashboards stay stable.
         """
         out: dict[str, float] = {}
         for key, value in self.overall.items():

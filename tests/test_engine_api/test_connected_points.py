@@ -8,6 +8,13 @@ drop redundant-loop targets — see pcb_world/vec/candidate_pool.py.
 
 Board: ``two_net_multiterm_board`` — NET1 has three SMD pads on layer 1:
 (10,10), (40,10) and (25,5).
+
+Board: ``layer_sentinels_board`` — drilled copper: thru-hole pad "3" at
+(105,105) (net 2, both faces; its SMD sibling "4" at (108,105) is unrouted) and
+a lone via at (104,108) (net 3, F.Cu-B.Cu). PNS indexes a drilled item's HOLE
+as a separate parentless ITEM that wins the deterministic ``itemAt()``
+tie-break inside the drill radius, so these centres must resolve through
+``BoardItem()`` (regression: ``Parent()`` is null on a HOLE → ``[]``).
 """
 
 import os
@@ -16,6 +23,9 @@ from pcb_world.engine.kicad_engine import KiCadEngine
 
 BOARD = os.path.join(
     os.path.dirname(__file__), "..", "fixtures", "two_net_multiterm_board.kicad_pcb"
+)
+SENTINELS = os.path.join(
+    os.path.dirname(__file__), "..", "fixtures", "layer_sentinels_board.kicad_pcb"
 )
 NET1 = 1
 SHOVE = 1
@@ -84,5 +94,33 @@ def test_result_is_layer_qualified():
         eng.build_connectivity()
         pts = eng.get_connected_points(P_LEFT[0], P_LEFT[1], 1)
         assert pts and all(isinstance(lay, int) and lay >= 1 for _x, _y, lay in pts)
+    finally:
+        eng.close()
+
+
+def test_thru_hole_pad_centre_resolves_to_the_pad():
+    """The drill centre of a thru-hole pad sits on its HOLE item, whose
+    ``Parent()`` is null; the query must still report the pad (both copper
+    faces) and nothing else — the unrouted SMD sibling stays separate."""
+    eng = KiCadEngine(SENTINELS)
+    try:
+        eng.build_connectivity()
+        both = {(105.0, 105.0, 1), (105.0, 105.0, 2)}
+        assert _keys(eng, (105.0, 105.0), layer=1) == both
+        assert _keys(eng, (105.0, 105.0), layer=2) == both
+        assert _keys(eng, (108.0, 105.0), layer=1) == {(108.0, 105.0, 1)}
+    finally:
+        eng.close()
+
+
+def test_via_centre_resolves_to_the_via():
+    """Same HOLE trap for a via: its centre must report the via on every layer
+    it spans (a lone via is its own cluster)."""
+    eng = KiCadEngine(SENTINELS)
+    try:
+        eng.build_connectivity()
+        both = {(104.0, 108.0, 1), (104.0, 108.0, 2)}
+        assert _keys(eng, (104.0, 108.0), layer=1) == both
+        assert _keys(eng, (104.0, 108.0), layer=2) == both
     finally:
         eng.close()

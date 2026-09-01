@@ -9,7 +9,9 @@ records the install location and provides a ``run_route()`` helper /
 Install location resolution (first match wins):
     1. env var ``KRT_ROOT``
     2. default ``external/KiCadRoutingTools`` in this repo (the pinned
-       checkout made by ``tools/setup/fetch_baselines.sh``)
+       checkout made by ``tools/setup/fetch_baselines.sh``). The repo-side
+       runner falls back to the ``krt_tool`` entry of ``configs/paths.yaml``
+       when that checkout is absent (this package stays repo-import-free).
 """
 
 from __future__ import annotations

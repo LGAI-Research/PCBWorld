@@ -32,22 +32,18 @@ RAY_LOG_DIR="$(dirname "$REPO_ROOT")/RayCache"
 mkdir -p "$RAY_LOG_DIR"
 export RAY_TMPDIR="$RAY_LOG_DIR"
 
-# Multi-board scheduling (defaults to single-board behaviour).
-# Any BOARDS_ORDER other than `single` needs BOARDS_JSON set explicitly:
-#   BOARDS_ORDER=round_robin BOARDS_JSON=$REPO_ROOT/configs/datasets/d2a.json \
-#     BOARDS_DIFFICULTY=easy BOARDS_SPLIT=train bash run_cadagent.sh
+# Multi-board scheduling (defaults preserve single-board behaviour).
+# To enable round-robin over pcb_dataset_difficulty.json:
+#   BOARDS_ORDER=round_robin BOARDS_DIFFICULTY=easy BOARDS_SPLIT=train bash run_cadagent.sh
 # BOARDS_ORDER:       single (default) | round_robin | per_env_random | per_env_epoch
 #                       single         — always single_board.
 #                       round_robin    — 1 board/iter, replicated across all groups.
 #                       per_env_random — env_num boards/iter, independent draws (with replacement).
 #                       per_env_epoch  — env_num boards/iter, shuffled epoch order (no replacement).
-# BOARDS_JSON:        split file. Unused while BOARDS_ORDER=single; the fallback
-#                     below names a split that is not part of this repository,
-#                     so set it for every other order. Live splits are listed in
-#                     configs/datasets/README.md.
+# BOARDS_JSON:        split file (default: $REPO_ROOT/pcb_dataset_difficulty.json)
 # BOARDS_DIFFICULTY:  easy (default) | medium | hard
 # BOARDS_SPLIT:       train (default) | train_small | test | ...
-# Per-split dataset dir is read from BOARDS_JSON top-level dataset_dirs[split].
+# Per-split dataset dir is now read from BOARDS_JSON top-level dataset_dirs[split].
 
 # GRPO with group_size=8: train_batch_size=8, val_batch_size=3, rollout.n=8
 # => CadagentEnvs.num_processes = 8 * 8 = 64 workers

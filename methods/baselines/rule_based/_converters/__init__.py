@@ -1,7 +1,8 @@
 """Verbatim copies of the SES/ORS → kicad_pcb converters.
 
 Source: the ``bench_results_kicadpcb/_scripts/`` helpers of the original
-benchmark result tree (not distributed with this repo).
+benchmark result tree (under the shared data root; not distributed with
+this repo).
 
 Both modules expose a single ``convert(src_path, base_pcb_path, out_pcb_path)
 -> stats: dict`` function that injects routed track/via tokens from the

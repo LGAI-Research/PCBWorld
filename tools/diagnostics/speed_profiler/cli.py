@@ -40,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="KiCad DRC thread-pool cap → KICAD_ENGINE_THREADS (int or"
                         " 'physical'; inherits from env if unset)")
     p.add_argument("--dataset", default="d2a",
-                   choices=["d2a", "d3b"])
+                   choices=["d2a", "d2b", "d3b", "d2bv_geo_ar", "d3b_autoreg_v2"])
     p.add_argument("--n-envs", type=int, default=64)
     p.add_argument("--n-steps", type=int, default=512)
     p.add_argument("--max-steps", type=int, default=256)
@@ -67,6 +67,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="comma list of torch.compile regions: stack,decode,heads")
     p.add_argument("--compile-mode", default="default",
                    choices=["default", "reduce-overhead", "max-autotune", "max-autotune-no-cudagraphs"])
+    p.add_argument("--attn", default="sdpa", choices=["sdpa", "flex"],
+                   help="state-pass attention kernel (flex = flex_attention + key-padding BlockMask)")
     # capability toggles (default-on for the H3/H1 spine; --no-* to disable)
     p.add_argument("--no-util", action="store_true")
     p.add_argument("--no-barrier", action="store_true")
@@ -114,6 +116,7 @@ def main() -> None:
         barrier_steps=a.barrier_steps, gpu_index=a.gpu_index, host_tag=a.host_tag,
         d_model=a.d_model, n_heads=a.n_heads, n_layers=a.n_layers, d_ff=a.d_ff,
         bf16=a.bf16, compile_regions=a.compile_regions, compile_mode=a.compile_mode,
+        attn=a.attn,
         enable_util=not a.no_util, enable_barrier=not a.no_barrier,
         enable_update_decomp=not a.no_update_decomp,
         enable_rollout_decomp=not a.no_rollout_decomp,

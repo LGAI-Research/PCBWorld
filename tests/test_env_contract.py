@@ -1,16 +1,20 @@
 """Structural guards for the env-config plumbing.
 
-Training and eval must build their env kwargs from one shared surface. Two
-failure shapes are ruled out structurally. A knob that lives on the schema but
-is hand-listed on one side can be missed there, so training runs on the
-factory's signature default while val uses the CLI value — a train/val
-observation drift that no test, no CSV column and no checkpoint field can
-reveal, because every one of those records the *intent* (the parsed CLI value)
-rather than what the env actually received. A hand-written argparse flag with
-no schema field at all fails the other way round: ``to_pool_kwargs()`` has no
-slot to carry it, so eval never sees it.
+Background (2026-08-20 audit). Training and eval built their env kwargs through
+two different paths: eval splatted ``RLEnvConfig.to_pool_kwargs()``, while
+``TrainerBase._build_envs`` hand-listed 28 keyword arguments. Five knobs
+(``action_history_len`` / ``net_constraint_obs`` / ``outline_obs`` /
+``simplify_outline`` / ``keep_routing_fraction``) were never added to that
+hand-list, so training silently ran on the factory's signature defaults while
+val used the CLI value — a train/val observation drift that no test, no CSV
+column and no checkpoint field could reveal, because every one of those records
+the *intent* (the parsed CLI value) rather than what the env actually received.
 
-These tests pin the structural properties that make both classes of bug
+A sixth knob, ``connectivity_filter``, failed the other way round: it was a
+hand-written argparse flag with no schema field at all, so ``to_pool_kwargs()``
+had no slot to carry it and eval could never see it.
+
+These tests pin the three structural properties that make both classes of bug
 impossible rather than merely detectable:
 
 1. the pool factory has no signature default for any config-surface knob, so a
@@ -149,7 +153,7 @@ INVERTED_ALIASES = {
 
 # Flags that steer the *process*, not the env/policy the run produces, so they
 # have no schema field by design.
-NON_CONFIG_FLAGS = {"board", "no_vecenv", "no_eval_greedy"}
+NON_CONFIG_FLAGS = {"board", "no_vecenv", "wandb", "no_eval_greedy"}
 
 
 def _schema_field_names() -> set[str]:
@@ -208,7 +212,8 @@ SURFACE_EXEMPT = {
     "aug_bbox_shifted", "aug_flip", "aug_rotate", "aug_trans", "aug_zoom",
     # Defaults-file constants: the factory builds EnvConfig(...) without them,
     # so every run (train and eval alike) uses the schema default — engine
-    # tuning constants, not per-run knobs.
+    # tuning constants, not per-run knobs. Slated for the defaults-elimination
+    # backlog.
     "engine_seed", "shove_iter_limit", "followbranch_iter_limit",
     "reject_if_stuck",
 }
@@ -327,7 +332,7 @@ def test_harness_seed_diff_needs_no_declaration():
     check_expected_env_diff(diff, "")        # must not raise
 
     # The gate still halts on a real undeclared difference, and on a seed that
-    # is absent on one side — the shape a dropped kwarg takes.
+    # is absent on one side (the five-knob drift's own signature).
     with pytest.raises(SystemExit):
         check_expected_env_diff(_diff({"outline_obs": True},
                                       {"outline_obs": False}), "")
@@ -338,11 +343,12 @@ def test_harness_seed_diff_needs_no_declaration():
 def test_train_extras_hand_list_matches_factory_bundle():
     """Hand-sync guard: loop._TRAIN_EXTRAS_ARGS ↔ factory._TRAIN_EXTRAS.
 
-    A train-only knob put in the factory bundle but left out of the trainer
+    A new train-only knob put in the factory bundle but left out of the trainer
     tuple still parses on the CLI while the training env receives the bundle
-    default — a drift that leaves only a trace in the env_records diff, with no
-    automatic failure. ``advance_rng_on_reload`` is a pool-only knob with no CLI
-    flag, so it belongs outside the tuple (the trainer always adds it as True).
+    default — the same class as the five-knob drift, yet it left only a trace
+    in the env_records diff with no automatic failure. ``advance_rng_on_reload``
+    is a pool-only knob with no CLI flag, so it belongs outside the tuple (the
+    trainer always adds it as True).
     """
     loop_src = (Path(__file__).resolve().parents[1]
                 / "methods" / "rl_agent" / "training" / "loop.py")
@@ -359,9 +365,9 @@ def test_train_extras_hand_list_matches_factory_bundle():
 def test_keep_routing_fraction_cli_default_comes_from_yaml():
     """The bespoke (nargs=2) flag's default is locked to the YAML (EnvConfig).
 
-    ``add_shared_args`` takes the default from the schema instance, so this
-    hand-written flag cannot bypass the YAML default the way a ``default=None``
-    of its own would.
+    Unlike the auto-generated flags, this hand-written flag alone used to
+    bypass the YAML default with a ``default=None`` of its own (260827 review).
+    ``add_shared_args`` now takes the default from the schema instance.
     """
     from argparse import ArgumentParser
 
@@ -385,7 +391,8 @@ def test_all_default_train_extras_bundle_pops_from_records():
     ``advance_rng_on_reload=True``. The pop compares against
     ``{**factory._TRAIN_EXTRAS, advance_rng_on_reload: True}``, and the two must
     agree — otherwise an all-default run is forced into a meaningless
-    ``--expect-env-diff train_extras`` declaration.
+    ``--expect-env-diff train_extras`` declaration (260827 review: the RNG fix
+    had made this comparison permanently false — a dead branch).
     """
     from argparse import ArgumentParser
 

@@ -11,7 +11,6 @@ import argparse
 import heapq
 import math
 import os
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -22,16 +21,14 @@ from matplotlib.patches import FancyArrowPatch, Rectangle
 import matplotlib.patheffects as pe
 import numpy as np
 
-# Direct execution puts this file's directory on sys.path, not the repository
-# root, which the ``configs`` import below needs.
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from configs.loader.paths import data_root_path
+from configs.loader.paths import resolve_dataset_or_empty
 
-# The packaged benchmark tree is not shipped with the repo: KDD_BENCH_ROOT, or
-# $CADAGENT_DATA_ROOT/KDD_benchmark, or "" (checked before use).
+# Packaged benchmark tree: KDD_BENCH_ROOT overrides, else the kdd_bench dataset
+# from configs/paths.yaml (CADAGENT_DATA_ROOT overrides its root; "" — checked
+# before use — when the root is empty).
 DEFAULT_BENCH_ROOT = Path(
-    os.environ.get("KDD_BENCH_ROOT") or data_root_path("KDD_benchmark")
+    os.environ.get("KDD_BENCH_ROOT") or resolve_dataset_or_empty("kdd_bench")
 )
 DEFAULT_EXPR_ROOT = Path(os.environ.get("EXPR_ROOT", str(DEFAULT_BENCH_ROOT / "experimental_results")))
 DEFAULT_DATASET_ROOT = Path(os.environ.get("DATASET_ROOT", str(DEFAULT_BENCH_ROOT / "dataset")))
@@ -535,24 +532,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    npz_paths = [args.array_root / f"grid{grid}" / "test.npz" for grid in args.grids]
-    missing = [p for p in npz_paths if not p.is_file()]
-    if missing:
-        print("figure5_d1: a required D1 input is absent — nothing was drawn.", file=sys.stderr)
-        for path in missing:
-            print(f"  missing  Connector-v2 test arrays: {path}", file=sys.stderr)
-        print(
-            "\nD1 (paper Figure 5) is the synthetic 1-layer grid sweep. Its corpus is\n"
-            "NOT distributed with this repository and no generator here reproduces\n"
-            "it. To draw this figure, point --array-root (or DATASET_ROOT) at a tree\n"
-            "that provides the paths above.\n"
-            "Details: experiments/kdd/figure5_d1/README.md",
-            file=sys.stderr,
-        )
-        raise SystemExit(2)
     instances = [
-        load_connector_instance(path, board_index=args.board_index)
-        for path in npz_paths
+        load_connector_instance(args.array_root / f"grid{grid}" / "test.npz", board_index=args.board_index)
+        for grid in args.grids
     ]
     render_figure(instances, args.output)
     for instance in instances:

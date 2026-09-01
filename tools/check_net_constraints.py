@@ -21,7 +21,7 @@ Usage (``cadagent`` env; needs the built router on PYTHONPATH)::
 
     export PYTHONPATH=build_rl/pcbnew/python/rl:.
     python tools/check_net_constraints.py \
-        --boards-json configs/datasets/d2a.json --split val
+        --boards-json configs/datasets/local/d2b_geo.json --split val
     python tools/check_net_constraints.py --boards-dir <dir> --limit 32
 
 Exit codes: 0 = every board resolves 4 positive fields for every net;

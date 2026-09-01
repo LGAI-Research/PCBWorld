@@ -19,7 +19,8 @@ Run:
     python -m methods.rl_agent.policy.mcts_compare --mode mcts --algo gumbel <board>
 
 Tunables are CLI flags (see --help); each also honors an MCTS_* env var as its
-default, so `MCTS_NSIM=100 MCTS_ALGO=gumbel ... ` sets them from the environment.
+default, so existing `MCTS_NSIM=100 MCTS_ALGO=gumbel ... ` invocations keep
+working unchanged.
 """
 import argparse
 import os
@@ -61,7 +62,7 @@ from configs.loader.schema import DEFAULTS as _EVAL_DEFAULTS
 
 
 def _env(name, default, cast):
-    """argparse default sourced from an MCTS_* env var."""
+    """argparse default sourced from an MCTS_* env var (back-compat)."""
     raw = os.environ.get(name)
     return cast(raw) if raw not in (None, "") else default
 
@@ -149,8 +150,9 @@ def parse_args(argv=None):
     p.add_argument("--critic-scale", type=float,
                    default=_env("MCTS_CSCALE", None, float),
                    help="override critic_scale with a fixed value for EVERY "
-                        "board, skipping calibration: one number broadcast "
-                        "instead of a per-board fit. Measured spread across "
+                        "board, skipping calibration. The pre-2026-08-18 "
+                        "behaviour, kept so it can be A/B'd: one number fitted "
+                        "on boards[0] and broadcast. Measured spread across "
                         "boards is up to 2.3x, so this is a control arm, not a "
                         "recommended setting [MCTS_CSCALE]")
     p.add_argument("--critic-scale-rollouts", type=int,
@@ -673,8 +675,9 @@ def main(argv=None):
     # Align net-selection with the policy (what it was TRAINED with) so plain and
     # MCTS run the SAME MDP — bool(None)→False would otherwise auto-advance nets.
     env_kwargs["policy_net_select"] = bool(getattr(policy, "policy_net_select", False))
-    # The env factories take no default ``seed`` (a silent 0 cannot be told apart
-    # from an intentional one), so this single-env analysis tool pins it.
+    # The factories no longer default ``seed`` (a silent 0 could not be told
+    # apart from an intentional one); single-env analysis tools pin the value
+    # the old default supplied.
     env_kwargs["seed"] = 0
     if args.reward_rule:                                  # env Φ/value rule the search optimizes
         print(f"reward rule override: {env_kwargs.get('reward_rule')} -> {args.reward_rule}")
@@ -690,7 +693,7 @@ def main(argv=None):
     # Eval knobs inherit the checkpoint's TRAINING values unless overridden on the
     # CLI: corner_mode (engine code) rides in from ``env_kwargs`` (built from the
     # ckpt), and check_angle takes the ckpt's stored value if any, else derives from
-    # the (ckpt-inherited) corner mode. --corner-mode / --check-angle win.
+    # the (now ckpt-inherited) corner mode. --corner-mode / --check-angle win.
     if args.corner_mode is None:
         args.corner_mode = env_kwargs.get("corner_mode")
     if args.check_angle is None and ckpt_args.get("check_angle") is not None:
@@ -721,8 +724,9 @@ def main(argv=None):
     # before the live env — engine singleton); --critic-scale-source ckpt opts
     # into the exact saved reward_normalizer_state std instead. MCTS-value only.
     #
-    # Measured PER BOARD: the calibration is a property of (policy, board) — the
-    # same estimator returns +8.8 on one checkpoint and -0.4 on another, and a
+    # Measured PER BOARD. It used to be fitted once on boards[0] and reused for
+    # the whole sweep, but the calibration is a property of (policy, board): the
+    # same estimator returned +8.8 on one checkpoint and -0.4 on another, and a
     # negative scale inverts the value ordering outright. One board's number is
     # not evidence about the next board's.
     def _board_critic_scale(board):

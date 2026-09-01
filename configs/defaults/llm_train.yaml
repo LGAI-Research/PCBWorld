@@ -1,12 +1,12 @@
 # cadagent LLM (verl) training defaults  →  configs.loader.schema.LLMTrainConfig
 #
 # The cadagent-specific slice of the verl Hydra config — the ``env.cadagent.*``
-# block plus the ``env.*`` knobs cadagent reads. This is the single place to
-# see/edit the ``config.env.cadagent.*`` defaults consumed by the verl-agent
-# patch (agent_system/.../env_manager.py) and by the LLM rollout manager
-# (methods/llm_agent/training/manager.py). The verl launch script
-# (external/verl-agent-patch/examples/run_cadagent.sh) supplies per-run
-# overrides via ``+env.cadagent.<key>=...``.
+# block plus the ``env.*`` knobs cadagent reads. These are the values previously
+# hardcoded as ``config.env.cadagent.get('x', <literal>)`` fallbacks in the
+# verl-agent patch (agent_system/.../env_manager.py) and in the LLM rollout
+# manager (methods/llm_agent/training/manager.py); they now live here, the single place to
+# see/edit them. The verl launch script (external/verl-agent-patch/examples/
+# run_cadagent.sh) supplies per-run overrides via ``+env.cadagent.<key>=...``.
 #
 # Read into the dataclass with LLMTrainConfig.from_verl_config(cfg); the verl
 # config keeps its omegaconf surface, this is only the defaults source — exactly

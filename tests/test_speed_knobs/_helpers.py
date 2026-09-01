@@ -19,14 +19,17 @@ from methods.rl_agent.models.v1.net import KiCadRLModel
 from tests._mock_obs import make_mock_obs
 
 
-def opened_model() -> KiCadRLModel:
+def opened_model(n_heads: int = 4) -> KiCadRLModel:
+    """d_model 32: n_heads=4 -> d_head 8; the flex kernel needs >= 16, so the
+    flex tests pass n_heads=2."""
     torch.manual_seed(0)
     m = KiCadRLModel(
-        d_model=32, n_heads=4, n_layers=2, d_ff=64, max_seq_len=2000,
+        d_model=32, n_heads=n_heads, n_layers=2, d_ff=64, max_seq_len=2000,
         n_freq=4, use_critic=True, same_net_bias=True,
     ).to("cuda")
     with torch.no_grad():
-        m.same_net_bias.alpha.copy_(torch.tensor([-0.3, 0.7, -0.5, 1.1]))
+        m.same_net_bias.alpha.copy_(
+            torch.tensor([-0.3, 0.7, -0.5, 1.1])[:n_heads])
         for layer in m.layers:
             layer.res_attn.alpha.fill_(0.7)
             layer.res_ff.alpha.fill_(0.5)
@@ -55,16 +58,19 @@ def run_eval(m: KiCadRLModel, obs, acts):
     return lp.detach(), ent.detach(), val.detach(), grads
 
 
-def assert_compile_matches_eager(regions: tuple[str, ...]) -> None:
-    """Eager vs compiled-region equivalence: actions exact, outputs/grads 1e-4."""
-    m = opened_model()
+def assert_compile_matches_eager(
+    regions: tuple[str, ...], attn: str = "sdpa",
+) -> None:
+    """Eager-sdpa vs configured (compiled regions and/or flex attention)
+    equivalence: actions exact, outputs/grads 1e-4."""
+    m = opened_model(n_heads=2 if attn == "flex" else 4)
     obs = batch()
     acts, _ = m.act(obs, deterministic=True)
 
     lp_e, ent_e, val_e, g_e = run_eval(m, obs, acts)
     a_e, alp_e, av_e = m.act_and_value(obs, deterministic=True)
 
-    m.configure_speed(compile_regions=regions)
+    m.configure_speed(compile_regions=regions, attn=attn)
     lp_c, ent_c, val_c, g_c = run_eval(m, obs, acts)
     a_c, alp_c, av_c = m.act_and_value(obs, deterministic=True)
 

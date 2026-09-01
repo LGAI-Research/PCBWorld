@@ -1,4 +1,4 @@
-"""Tests for the decoder-policy RL rollout / buffer / update path.
+"""Tests for the decoder-policy RL rollout/buffer/update carve (Stage 6).
 
 Two test groups:
 
@@ -317,10 +317,10 @@ class TestComputeGAEFlat:
         adv, ret = compute_gae_flat(
             rew, val, ep, fv, term_v, gamma=1.0, gae_lambda=1.0,
         )
-        # Last step:   delta = 3 + 0 - 0 = 3 → adv[2] = 3
-        # Second step: delta = 2 + 0 - 0 = 2; gae = 2 + 1*1*1*3 = 5
-        # No intermediate step is a boundary, so next_non_terminal = 1
-        # everywhere except after the terminated step.
+        # Last step: delta = 3 + 0 - 0 = 3 → adv[2] = 3
+        # Second:    delta = 2 + 0 - 0 = 2; gae = 2 + 1*1*1*3 = 5  (but next_non_terminal=1)
+        # Actually since none of the intermediate steps are boundaries,
+        # next_non_terminal=1 except after the terminated step.
         assert abs(adv[2, 0] - 3.0) < 1e-5
         assert abs(adv[1, 0] - 5.0) < 1e-5
         assert abs(adv[0, 0] - 6.0) < 1e-5
@@ -759,16 +759,16 @@ class TestBuildEvaluatorsDiagOverride:
         assert greedy["deterministic"] is True
 
     def test_no_override_reuses_native_fn(self, monkeypatch, tmp_path):
-        # Flags absent entirely (checkpoints without them fall back via getattr).
+        # Flags absent entirely (pre-flag checkpoints via getattr fallback).
         args = self._args(tmp_path)
         primary, extras, _ = self._build(monkeypatch, args)
         assert extras["val_d3b"].rollout_fn is primary.rollout_fn
 
 
 class TestHandleValOverallNoneTolerance:
-    """None entries in ``overall`` (a board whose every rollout crashed) must not
-    kill the consuming path — the summary prints NA and best-ckpt selection is
-    skipped by its own guard."""
+    """Regression (260813 A10): None entries in ``overall`` (a board whose every
+    rollout crashed) must not kill the consuming path — the summary prints NA
+    and best-ckpt selection is skipped by the existing guard."""
 
     def test_none_metrics_do_not_raise(self, capsys):
         from types import SimpleNamespace

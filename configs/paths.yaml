@@ -22,7 +22,7 @@ roots:
 # so stage_dataset can copy data/<sub> -> staged/<sub> verbatim). Together these
 # define the directory layout expected under CADAGENT_DATA_ROOT.
 datasets:
-  # methods/baselines/rule_based/_lib/datasets.py
+  # methods/baselines/rule_based/_lib/datasets.py + the KDD rollout dispatch
   synth_2L_v2:      {sub: synthetic/synth_2L_v2}
   # D2-A-100k: 100k-train clean-seed (linear) sibling of synth_2L_v2 (the paper's
   # D2-A) — same distribution, 10x train, disjoint linear seed bands.
@@ -30,8 +30,32 @@ datasets:
   # DSN mirror of synth_2L_v2 (SPECCTRA exports consumed by the rule-based runners).
   synth_2L_v2_dsn:  {sub: synthetic/synth_2L_v2_dsn}
   pcbench_exacad:   {sub: pcbench/exacad_sorted}
+  # Rebuilt from the public PCBench clone by tools/datagen/pcbench_prep/ (deterministic
+  # guides, hole-to-hole rule): same 679 boards and order as pcbench_exacad; 40 boards'
+  # per-net widths differ from the paper's (non-deterministic) sample. Split: d3_v2.json.
+  pcbench_exacad_v2: {sub: pcbench/exacad_sorted_v2}
+  # DSN/ORP mirror of pcbench_exacad consumed by the rule-based runners.
+  pcbench_exacad_dsn: {sub: pcbench/exacad_sorted_dsn}
   # methods/llm_agent/rollout/plan_only.py (LLM response summaries replayed by the
   # plan-only driver; the dirs inside keep their legacy apiseq_* names)
   plan_only_responses: {sub: cadagent_baseline_summaries}
-  # NOTE: grid-parameterized synth_1L families (synth_1L_grid{grid}_5net_v02[_dsn]) are
-  # templated per call site, so they are wired there rather than registered here.
+  # Grid-parameterized synth_1L v02 family (rule-based baselines; the runner's
+  # --grid flag picks the pair via methods/baselines/rule_based/_lib/datasets.py).
+  synth_1L_grid10_5net_v02:      {sub: synthetic/synth_1L_grid10_5net_v02}
+  synth_1L_grid10_5net_v02_dsn:  {sub: synthetic/synth_1L_grid10_5net_v02_dsn}
+  synth_1L_grid50_5net_v02:      {sub: synthetic/synth_1L_grid50_5net_v02}
+  synth_1L_grid50_5net_v02_dsn:  {sub: synthetic/synth_1L_grid50_5net_v02_dsn}
+  synth_1L_grid100_5net_v02:      {sub: synthetic/synth_1L_grid100_5net_v02}
+  synth_1L_grid100_5net_v02_dsn:  {sub: synthetic/synth_1L_grid100_5net_v02_dsn}
+  synth_1L_grid200_5net_v02:      {sub: synthetic/synth_1L_grid200_5net_v02}
+  synth_1L_grid200_5net_v02_dsn:  {sub: synthetic/synth_1L_grid200_5net_v02_dsn}
+  synth_1L_grid500_5net_v02:      {sub: synthetic/synth_1L_grid500_5net_v02}
+  synth_1L_grid500_5net_v02_dsn:  {sub: synthetic/synth_1L_grid500_5net_v02_dsn}
+  # Fixed Connector-v2 instance arrays pinned by tests/test_d1_grid_scenarios_hybrid.py.
+  d1_connector_arrays: {sub: d1/connector_arrays_v15}
+  # Read-only figure/table input trees + tool checkouts under the data root
+  # (each consumer keeps its own env-var override):
+  kdd_bench:          {sub: KDD_benchmark}            # experiments/kdd figure scripts
+  kdd_gym_summaries:  {sub: kdd_gym_summaries}        # experiments/kdd/table2/plot_gpt_levels.py
+  wandb_curve_audit:  {sub: wandb_curve_audit}        # appendix plot_validation_curves.py
+  krt_tool:           {sub: tools/KiCadRoutingTools}  # KRT checkout fallback (external/KiCadRoutingTools wins)

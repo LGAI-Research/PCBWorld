@@ -190,7 +190,15 @@ def _parse_dsn_constraints(dsn_path):
 
 
 def _route_krt(board, seed, raw_dir, routed_dir, algo, timeout_s):
-    from krt_runner import run_route
+    from krt_runner import get_krt_root, run_route
+
+    # krt_runner is repo-import-free: its default is external/KiCadRoutingTools.
+    # When that checkout is absent (and KRT_ROOT is unset), fall back to the
+    # krt_tool entry of configs/paths.yaml (under the shared data root).
+    if "KRT_ROOT" not in os.environ and not (get_krt_root() / "route.py").is_file():
+        from configs.loader.paths import resolve_dataset
+
+        os.environ["KRT_ROOT"] = str(resolve_dataset("krt_tool"))
     routed_path = routed_dir / f"{board.board_id}_{algo}.kicad_pcb"
     metrics_path = raw_dir / f"{board.board_id}.metrics.json"
     log_path = raw_dir / f"{board.board_id}.routing.log"

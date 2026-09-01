@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Unified training front door — the ``eval.py``/``profile.py`` peer for training.
+"""Unified training front door — the ``eval.py``/``visualize.py`` peer for training.
 
 Thin dispatch only; implementations live in ``methods/rl_agent/training/``.
 
 Both subcommands train the decoder-only Transformer policy and need the built
-C++ router (``kicad_rl_router``) importable — set ``PYTHONPATH`` as in
-README.md before running.
+C++ router (``kicad_rl_router``) importable — set ``PYTHONPATH`` /
+``LD_LIBRARY_PATH`` as in the README before running.
 
 Subcommands:
     ppo      Clipped-objective PPO (critic head + GAE + truncation bootstrap).

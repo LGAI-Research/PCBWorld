@@ -125,12 +125,12 @@ def dump_resolved_config(
 # Env records — what the envs were ACTUALLY built with
 # ---------------------------------------------------------------------------
 # ``config_resolved.yaml`` above records *intent*: the parsed CLI namespace.
-# That alone is not enough — a knob can read ``true`` there while the training
-# envs run with the factory default, because the trainer hand-lists its kwargs
-# and can skip one. These records store the *effect*: the kwarg dicts the
-# factories resolved (post-default), one per side, plus their diff. A difference
-# is not judged here; it is reported, and the launch declares which differences
-# are intended (``--expect-env-diff``).
+# The 2026-08-20 audit showed that is not enough — five knobs read ``true``
+# there while the training envs ran with the factory default, because the
+# trainer hand-listed its kwargs and skipped them. These records store the
+# *effect*: the kwarg dicts the factories resolved (post-default), one per
+# side, plus their diff. A difference is not judged here; it is reported, and
+# the launch declares which differences are intended (``--expect-env-diff``).
 
 ENV_RECORDS_DIR = "env_records"
 
@@ -143,7 +143,7 @@ _ABSENT = "<absent>"
 #: differ on the shipped defaults (42 vs 1000) and the declaration would carry
 #: no information — the gate could never pass unaided. Only a *value*
 #: difference is inherent: a side missing the key entirely still halts, since
-#: that absence is how a dropped kwarg hides.
+#: that absence is how the five-knob drift hid.
 INHERENT_DIFF_KEYS = frozenset({"seed"})
 
 
@@ -151,7 +151,7 @@ def _diff(train: dict, val: dict) -> dict:
     """``{key: {"train": ..., "val": ...}}`` for every key that differs.
 
     A key missing on one side is reported as ``"<absent>"`` rather than being
-    skipped — absence is exactly how a dropped kwarg hides.
+    skipped — absence is exactly how the five-knob bug hid.
     """
     absent = _ABSENT
     out: dict[str, dict] = {}

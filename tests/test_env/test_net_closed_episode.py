@@ -11,7 +11,7 @@ Contract:
     exposed after full connection, so ``unconnected == 0`` always fires first.
 
 The give-up loop this kills (permissive rules): select -> net_end -> reselect
-the same net forever.
+the same net forever (observed as a net-free collapse in an early run).
 """
 
 import os

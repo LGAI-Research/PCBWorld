@@ -1,8 +1,8 @@
 """Gym wrapper for PCBWorld — Decoder-Only Transformer policy variant.
 
-This wrapper builds no numpy feature tensors. The policy's internal
-``StateTokenizer`` consumes the raw JSON observation dict directly, so the
-wrapper's only jobs are:
+Unlike the MLP / encoder-decoder transformer wrappers, this wrapper does NOT
+build numpy feature tensors. The policy's internal ``StateTokenizer`` consumes
+the raw JSON observation dict directly, so the wrapper's only jobs are:
 
     1. Pass through the raw dict observation from ``build_json_observation()``.
     2. Expose ``env.action_masks()`` for the policy's action-type masking.
@@ -59,15 +59,16 @@ from pcb_world.core.masking import (
 )
 from pcb_world.core.indexed_obs import is_indexed as _is_indexed
 from pcb_world.core.action_schema import FALLBACK_ACTION, MODE_WALKAROUND
-from pcb_world.vec.candidate_pool import parse_directional_mode
+from pcb_world.vec.candidate_pool import CTYPE_DIRECTIONAL, parse_directional_mode
 from methods.rl_agent.wrappers import augmentation as _aug
 from methods.rl_agent.models.v1 import encoding as _ac
 from methods.rl_agent.models.v1 import encoding as _mask
-# State-encode pool builders, aliased to the private names ``_refresh_cache``
-# uses.
+# State-encode pool builders live in state_converter; aliased to the original
+# private names so _refresh_cache and the backward-compat shim are unchanged.
 from methods.rl_agent.models.v1.encoding import (
     sorted_net_codes_from_obs as _sorted_net_codes_from_obs,
     cand_mm_list_from_obs as _cand_mm_list_from_obs,
+    cand_raw_list_from_obs as _cand_raw_list_from_obs,
 )
 from methods.rl_agent.models.v1.spec import NUM_ROUTING_MODES
 
@@ -89,12 +90,13 @@ class KiCadRLWrapper(gym.Wrapper):
 
     Args:
         env: A :class:`PCBWorld` instance.
-        seed: Seeds the wrapper's numpy Generator (auto net selection,
-            augmentation sampling, slot permutation).
+        seed: Unused here; kept for API symmetry with the other wrappers.
         force_walkaround: If True, override the policy's ``routing_mode``
             slot to 2 (Walkaround) for all make_line / make_via / finish
-            actions. Default False preserves the decoder's ability to select
-            among the 3 routing modes.
+            actions. Useful for fair comparison against the MLP trainer,
+            which hardcodes Walkaround in ``KiCadHLWrapper._build_full_action``.
+            Default False preserves the decoder's ability to select among
+            the 3 routing modes.
         mask_start_point: If True (default), same-point masking: after
             ``start_route(x, y, l)`` that exact candidate ``(x, y, l)``
             is excluded from the pointer pool for every subsequent
@@ -103,15 +105,20 @@ class KiCadRLWrapper(gym.Wrapper):
             selectable (e.g. a stacked front/back pad pair, as in d3b
             board 0218 net 9). The indices of the masked cands are exposed via
             :meth:`start_route_pointer_indices` so the policy can set
-            its pointer logit to ``-inf`` (hard masking, as in
-            MaskablePPO).
-    Every obs returned by :meth:`reset` / :meth:`step` carries the 5
+            its pointer logit to ``-inf`` (hard-masking, SB3
+            MaskablePPO-equivalent).
+        offboard_mask: If True, DIRECTIONAL candidates whose ``(x, y)`` lies
+            outside the board bbox are hard-masked on every cand row (see
+            :meth:`offboard_pointer_indices`). Default False keeps existing
+            checkpoints byte-identical.
+    Every obs returned by :meth:`reset` / :meth:`step` carries the
     act-time mask arrays under the ``"_masks"`` key (action / pointer /
-    mode / net_valid / offlayer), computed in-worker right after
-    ``_refresh_cache``. Bit-identical to an ``env_method`` query because
-    nothing mutates the env state between a step return and the next action —
-    mask consumers (``gather_mask_arrays``) read them from the obs instead of
-    issuing one IPC round-trip per mask.
+    mode / net_valid / offlayer / offboard), computed in-worker right after
+    ``_refresh_cache``.
+    Bit-identical to an ``env_method`` query because nothing mutates the
+    env state between a step return and the next action — mask consumers
+    (``gather_mask_arrays``) read them from the obs instead of issuing 4
+    per-step IPC round-trips.
     """
 
     # Default magnitudes for the 5-boolean aug interface. Each is the
@@ -141,6 +148,7 @@ class KiCadRLWrapper(gym.Wrapper):
         directional_candidates: str | None = None,
         connectivity_filter: bool = True,
         pad_graze_margin_mm: float = 0.0,
+        offboard_mask: bool = False,
     ) -> None:
         super().__init__(env)
         self.env: PCBWorld = env
@@ -162,8 +170,12 @@ class KiCadRLWrapper(gym.Wrapper):
         # candidates that land in a same-net pad's graze annulus, where a via /
         # track end would connect by a copper sliver instead of an anchor.
         self._pad_graze_margin_mm = float(pad_graze_margin_mm or 0.0)
+        # Off-board pointer mask (off by default): act-time block of the
+        # DIRECTIONAL candidates whose (x, y) falls outside the board bbox —
+        # see offboard_pointer_indices().
+        self._offboard_mask = bool(offboard_mask)
 
-        # RNG for external net selection, augmentation and slot permutation.
+        # RNG for external net selection (mirrors KiCadHLWrapper._rng).
         self._rng = np.random.default_rng(seed)
         # Static board metadata for _pick_net_id().
         self._net_ids: list[int] = sorted(env.board_info.nets.keys())
@@ -178,7 +190,7 @@ class KiCadRLWrapper(gym.Wrapper):
         self._aug_trans = bool(aug_trans)
         self._aug_zoom = bool(aug_zoom)
 
-        # Per-episode bbox-shifted state — only meaningful
+        # Per-episode bbox-shifted ("new" scheme) state — only meaningful
         # when ``aug_bbox_shifted`` is True.  Pads stay physically fixed;
         # edges are virtually scaled per-axis around (aug_cx, aug_cy).
         self._aug_scale_x = 1.0
@@ -197,8 +209,8 @@ class KiCadRLWrapper(gym.Wrapper):
 
         self._aug_external = False
 
-        # Per-episode slot permutation for net-exchangeability augmentation.
-        # When enabled, every reset() samples a fresh permutation of
+        # Per-episode slot permutation for net-exchangeability augmentation
+        # (v1). When enabled, every reset() samples a fresh permutation of
         # [0..N_MAX_SLOTS) which the StateTokenizer applies to every slot id
         # via aug["slot_perm"]. This breaks any spurious dependence on the
         # raw sorted-net-id ↔ slot-embedding pairing.
@@ -219,6 +231,7 @@ class KiCadRLWrapper(gym.Wrapper):
         self._last_obs: dict = {}
         self._sorted_net_codes: list[int] = []
         self._cand_mm: list[tuple[float, float, int]] = []
+        self._cand_ctype: list[int] = []   # candidate_pool CTYPE_* per _cand_mm entry
         # Same-point masking state — the last start_route target as the full
         # candidate key (x, y, LAYER; name kept for the snapshot/serve field).
         # Set on ACT_START_ROUTE, kept through ACT_MAKE_LINE / ACT_MAKE_VIA /
@@ -229,7 +242,7 @@ class KiCadRLWrapper(gym.Wrapper):
     # ------------------------------------------------------------------
     # Augmentation
     # ------------------------------------------------------------------
-    # Pad-clearance margin (mm) for the bbox-shifted rejection sampler.
+    # Pad-clearance margin (mm) for the new-scheme rejection sampler.
     _AUG_NEW_PAD_MARGIN = 1.0
     _AUG_NEW_MAX_TRIES = 100
 
@@ -415,17 +428,17 @@ class KiCadRLWrapper(gym.Wrapper):
 
     def step(self, action):
         at, ptr, mode = self._unpack_action(action)
-        # _decode_action turns an out-of-range pointer into the idle fallback
-        # (FALLBACK_ACTION) so the env never sees garbage coords — the same
-        # invalid-input path the LLM branch uses.
+        # decode() turns an out-of-range pointer into the idle fallback
+        # (FALLBACK_ACTION) so the env never sees garbage coords; no
+        # wrapper-level short-circuit. Same invalid-input path as the LLM branch.
         env_action = self._decode_action(at, ptr, mode)
 
         # Track _start_route_xy for same-point masking, keyed on the DECODED
         # action so it stays in sync with what the env actually executes. This
         # MUST happen before env.step so the NEXT step's
         # start_route_pointer_indices sees the just-committed start point.
-        # An OOR pointer decodes to idle, which leaves the start point
-        # unchanged.
+        # An OOR pointer decodes to idle, which (like the old short-circuit)
+        # leaves the start point unchanged.
         decoded_at = env_action["action_type"]
         if decoded_at == ACT_START_ROUTE:
             self._start_route_xy = (
@@ -443,7 +456,7 @@ class KiCadRLWrapper(gym.Wrapper):
         return aug_obs, reward, terminated, truncated, info
 
     def _attach_masks(self, obs: dict) -> None:
-        """Embed the 5 act-time mask arrays under ``obs["_masks"]``.
+        """Embed the 6 act-time mask arrays under ``obs["_masks"]``.
 
         Must run after :meth:`_refresh_cache` (pointer indices read
         ``_cand_mm``). The state right after a step/reset return equals the
@@ -458,6 +471,7 @@ class KiCadRLWrapper(gym.Wrapper):
             "mode": self.mode_mask(),
             "net_valid": self.net_valid_mask(),
             "offlayer": self.offlayer_pointer_indices(),
+            "offboard": self.offboard_pointer_indices(),
         }
 
     # ------------------------------------------------------------------
@@ -476,7 +490,7 @@ class KiCadRLWrapper(gym.Wrapper):
 
         ``obs_cache`` additionally carries the derived obs bundle
         (``_last_obs`` + the pointer-decode tables ``_sorted_net_codes`` /
-        ``_cand_mm``). It is pure recomputation — the board restores bit-exactly
+        ``_cand_mm`` / ``_cand_ctype``). It is pure recomputation — the board restores bit-exactly
         and the bundle is a function of the board — but a re-derivation costs a
         full ``PCBWorld._get_obs`` plus an engine connectivity query plus a
         candidate-pool rebuild, and MCTS restores once per simulation. Measured
@@ -484,7 +498,7 @@ class KiCadRLWrapper(gym.Wrapper):
         rollout, half of it on the restore path. Carrying the bundle trades that
         for one reference per live tree node, dropped by
         ``RLSearchEnv.release``. Pass ``obs_cache=False`` for a snapshot that
-        re-derives on restore instead.
+        re-derives on restore (the pre-260806 behaviour).
         """
         snap = {
             "rng_state": copy.deepcopy(self._rng.bit_generator.state),
@@ -492,10 +506,11 @@ class KiCadRLWrapper(gym.Wrapper):
         }
         # _last_obs only exists once _refresh_cache has run (first reset)
         if obs_cache and getattr(self, "_last_obs", None) is not None:
-            # references, not copies: _refresh_cache rebinds these three
+            # references, not copies: _refresh_cache rebinds these four
             # together and never mutates them in place
             snap["obs_cache"] = (
                 self._last_obs, self._sorted_net_codes, self._cand_mm,
+                self._cand_ctype,
             )
         return snap
 
@@ -512,7 +527,7 @@ class KiCadRLWrapper(gym.Wrapper):
         cached = snap.get("obs_cache")
         if cached is None:
             return False
-        self._last_obs, self._sorted_net_codes, self._cand_mm = cached
+        self._last_obs, self._sorted_net_codes, self._cand_mm, self._cand_ctype = cached
         return True
 
     def action_masks(self) -> np.ndarray:
@@ -606,8 +621,8 @@ class KiCadRLWrapper(gym.Wrapper):
         A via aimed inside a thru-hole pad is refused by
         ``KiCadEngine.pad_block_reason(for_via=True)`` before the router is
         touched: the pad IS the layer bridge, so PNS drops the pending via while
-        still committing the route (a half-executed make_via, which this gate
-        prevents). The pool cannot pre-filter it on its own — one shared
+        still committing the route (a half-executed make_via, which is why the
+        v0.29 gate exists). The pool cannot pre-filter it on its own — one shared
         candidate list serves make_line and make_via, and a thru-pad centre is a
         VALID make_line target and an INVALID make_via one, so the distinction
         only exists per action type.
@@ -639,6 +654,40 @@ class KiCadRLWrapper(gym.Wrapper):
             return np.zeros((0,), dtype=np.int64)
         return np.asarray(blocked, dtype=np.int64)
 
+    def offboard_pointer_indices(self) -> np.ndarray:
+        """Cand-pool indices of DIRECTIONAL candidates whose ``(x, y)`` lies
+        outside the board — empty unless ``offboard_mask`` (off by default).
+
+        Directional candidates are synthesised (head + a fixed offset), and the
+        long rungs of a ladder preset (``mres8``: 25 / 50 mm) leave most boards.
+        A target off the board is never a useful make_line / make_via — it only
+        burns a step — so the policy is not asked to learn to avoid it. The
+        columns block on EVERY cand row, i.e. they ride the same-point
+        ``cand_block_idx`` channel (``gather_mask_arrays`` appends them to
+        ``start_route_pointer_indices``; MCTS ``legal_actions`` / prior do the
+        same) — which the rollout buffer stores as ``pointer_masks``, so act and
+        update time see the same distribution. Pads / vias / track endpoints
+        are real geometry and never masked here.
+
+        Board extent = the ``board_static`` bbox (Edge.Cuts outline bbox,
+        edges inclusive); an outline-accurate point-in-polygon test is a
+        follow-up. Cannot empty the pool on a sane board: the head sits on
+        copper inside the outline, so the inward directions at the smallest
+        rung stay inside. A head outside the bbox (bogus outline) would empty
+        the row and trip net.py's ``act_dead_ptr_row`` guard — loudly, by
+        design. Empty ``(0,) int64`` when off or nothing is off-board.
+        """
+        if not self._offboard_mask or not self._cand_mm:
+            return np.zeros((0,), dtype=np.int64)
+        bs = self._last_obs["board_static"]
+        x0, y0 = float(bs["bbox_x"]), float(bs["bbox_y"])
+        x1, y1 = x0 + float(bs["bbox_w"]), y0 + float(bs["bbox_h"])
+        off = [
+            i for i, ((x, y, _l), ct) in enumerate(zip(self._cand_mm, self._cand_ctype))
+            if ct == CTYPE_DIRECTIONAL and not (x0 <= x <= x1 and y0 <= y <= y1)
+        ]
+        return np.asarray(off, dtype=np.int64)
+
     def start_route_pointer_indices(self) -> np.ndarray:
         """Return cand-pool indices matching ``_start_route_xy`` —
         same ``(x, y)`` **and same layer**.
@@ -656,7 +705,8 @@ class KiCadRLWrapper(gym.Wrapper):
         :meth:`KiCadRLModel.act_and_value` /
         :meth:`KiCadRLModel.evaluate_actions_and_value` as the
         ``pointer_masks`` kwarg. The policy sets every non-(-1) entry
-        in each row to ``-inf`` — hard masking, as in MaskablePPO.
+        in each row to ``-inf`` — SB3 MaskablePPO-equivalent hard
+        masking, matching :meth:`KiCadHLWrapper.action_masks`.
 
         Returns an empty ``(0,) int64`` array when:
 
@@ -683,7 +733,9 @@ class KiCadRLWrapper(gym.Wrapper):
         """
         self._last_obs = raw_obs
         self._sorted_net_codes = _sorted_net_codes_from_obs(raw_obs)
-        self._cand_mm = _cand_mm_list_from_obs(raw_obs)
+        raw_cands = _cand_raw_list_from_obs(raw_obs)
+        self._cand_mm = [(x, y, layer) for (x, y, layer, _c) in raw_cands]
+        self._cand_ctype = [ctype for (_x, _y, _l, ctype) in raw_cands]
         # Diagnostic guard (not a fallback): an empty candidate pool while a
         # net is selected cannot happen in normal operation — a selectable
         # net always has pads (confirmed by an exhaustive scan of 275 d3b
@@ -758,7 +810,7 @@ class KiCadRLWrapper(gym.Wrapper):
                 net_id = self._pointer_to_net_id(pointer_idx)
                 return {"action_type": ACT_NET_SELECT, "net_id": net_id}
             else:
-                # Env-driven: random pick among unrouted nets.
+                # Legacy (env-driven random pick of unrouted nets).
                 net_id = self._pick_net_id()
                 return {"action_type": ACT_NET_SELECT, "net_id": net_id}
 
@@ -804,13 +856,14 @@ class KiCadRLWrapper(gym.Wrapper):
         return {"action_type": int(action_type)}
 
     # ------------------------------------------------------------------
-    # External net selection
+    # External net selection (mirrors KiCadHLWrapper._pick_net_id)
     # ------------------------------------------------------------------
     def _pick_net_id(self) -> int:
         """Pick a net to route (prefer unrouted nets).
 
         Uses routing_geometry from the cached observation dict to identify
-        nets with remaining ratsnest points.
+        nets with remaining ratsnest points. Identical logic to
+        :meth:`KiCadHLWrapper._pick_net_id`.
         """
         if not self._net_ids:
             return 0
@@ -846,7 +899,7 @@ class KiCadRLWrapper(gym.Wrapper):
         Fallback: if every net in the pool is fully routed, returns a mask
         that is all-True so the policy still has at least one legal choice
         (the env will reject the selection with -1 reward, consistent with
-        the random-pick fallback in :meth:`_pick_net_id`).
+        the legacy random-pick fallback in :meth:`_pick_net_id`).
 
         Only meaningful when ``policy_net_select=True``; otherwise callers
         should ignore this and let the env do its own selection.
@@ -872,7 +925,7 @@ class KiCadRLWrapper(gym.Wrapper):
         self, pointer_idx: int,
     ) -> tuple[float, float, int]:
         """Map a pointer index into the candidate pool → (x_mm, y_mm, layer).
-        Delegates to :func:`methods.rl_agent.models.v1.encoding.pointer_to_cand`."""
+        Delegates to :func:`action_converter.pointer_to_cand`."""
         return _ac.pointer_to_cand(self._cand_mm, pointer_idx)
 
     def _resolve_mode(self, routing_mode: int) -> int:
@@ -891,5 +944,5 @@ class KiCadRLWrapper(gym.Wrapper):
     @staticmethod
     def _clamp_mode(routing_mode: int) -> int:
         """Clamp routing_mode to ``[0, 2]``. Delegates to
-        :func:`methods.rl_agent.models.v1.encoding.clamp_mode`."""
+        :func:`action_converter.clamp_mode`."""
         return _ac.clamp_mode(routing_mode, NUM_ROUTING_MODES)

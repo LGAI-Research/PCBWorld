@@ -4,7 +4,7 @@
 Given a dataset root whose sub-folders each contain a board, this runs the
 full chain per board:
 
-    Stage 1  kicad_pcb (+kicad_pro)  ->  .orp   (pcbnew; via Docker or local)
+    Stage 1  kicad_pcb (+kicad_pro)  ->  .orp   (pcbnew)
     Stage 2  .orp                    ->  .ORS   (orthoroute headless, GPU/CPU)
     Stage 3  .ORS  + unrouted pcb    ->  routed .kicad_pcb   (pure text)
 
@@ -18,28 +18,30 @@ Outputs under ``<out-root>/<board_id>/``:
     <board_id>_orthoroute_<gpu|cpu>.kicad_pcb
     <board_id>.routing.log
 
-Stage 1 needs KiCad's ``pcbnew``. When the conda env does not ship it, Stage 1
-runs inside the ``pcbnew-repro:9.0`` Docker image (see
-``engine/pcbnew_prep/pcbnew_env/``). Alternatively point ``--orp-root`` at
-pre-made ``.orp`` files (the pre-converted DSN/ORP mirror of the dataset) to
-skip Stage 1 entirely.
+Stage 1 needs KiCad's ``pcbnew`` and runs in the child interpreter ``kicad_tools``
+resolves — the engine's ``BUILD_PCBNEW=1`` build on ``PYTHONPATH``, else
+``/usr/bin/python3`` (an apt KiCad); ``PCBNEW_PYTHON`` overrides. If that
+interpreter cannot import ``pcbnew``, Stage 1 STOPS and says so, so a broken
+setup cannot masquerade as a working one. Alternatively point ``--orp-root`` at
+pre-made ``.orp`` files (the pre-converted DSN/ORP mirror registered as
+``pcbench_exacad_dsn`` in ``configs/paths.yaml``) to skip Stage 1 entirely.
 
 Stages 2-3 run in the current Python env (needs ``orthoroute`` importable, and
 ``cupy`` + a GPU for ``--gpu``).
 
-Examples:
-  # full chain, 5 boards, GPU, ORP via Docker
+Examples (dataset paths via the resolver CLI — no hardcoded roots):
+  # full chain, 5 boards, GPU (ORP via the resolved pcbnew)
   python methods/baselines/rule_based/run_orthoroute_pipeline.py \
-      --data-root $CADAGENT_DATA_ROOT/pcbench/exacad_sorted \
+      --data-root "$(python -m configs.loader.paths resolve pcbench_exacad)" \
       --out-root methods/baselines/rule_based/_run_outputs/ortho_exacad --limit 5 --gpu
 
   # skip Stage 1, route from canonical ORPs, CPU (deterministic)
   python methods/baselines/rule_based/run_orthoroute_pipeline.py \
-      --data-root $CADAGENT_DATA_ROOT/pcbench/exacad_sorted \
-      --orp-root $CADAGENT_DATA_ROOT/pcbench/exacad_sorted_dsn \
+      --data-root "$(python -m configs.loader.paths resolve pcbench_exacad)" \
+      --orp-root "$(python -m configs.loader.paths resolve pcbench_exacad_dsn)" \
       --out-root methods/baselines/rule_based/_run_outputs/ortho_exacad_cpu --cpu
 
-  # only generate ORPs (Stage 1), e.g. on the host that has the Docker image
+  # only generate ORPs (Stage 1)
   python methods/baselines/rule_based/run_orthoroute_pipeline.py --data-root ... --out-root ... --stage orp
 """
 from __future__ import annotations
@@ -57,10 +59,13 @@ _EXTERNAL = _PROJECT_ROOT / "external"      # vendored rule-based libs (OrthoRou
 sys.path.insert(0, str(_BASELINES_DIR / "_converters"))
 
 DEFAULT_STEM = "processed_v9_guide_v3"
-DEFAULT_IMAGE = "pcbnew-repro:9.0"
 MAIN_SCRIPT = _EXTERNAL / "OrthoRoute" / "main.py"
-# The engine is a separate repository, pinned as the engine/ submodule.
 BATCH_ORP = _PROJECT_ROOT / "engine" / "pcbnew_prep" / "batch_kicad_to_orp.py"
+
+# Which child interpreter imports pcbnew: the engine's BUILD_PCBNEW=1 build first,
+# then /usr/bin/python3 (an apt KiCad); KICAD_CLI / PCBNEW_PYTHON override.
+sys.path.insert(0, str(_PROJECT_ROOT / "tools" / "datagen" / "pcbench_prep"))
+import kicad_tools  # noqa: E402
 
 
 def discover_boards(data_root: Path, stem: str, only: list[str] | None):
@@ -81,8 +86,7 @@ def discover_boards(data_root: Path, stem: str, only: list[str] | None):
     return boards
 
 
-def stage1_orp(boards, out_root: Path, orp_root: Path | None, image: str,
-               use_docker: bool):
+def stage1_orp(boards, out_root: Path, orp_root: Path | None):
     """Produce <out>/<board_id>.orp for every board. Returns {board_id: orp_path}."""
     orp_paths = {}
     todo = []
@@ -110,25 +114,9 @@ def stage1_orp(boards, out_root: Path, orp_root: Path | None, image: str,
     manifest = out_root / "_orp_manifest.json"
     manifest.write_text(json.dumps(todo, indent=2), encoding="utf-8")
     print(f"[stage1] converting {len(todo)} boards -> ORP "
-          f"({'docker '+image if use_docker else 'local pcbnew'})")
+          f"(pcbnew: {kicad_tools.pcbnew_python()})")
 
-    if use_docker:
-        import os
-        uid = os.getuid()
-        gid = os.getgid()
-        # Mount the two roots that paths reference + the repo, all by absolute path.
-        mounts = ["-v", f"{_PROJECT_ROOT}:{_PROJECT_ROOT}:ro",
-                  "-v", f"{out_root}:{out_root}"]
-        # data roots: mount each board's source tree root once (parents of pcbs)
-        src_roots = {str(Path(item["pcb"]).parents[1]) for item in todo}
-        for r in sorted(src_roots):
-            mounts += ["-v", f"{r}:{r}:ro"]
-        cmd = ["docker", "run", "--rm", "--user", f"{uid}:{gid}",
-               "-e", "HOME=/tmp", *mounts, image,
-               "python3", str(BATCH_ORP), str(manifest)]
-    else:
-        cmd = ["python3", str(BATCH_ORP), str(manifest)]
-
+    cmd = [kicad_tools.pcbnew_python(), str(BATCH_ORP), str(manifest)]
     rc = subprocess.run(cmd).returncode
     if rc != 0:
         print(f"[stage1] WARNING batch converter exited rc={rc}")
@@ -216,9 +204,6 @@ def main():
     ap.add_argument("--timeout", type=int, default=1800, help="per-board route timeout (s)")
     ap.add_argument("--stage", choices=("all", "orp", "route"), default="all",
                     help="all=full chain; orp=Stage 1 only; route=Stages 2-3 only")
-    ap.add_argument("--docker-image", default=DEFAULT_IMAGE)
-    ap.add_argument("--local-pcbnew", action="store_true",
-                    help="run Stage 1 with the current python's pcbnew (no Docker)")
     ap.add_argument("--jobs", type=int, default=1,
                     help="parallel boards for Stages 2-3 (each board is an "
                          "independent process; hides per-process cupy/CUDA init). "
@@ -241,8 +226,15 @@ def main():
     # Stage 1
     orp_paths = {}
     if args.stage in ("all", "orp"):
-        orp_paths = stage1_orp(boards, out_root, args.orp_root,
-                               args.docker_image, use_docker=not args.local_pcbnew)
+        # An interpreter that cannot import pcbnew is reported, not worked around.
+        py = kicad_tools.pcbnew_python()
+        if kicad_tools.pcbnew_version(py) is None:
+            raise SystemExit(
+                f"Stage 1 needs pcbnew: {py} cannot import it. Build it "
+                "(BUILD_CLI=1 BUILD_PCBNEW=1 bash engine/build_rl_router.sh), point "
+                "PCBNEW_PYTHON at an interpreter that can, or pass --orp-root to reuse "
+                "pre-made .orp files.")
+        orp_paths = stage1_orp(boards, out_root, args.orp_root)
     else:
         for board_id, pcb, _pro in boards:
             cand = out_root / board_id / f"{board_id}.orp"

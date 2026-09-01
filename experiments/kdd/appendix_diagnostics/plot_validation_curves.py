@@ -24,7 +24,8 @@ import pandas as pd
 import wandb
 from matplotlib.lines import Line2D
 
-from configs.loader.paths import data_root_path
+from configs.loader.paths import resolve_dataset_or_empty
+
 
 
 # Two of the audited W&B runs were named after the internal account that
@@ -790,9 +791,12 @@ def validate_counts(points: pd.DataFrame, source_runs: list[dict[str, object]], 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--overleaf-root", type=Path, default=Path(os.environ.get("OVERLEAF_ROOT", "var/results/kdd/paper_outputs")))
+    # Default: the wandb_curve_audit dataset from configs/paths.yaml
+    # (CADAGENT_DATA_ROOT overrides its root; "" when the root is empty, so an
+    # explicit --audit-root still works there).
     parser.add_argument("--audit-root", type=Path,
                         default=Path(os.environ.get("WANDB_AUDIT_ROOT")
-                                     or data_root_path("paper_wandb_curve_audit_20260507")))
+                                     or resolve_dataset_or_empty("wandb_curve_audit")))
     parser.add_argument("--samples", type=int, default=10_000)
     parser.add_argument("--skip-fetch", action="store_true", help="Reuse audit curve_points.csv instead of querying W&B.")
     return parser.parse_args()

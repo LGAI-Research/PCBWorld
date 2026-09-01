@@ -1,13 +1,19 @@
 # --------------------- CadAgent V3 (KiCad PCB Routing) --------------------- #
 #
-# Selected with CADAGENT_PROMPT_VERSION=v3. Exported names are identical to the
-# V1/V2 prompt modules, so the three are drop-in interchangeable. This version
-# carries two full-detail few-shot examples (via crossing, layer-change detour)
-# and only the meta rules those examples do not already demonstrate.
+# V3 changes over V2:
+#  - ADD second full-detail few-shot example: Layer-Change Detour
+#    (single-net routing with a static obstacle — forces layer switch)
+#  - TRIM Routing Guidelines to non-redundant meta rules only
+#    (detour/avoidance patterns are already demonstrated by the two examples)
+#
+# Interface-compatible with V1/V2 (drop-in via CADAGENT_PROMPT_VERSION=v3
+# switch in cadagent.py). All exported names match V1. CADAGENT_USER_PROMPT
+# keeps the wschoi-branch history format `{current_step} / {valid_step_count}`
+# to match rollout/cadagent.py and env_manager.py callers.
 # -----------------------------------------------------------------------------
 
 # ======================================================================
-# Board state format descriptions
+# Board state format descriptions (same as V1/V2)
 # ======================================================================
 
 _STATE_FORMAT_DESC_XML = """\
@@ -78,7 +84,7 @@ def get_state_format_desc(state_format: str = "sexpr") -> str:
 
 
 # ======================================================================
-# Shared prompt blocks: role/priority, action reference, masking rules
+# Shared prompt blocks (same as V2 for role/priority/actions/masking)
 # ======================================================================
 
 _ROLE_AND_PRIORITY = """\
@@ -148,8 +154,9 @@ Flags you can read from router_head:
   - is_routing:   router_head.is_routing = true
   - fully routed: no (point ...) remaining under the active net in routing_geometry"""
 
-# Meta rules only — the two full examples below already demonstrate obstacle
-# avoidance, waypoint-first walkaround and detour-by-layer-switch.
+# V3: Trimmed guidelines — only rules NOT self-evident from the two full
+# examples. Removed (already demonstrated): static-obstacle/other-track
+# avoidance, waypoint-first walkaround, detour-via-waypoint-or-via.
 _ROUTING_GUIDELINES = """\
 # Routing Guidelines
 - Your targets are the (point ...) entries listed under each net in routing_geometry.
@@ -162,6 +169,7 @@ _ROUTING_GUIDELINES = """\
 
 # ----------------------------------------------------------------------
 # Few-Shot Example 1 — Via Crossing on simple_routing_board (50x30mm)
+# (Same as V2's single example.)
 # ----------------------------------------------------------------------
 
 _FEW_SHOT_EXAMPLE_1 = """\
@@ -665,8 +673,9 @@ CADAGENT_USER_PROMPT_NO_HIS = """\
 Choose exactly one from:
 {valid_actions}"""
 
-# Placeholders match the .format() kwargs passed by rollout/cadagent.py and the
-# env manager: {current_step} + {valid_step_count} for the history header.
+# NOTE: wschoi-branch history format uses {current_step} + {valid_step_count}
+# (not V3-upstream's {step_count} + {history_length}). Matches the .format()
+# kwargs in rollout/cadagent.py and agent_system/environments/env_manager.py.
 CADAGENT_USER_PROMPT = """\
 ## Step {current_step}
 {dynamic_observation}

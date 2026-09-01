@@ -75,10 +75,10 @@ _GRID_STEP_CELLS: dict[int, list[int]] = {
 # Why not ratsnest coordinates: ratsnest edges are a
 # Kruskal MST, so they expose ONE representative anchor per cluster. Matching on
 # them both over- and under-shoots — an already-connected pad that happens to be
-# the representative survives (exactly the loop to block), and a genuinely
-# unconnected anchor that is not the representative is dropped. Cluster
-# membership has neither failure mode, and it needs no special case for an
-# isolated start pad: that simply yields a singleton cluster.
+# the representative survived (the loop we meant to block), and a genuinely
+# unconnected anchor that was not the representative got dropped. Cluster
+# membership has neither failure mode, and it needs no Case A/B split: starting
+# from an isolated pad simply yields a singleton cluster.
 #
 # The match is on (x, y, LAYER), not (x, y): a thru-hole pad or a via reports
 # every copper layer it spans (one item, one cluster), so its opposite face is
@@ -170,7 +170,7 @@ def collect_raw_candidates(
 
     Shared by both ``build_candidates_mlp()`` and Transformer
     ``StateTokenizer._build_candidate_pool()``. Accepts BOTH observation
-    formats (nested dict / indexed_v1 tables) — this is the
+    formats (legacy nested dict / indexed_v1 tables) — this is the
     single source of the candidate-pool ORDER, which pointer decode and
     the tokenizer must agree on tuple-for-tuple.
 
@@ -409,7 +409,7 @@ def build_candidates_mlp(
     raw_cands = collect_raw_candidates(obs, current_net_id, extra_candidates)
 
     # Sort: PAD > others, then by distance from route head.
-    # (Ratsnest is not a pointer-selectable candidate; see
+    # (Ratsnest is no longer a pointer-selectable candidate; see
     # ``collect_raw_candidates`` for rationale.)
     hx, hy = route_head_mm
     _TYPE_PRIORITY = {CTYPE_PAD: 0}
@@ -445,10 +445,13 @@ def build_candidates_mlp(
 # string is the `directional_candidates` CLI/config value, no new args.
 DIRECTIONAL_DISTANCE_PRESETS: dict[str, tuple[float, ...]] = {
     "multi_resolution": (0.2, 1.0, 5.0, 25.0),
-    # multi_resolution without the board-scale 25mm rung — isolates whether the
-    # long-jump candidates (which overshoot mid-size boards) drive the
-    # multi-resolution effect.
+    # multi_resolution minus the board-scale 25mm rung — isolates whether the
+    # long-jump candidates (which overshoot mid-size boards) drive the mres
+    # effect (260813 campaign A6).
     "multi_resolution_no25": (0.2, 1.0, 5.0),
+    # Log-scale 1-2-5 ladder; every rung is a multiple of the 0.2 mm generation
+    # grid so witness segments decompose exactly (8 dirs x 8 rungs = 64 cands).
+    "mres8": (0.2, 0.4, 1.0, 2.0, 5.0, 10.0, 25.0, 50.0),
     # Same 8 directions, one ring, 1.0 mm instead of the 0.5 mm default. The
     # default ring lands INSIDE the pad the route just started from whenever the
     # pad is wider than 1.0 mm, which is most of them: measured over 20 boards
@@ -499,7 +502,7 @@ def build_directional_candidates(
     :func:`parse_directional_mode`):
 
     * ``None`` (default): 8 directions × [0.5mm] = 8 candidates. Used by
-      2-layer / real-board configurations.
+      2-layer / real-board configurations and preserves prior behavior.
     * preset name (e.g. ``"multi_resolution"``): 8 directions × the preset's
       distance ladder, emitted distance-major (all 8 dirs at distances[0],
       then [1], …).

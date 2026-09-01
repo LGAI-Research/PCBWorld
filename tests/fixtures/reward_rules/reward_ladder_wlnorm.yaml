@@ -1,35 +1,37 @@
 # D2-B midboard reward rule — reward_linear_wlnorm.yaml (linear, DRV=1 anchor)
-# with a "ladder" bonus added on both the routing and the clean axis.
+# plus "ladder" bonuses on both the routing and the clean axis (user-designed).
 #
-# Φ = −1·unconnected edges + 1·(completed nets) + 3·I(all connected)
-#     −1·DRV               + 1·(DRV=0 nets)     + 3·I(board DRV=0)
-#     −0.5·WL/board long edge − 0.2·via
+# Φ = −1·unconnected edges + 1·(fully connected nets) + 3·I(all connected)
+#     −1·DRV               + 1·(DRV=0 nets)           + 3·I(board DRV=0)
+#     −0.5·WL/board long side − 0.2·via
 #
-# Read as events (potential deltas). Premise 1: an unrouted ratsnest edge is
-# also counted as an engine-DRC "unconnected" violation, so at reset every
+# Read as events (potential deltas). Premise 1: an unrouted ratsnest edge also
+# counts as an "unconnected" violation in the engine DRC, so at reset every
 # unrouted net is dirty (reward.py). Premise 2: the arithmetic below is exact
-# only under this file's drc_shape: linear with drc_penalty 1.0 — under a
+# only under this file's drc_shape: linear · drc_penalty 1.0 — under the
 # log_per_net rule the marginal value of one DRV decays with that net's
-# violation count, so "violation cleared = +1" does not hold (mind this when
+# violation count, so "violation removed = +1" does not hold (mind this when
 # reading reward_log_wlnorm):
-#   net completed with no new violation = +4 (edge +1 · its unconnected DRV
-#     cleared +1 · net +1 · clean transition +1)
-#   completing the board's last net = up to +10 (+4 + board completion 3 +
-#     board clean 3)
-#   first violation on a clean net = −2 · first violation on a clean board = −5
-#     · clearing the board's last violation = +5
-# Against plain linear (reward_linear_wlnorm) this restores bounded bonuses at
-# the 0 boundary.
+#   completing a net (0 new violations) = +4 (edge +1 · its unconnected DRV
+#     removed +1 · net +1 · clean transition +1)
+#   completing the board's last net = up to +10 (+4 + board-complete 3 +
+#     board-clean 3)
+#   first violation on a clean net = −2 · first violation on a clean board =
+#     −5 · removing the board's last violation = +5
+# Versus pure linear (reward_linear_wlnorm), this hypothesis deliberately
+# restores bounded bonuses at the 0-boundary — the W1 (linear) ↔ W2 (ladder)
+# comparison pair.
 #
 # The clean indicator I(net violations = 0) is unconditional, but an unrouted
-# net is dirty through its own unconnected violation — the clean bonus is only
-# earned by "finished and violation-free". Completing a net while introducing
-# one violation = +2 (edge +1 · unconnected DRV cleared +1 · new DRV −1 ·
-# net +1; no clean bonus). Orphan violations do not count toward per-net clean,
-# but do count toward the board-clean decision (reward.py).
+# net is dirty through its own unconnected violation — the clean bonus is
+# earned only at "completed + violation-free". Completing a net while emitting
+# 1 violation = +2 (edge +1 · unconnected DRV removed +1 · new DRV −1 · net +1;
+# clean not earned). Orphan violations do not count toward per-net clean but do
+# count toward the board-clean judgment (reward.py).
 #
-# LAUNCH GOTCHA: --wirelength-penalty / --via-penalty passed on the command line
-# override the values in this file — do not pass them.
+# LAUNCH GOTCHA: passing the old campaign train_cell.sh flags
+# --wirelength-penalty 0.002 --via-penalty 0.1 overrides this file — do not
+# pass them.
 
 name: drc_ladder_wlnorm
 mode: per_step

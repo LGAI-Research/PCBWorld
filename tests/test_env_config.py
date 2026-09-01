@@ -4,21 +4,21 @@ RLEnvConfig.from_namespace() and from_checkpoint() map training-arg namespaces
 and checkpoint dicts into pool kwargs through one shared schema + adapters.
 These tests pin the produced dicts to known-correct values so behavior stays
 stable. Imports are function-local (the repo's eval/* import at collection
-time can tip a native double-init segfault).
+time can tip a pre-existing native double-init segfault).
 """
 from __future__ import annotations
 
 from types import SimpleNamespace
 
 
-# Full training-arg surface (every field the training-arg mapper reads).
+# Full training-arg surface (every field the old from_training_args read).
 _FULL_NS = dict(
     max_steps=300, masking_rule="strict", reward_rule="shaped",
     corner_mode=90, force_walkaround=True, no_mask_start_point=True,
     slot_perm=True, no_drc_tokens=True, via_penalty=0.1,
     wirelength_penalty=0.2, drc_penalty=0.3, drc_log_scale=0.4,
     drc_log_agg_scale=0.5, drc_log_offset=0.6, reward_step_penalty=0.7,
-    wire_via_emission="both", directional_candidates="grid16",
+    wire_via_emission="both", directional_candidates="grid16", offboard_mask=True,
     use_yaml_drc_fallback=True, drc_config_path="/tmp/drc.yaml",
 )
 
@@ -36,6 +36,7 @@ def test_from_namespace_matches_legacy_mapper():
         "wire_via_emission": "both", "corner_mode": 2,  # 90 -> code 2
         "directional_candidates": "grid16", "connectivity_filter": True,
         "pad_graze_margin_mm": 0.0,
+        "offboard_mask": True,
         "use_yaml_drc_fallback": True,
         "drc_config_path": "/tmp/drc.yaml", "obs_format": "indexed",  # fixed on the RL training path (not on the CLI)
         "outline_obs": "tess", "simplify_outline": False,
@@ -65,7 +66,7 @@ def test_from_checkpoint_full():
         no_mask_start_point=True, no_drc_tokens=True, via_penalty=0.1,
         wirelength_penalty=0.2, drc_penalty=0.3, drc_log_scale=0.4,
         drc_log_agg_scale=0.5, drc_log_offset=0.6, reward_step_penalty=0.7,
-        # older ckpt spelling — must map to directional_candidates="grid16"
+        # legacy pre-rename ckpt key — must map to directional_candidates="grid16"
         wire_via_emission="both", corner_mode=90, directional_grid_size=16,
         use_yaml_drc_fallback=True, drc_config_path="/tmp/drc.yaml",
         slot_perm=True,  # must be IGNORED (eval forces slot_perm False)
@@ -79,16 +80,18 @@ def test_from_checkpoint_full():
         "drc_log_offset": 0.6, "reward_step_penalty": 0.7,
         "wire_via_emission": "both", "corner_mode": 2,
         "directional_candidates": "grid16",
-        # ckpt without a connectivity_filter key -> the unfiltered candidate set
-        # the policy was trained on, NOT the flag's default True.
+        # pre-flag ckpt (no connectivity_filter key) -> the legacy unfiltered
+        # candidate set the policy was trained on, NOT the flag's default True.
         "connectivity_filter": False,
         "pad_graze_margin_mm": 0.0,
+        # pre-knob ckpt (no offboard_mask key) -> off, the trained behaviour
+        "offboard_mask": False,
         "use_yaml_drc_fallback": True,
         "drc_config_path": "/tmp/drc.yaml", "obs_format": "json",
         "outline_obs": "tess", "simplify_outline": False,
         "action_history_len": 1,
-        # ckpt without the knob: pinned to the all-zero NET channel used at
-        # training (False regardless of the YAML)
+        # pre-knob ckpt: pinned to the all-zero NET channel used at training
+        # (False regardless of the YAML)
         "net_constraint_obs": False,
         # train-only augmentation: from_checkpoint pins it OFF at eval
         "keep_routing_fraction": None,
@@ -111,9 +114,10 @@ def test_from_checkpoint_defaults_on_empty():
         "corner_mode": 0,  # default 45 -> code 0
         "directional_candidates": None, "connectivity_filter": False,
         "pad_graze_margin_mm": 0.0,
+        "offboard_mask": False,
         "use_yaml_drc_fallback": False,
         "drc_config_path": None, "obs_format": "json",
-        "outline_obs": "tess", "simplify_outline": False,  # ckpt without the flag: the representation used at training
+        "outline_obs": "tess", "simplify_outline": False,  # pre-flag ckpt: the representation used at training
         "action_history_len": 1, "net_constraint_obs": False,
         "keep_routing_fraction": None,
     }
@@ -124,9 +128,10 @@ def test_connectivity_filter_round_trips_through_checkpoint():
 
     It drops existing-copper candidates the route head is already connected to,
     so it changes the CANDIDATE POOL — the pointer index space the policy was
-    trained against. It therefore has to be carried through ``to_pool_kwargs``,
-    and a checkpoint that stores no such key maps to False (the behaviour it was
-    trained with), not to the flag's default.
+    trained against. Left out of ``to_pool_kwargs`` it silently defaulted to
+    True, evaluating a ``--no-connectivity-filter`` policy on a candidate set it
+    never saw. A checkpoint that predates the flag maps to False (its training
+    behaviour), not to the flag's default.
     """
     from configs.loader.schema import RLEnvConfig
 
@@ -134,7 +139,7 @@ def test_connectivity_filter_round_trips_through_checkpoint():
         got = RLEnvConfig.from_checkpoint(
             {"connectivity_filter": stored}, max_steps=64).to_pool_kwargs()
         assert got["connectivity_filter"] is stored
-    # checkpoint without the key -> unfiltered pool
+    # pre-flag checkpoint -> legacy unfiltered pool
     assert RLEnvConfig.from_checkpoint({}, max_steps=64).to_pool_kwargs()[
         "connectivity_filter"] is False
     # training namespace: flag default is ON, and an explicit off is honoured
@@ -205,7 +210,7 @@ def test_rlenv_carries_env_core():
 
 
 def test_policy_loader_delegates_to_rlenvconfig():
-    """The mapper helpers in models.loader delegate and produce identical dicts."""
+    """The legacy mapper names still work and produce identical dicts."""
     from configs.loader.schema import RLEnvConfig
     from methods.rl_agent.models.loader import (
         _corner_mode_code,
@@ -224,9 +229,10 @@ def test_policy_loader_delegates_to_rlenvconfig():
     assert _corner_mode_code(90) == 2
 
 
-# NOTE: this file carries no golden tests for configs.loader.schema.RLPolicyConfig.
-# RLPolicyConfig.from_namespace/from_checkpoint/build are exercised end-to-end by
-# tests/test_train_decoder.py (train path) and the eval suites (checkpoint path),
-# and extra standalone cases here push the collected-test count past the threshold
-# that tips the native double-init landmine in tests/test_env/test_reward_modes.py
-# (full-suite segfault ~64%). Keep RLPolicyConfig coverage in the build-path suites.
+# NOTE: configs.loader.schema.RLPolicyConfig golden tests were intentionally NOT added
+# here. RLPolicyConfig.from_namespace/from_checkpoint/build are exercised end-to-end
+# by tests/test_train_decoder.py (train path) and the eval suites (checkpoint
+# path). Adding more standalone test cases pushes the collected-test count past a
+# threshold that tips the pre-existing native double-init landmine in
+# tests/test_env/test_reward_modes.py (full-suite segfault ~64%). Until that
+# landmine is fixed, keep RLPolicyConfig coverage in the build-path suites.

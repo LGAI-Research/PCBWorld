@@ -76,13 +76,16 @@ esac
 
 BOARD_DIR="$(QS_BJ="$QS_BOARDS_JSON" QS_SPLIT="$QS_SPLIT" python3 - <<'PY'
 import json, os, sys
+sys.path.insert(0, os.environ["QS_REPO_ROOT"])
+from configs.loader.paths import expand_data_path  # ${CADAGENT_DATA_ROOT} entries
+
 cfg = json.load(open(os.environ["QS_BJ"]))
 dd = cfg.get("dataset_dirs") or {}
 path = dd.get(os.environ["QS_SPLIT"])
 if not path:
     sys.stderr.write(f"boards_json {os.environ['QS_BJ']} has no dataset_dirs[{os.environ['QS_SPLIT']!r}]\n")
     sys.exit(1)
-print(path)
+print(expand_data_path(path))
 PY
 )"
 

@@ -56,7 +56,11 @@ def gather_mask_arrays(
     (sequential per-env queries, same action -> pointer -> mode -> nvm
     order). Returns ``(action_masks, pointer_masks, mode_masks,
     net_valid_masks|None, offlayer_masks)`` as numpy arrays;
-    ``net_valid_masks`` only when ``policy_net_select``. ``offlayer_masks``
+    ``net_valid_masks`` only when ``policy_net_select``. ``pointer_masks`` is
+    the all-row cand block: the same-point indices
+    (``start_route_pointer_indices``) followed by the off-board directional
+    indices (``offboard_pointer_indices``, empty unless ``offboard_mask``).
+    ``offlayer_masks``
     lists the cand columns on a layer other than the router head's — consumed
     under a per-row gate on the make_line row only (see
     ``KiCadRLWrapper.offlayer_pointer_indices``).
@@ -71,18 +75,26 @@ def gather_mask_arrays(
 
     from methods.rl_agent.models.v1.encoding import (
         stack_action_masks,
+        stack_cand_block_masks,
         stack_mode_masks,
         stack_net_valid_masks,
         stack_offlayer_masks,
-        stack_pointer_masks,
     )
 
     if obs_list is not None and obs_list and all("_masks" in o for o in obs_list):
         per = [o["_masks"] for o in obs_list]
         masks = np.stack([m["action"] for m in per], axis=0)
         # Variable-K pointer indices, right-padded with -1 ((B, 0) when no
-        # match) — same padding as stack_pointer_masks / the list branch.
+        # match) — same padding as stack_cand_block_masks / the list branch.
         per_ptr = [m["pointer"] for m in per]
+        # Off-board directional columns block on EVERY cand row like the
+        # same-point rule, so they ride the same pointer block: concatenated
+        # per env BEFORE padding (== stack_cand_block_masks / the list branch
+        # below, bit-identical). Older payloads without the key degrade to
+        # the same-point rows alone.
+        per_ob = [m.get("offboard") for m in per]
+        if all(o is not None for o in per_ob):
+            per_ptr = [np.concatenate([p, o]) for p, o in zip(per_ptr, per_ob)]
         K_max = max((p.shape[0] for p in per_ptr), default=0)
         ptr_masks = np.full((len(per), K_max), -1, dtype=np.int64)
         for k, p in enumerate(per_ptr):
@@ -111,7 +123,7 @@ def gather_mask_arrays(
 
     if hasattr(envs, "env_method"):
         masks = stack_action_masks(envs, indices=indices)
-        ptr_masks = stack_pointer_masks(envs, indices=indices)
+        ptr_masks = stack_cand_block_masks(envs, indices=indices)
         mode_masks = stack_mode_masks(envs, indices=indices)
         nvm = (
             stack_net_valid_masks(envs, indices=indices)
@@ -121,8 +133,15 @@ def gather_mask_arrays(
         return masks, ptr_masks, mode_masks, nvm, off_masks
 
     masks = np.stack([envs[i].action_masks() for i in indices], axis=0)
-    # Variable-K pointer masks, right-padded with -1 ((B, 0) when no match).
-    per_ptr = [envs[i].start_route_pointer_indices() for i in indices]
+    # Variable-K pointer masks, right-padded with -1 ((B, 0) when no match);
+    # same-point rows ++ off-board rows per env (see the obs branch above).
+    per_ptr = []
+    for i in indices:
+        rows = [envs[i].start_route_pointer_indices()]
+        fn = getattr(envs[i], "offboard_pointer_indices", None)
+        if fn is not None:
+            rows.append(fn())
+        per_ptr.append(np.concatenate(rows))
     K_max = max((p.shape[0] for p in per_ptr), default=0)
     ptr_masks = np.full((len(indices), K_max), -1, dtype=np.int64)
     for k, p in enumerate(per_ptr):

@@ -41,7 +41,24 @@ python experiments/kdd/llm_eval/prepare_plan_only_fewshot.py    # deterministic 
 python experiments/kdd/llm_eval/prepare_plan_only_fewshot_llm.py # LLM-generated routability=1.0 action pool
 ```
 
-## Invocation (single model)
+## Provider sweep — Qwen on Together
+
+`experiments/kdd/table1_llm/baselines/run_qwen_together_sweep.sh` wraps both eval scripts and sweeps the
+Qwen3 chat family (+ Coder-480B) against Together's serverless endpoint.
+
+```bash
+export TOGETHER_API_KEY=...
+bash experiments/kdd/table1_llm/baselines/run_qwen_together_sweep.sh dry       # smoke
+bash experiments/kdd/table1_llm/baselines/run_qwen_together_sweep.sh main      # 8 models × engine-free+plan-only × synth (128 boards)
+python experiments/kdd/llm_eval/aggregate_qwen_together_sweep.py \
+    eval_out/qwen_together_sweep/<DATE_TAG>
+```
+
+Default sample budget = 25 per board; ks reported = `{1, 5, 10, 25}`. The
+aggregator produces a `comparison.csv` + a model × k pivot in `comparison.md`,
+cells = `pass@k_unb / rb_best / rb_mean`.
+
+## Direct invocation (single model)
 
 ```bash
 # CAD-Gen v3 standalone, synth zero-shot, OpenAI

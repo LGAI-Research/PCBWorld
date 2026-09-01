@@ -301,6 +301,18 @@ class RLEnvConfig:
     # bespoke --pad-graze-margin-mm in the args module (richer help text), so
     # the generator skips it; that flag's default reads THIS field.
     pad_graze_margin_mm: float = field(default=0.0, metadata={"cli_skip": True})
+    # Off-board pointer mask (act time, every cand row): blocks DIRECTIONAL
+    # candidates whose (x, y) falls outside the board bbox — the long rungs of
+    # a ladder preset (mres8: 25 / 50 mm) overshoot most boards. Leaves the
+    # candidate SET (pool / pointer index space) untouched, but a policy trained
+    # with it never learned to avoid off-board targets, so it round-trips
+    # through checkpoints like the other wrapper knobs. Default off = existing
+    # checkpoints keep their exact behaviour.
+    offboard_mask: bool = field(default=False, metadata={
+        "help": "Hard-mask DIRECTIONAL candidates whose (x, y) falls outside "
+                "the board bbox at act time (every cand row: neither make_line "
+                "nor make_via can target them). Off by default; stored in the "
+                "checkpoint and restored when it is evaluated."})
     # Per-episode augmentation toggles (5 independent boolean axes). Consumed by
     # the trainer via ``args.aug_*`` and passed to the RL wrapper factory; eval
     # never enables them (RLEnvConfig stays default-False, so to_pool_kwargs need
@@ -350,6 +362,7 @@ class RLEnvConfig:
             "directional_candidates": self.directional_candidates,
             "connectivity_filter": self.connectivity_filter,
             "pad_graze_margin_mm": self.pad_graze_margin_mm,
+            "offboard_mask": self.offboard_mask,
             "use_yaml_drc_fallback": e.use_yaml_drc_fallback,
             "drc_config_path": e.drc_config_path,
             "simplify_outline": e.simplify_outline,
@@ -413,6 +426,7 @@ class RLEnvConfig:
             directional_candidates=getattr(args, "directional_candidates", None),
             connectivity_filter=bool(getattr(args, "connectivity_filter", True)),
             pad_graze_margin_mm=float(getattr(args, "pad_graze_margin_mm", 0.0)),
+            offboard_mask=bool(getattr(args, "offboard_mask", False)),
         )
 
     @classmethod
@@ -501,6 +515,9 @@ class RLEnvConfig:
             # Same candidate-set rule: pre-knob checkpoints trained without the
             # graze guard — fallback 0.0 (off).
             pad_graze_margin_mm=float(ckpt_args.get("pad_graze_margin_mm", 0.0)),
+            # Pre-knob checkpoints trained with every directional candidate
+            # selectable — fallback False keeps their behaviour exact.
+            offboard_mask=bool(ckpt_args.get("offboard_mask", False)),
         )
 
 
@@ -1066,7 +1083,7 @@ class LLMRolloutConfig:
     temperature: float = _LLM["rollout"]["temperature"]
     max_new_tokens: int = _LLM["rollout"]["max_new_tokens"]
     dump_dir: str | None = field(default=_LLM["rollout"]["dump_dir"], metadata={
-        "help": "Directory for per-episode rollout JSON."})
+        "help": "Directory for per-episode rollout JSON (one file per episode)."})
     early_stop_no_progress: int = field(default=_LLM["rollout"]["early_stop_no_progress"], metadata={
         "help": "Early-stop an env after this many consecutive non-progress steps "
                 "(parse-error / mask-rejected / empty_action). 0 disables (default)."})

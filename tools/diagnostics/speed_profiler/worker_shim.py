@@ -1,11 +1,11 @@
 """Forkserver-preload shim — inject worker-side timing with ZERO base edits.
 
-Mechanism: ``mp.set_forkserver_preload(["...worker_shim"])`` BEFORE the first
-forkserver worker spawns makes the forkserver *server* import this module; on
-import it rebinds ``pcb_world.vec.backends.subproc._decoder_worker`` to a
+Mechanism (G-2 spike, 2026-07-09): ``mp.set_forkserver_preload(["...worker_shim"])``
+BEFORE the first forkserver worker spawns makes the forkserver *server* import this
+module; on import it rebinds ``pcb_world.vec.backends.subproc._decoder_worker`` to a
 timed wrapper. Every worker forked from the server inherits the patched target
 (the pool passes ``target=_decoder_worker`` by reference, resolved to this attr in
-the server).
+the server). Confirmed: ``patched_marker=True`` in the child.
 
 The wrapper stamps the worker's own compute duration ``recv->ready`` into
 ``info["_prof"]["worker_compute_s"]`` for ``step`` commands (metadata only —
@@ -30,11 +30,11 @@ _PATCHED = False
 def _timed_decoder_worker(remote, parent_remote, env_fn_wrapper, board_factory_wrapper=None,
                           role="env"):
     """Timed mirror of ``pcb_world.vec.backends.subproc._decoder_worker``
-    (dies on ``EngineServerCrashed`` so the parent's dead-worker respawn
-    fires; clears ``env`` on reload; incl. pcb_world.diag crash
-    instrumentation). Identical control flow; the ONLY change is stamping
-    ``info["_prof"]["worker_compute_s"]`` on the ``step`` reply. Re-sync if
-    the base worker loop changes.
+    (base @ 2026-08-28 ipc(P2): die on ``EngineServerCrashed`` so the parent's
+    dead-worker respawn fires; prior 66743b05f ``env = None`` reload fix; incl.
+    pcb_world.diag crash instrumentation). Identical control flow; the ONLY
+    change is stamping ``info["_prof"]["worker_compute_s"]`` on the ``step``
+    reply. Re-sync if the base worker loop changes.
     """
     import gc
     import traceback
@@ -58,9 +58,10 @@ def _timed_decoder_worker(remote, parent_remote, env_fn_wrapper, board_factory_w
                 if board_factory is None:
                     raise RuntimeError("reload_board called but worker has no board_factory")
                 board_path, reload_seq = data
-                # ``env = None`` (not ``del``): on a board_factory raise the
-                # except-handler below still reads ``env``; with ``del`` that
-                # would be an UnboundLocalError masking the real exception.
+                # ``env = None`` (not ``del``) — base fix 66743b05f: on a
+                # board_factory raise the except-handler below still reads
+                # ``env``; with ``del`` that was an UnboundLocalError masking
+                # the real exception.
                 env.close(); env = None; gc.collect()
                 env = board_factory(board_path, reload_seq)
                 remote.send(True)
@@ -73,7 +74,7 @@ def _timed_decoder_worker(remote, parent_remote, env_fn_wrapper, board_factory_w
                     info = {**info, "_prof": {"worker_compute_s": PC() - t_cmd}}
                 remote.send((obs, reward, terminated, truncated, info))
             elif cmd == "reset":
-                # data = seed | None; None calls reset() with no argument.
+                # data = seed | None; None keeps the historical no-arg call.
                 obs, info = env.reset(seed=data) if data is not None else env.reset()
                 remote.send((obs, info))
             elif cmd == "action_masks":

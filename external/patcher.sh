@@ -20,13 +20,8 @@ apply_patch() {
         echo "Error: patch directory not found: $patch_dir" >&2
         exit 1
     fi
-    # A clone leaves an EMPTY directory at an uninitialised submodule's mount
-    # point, so require a checkout (a .git entry) rather than just a directory:
-    # copying into the empty mount point makes the later submodule checkout fail
-    # on untracked files.
-    if [[ ! -e "$target_dir/.git" ]]; then
-        echo "Error: $target_dir is not a checked-out submodule." >&2
-        echo "Run this first:  git submodule update --init --recursive external/${name}" >&2
+    if [[ ! -d "$target_dir" ]]; then
+        echo "Error: target directory not found: $target_dir" >&2
         exit 1
     fi
 
@@ -41,9 +36,8 @@ apply_patch() {
         mkdir -p "$(dirname "$dst_file")"
         cp "$src_file" "$dst_file"
         echo "  updated: $rel_path"
-    done < <(find "$patch_dir" \
-        -name "__pycache__" -prune -o \
-        -type f ! -name ".DS_Store" \
+    done < <(find "$patch_dir" -type f \
+        ! -name ".DS_Store" \
         -print0)
 
     echo ""

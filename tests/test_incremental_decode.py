@@ -6,15 +6,16 @@ return_cache=True)``) and the 1-2 appended action tokens decoded incrementally
 (``_decode_appended``) instead of re-running the full stack per pass —
 rollout 3→1 full passes, update 2→1 (backward shrinks with the graph).
 
-Incremental decode is the only model path; there is no model-level multipass
-reference path. The oracle lives at the machinery level: ``_run_transformer``
-on the concatenated ``[state, action-tokens]`` sequence is the exact full-rerun
+The model-level multipass reference path was REMOVED (2026-07-16) after the
+curve-A/B + equivalence sign-off; incremental decode is the only model path.
+The oracle survives at the machinery level: ``_run_transformer`` on the
+concatenated ``[state, action-tokens]`` sequence is the exact full-rerun
 reference that ``_decode_appended`` must match, forward AND gradients, in
 float64 — including its block-structured ``appended_mask`` form, which packs
 every independent action branch of ``factored_action_logits`` into one decode.
-Model-level guards: ckpt round-trip (checkpoints load and run identically — the
-decode path is not a state_dict entry) + an idle-batch smoke over the
-degenerate cand-pool branch.
+Model-level guards: ckpt round-trip (old multipass-era checkpoints load and
+run identically — the switch was never a state_dict entry) + an idle-batch
+smoke over the degenerate cand-pool branch.
 
 No C++ dependency — pure PyTorch. CPU always runs; CUDA runs too when present.
 """
@@ -291,9 +292,10 @@ class TestModel:
         assert torch.isfinite(lp).all() and torch.isfinite(v).all()
 
     def test_ckpt_roundtrip(self):
-        # ckpt hard requirement: no decode-mode switch is a parameter/buffer,
-        # so checkpoints load strict and reproduce identical outputs on the
-        # incremental path.
+        # ckpt hard requirement: the (removed) decode-mode switch was never a
+        # parameter/buffer, so multipass-era checkpoints are byte-identical —
+        # they load strict and reproduce identical outputs on the incremental
+        # path.
         src = _opened_model("cpu")
         assert not any("incremental_decode" in k for k in src.state_dict())
 

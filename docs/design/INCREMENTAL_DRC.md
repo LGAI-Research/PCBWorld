@@ -5,13 +5,14 @@ records (1) where the cost actually is, measured; (2) what does **not** help;
 (3) a verified-but-rejected fast approximation; and (4) the design for an
 **exact** incremental DRC that reuses KiCAD's real clearance test.
 
-Status: **implemented** — `runDRCIncremental` is the shipped path: KIID-signature
-diff + retained clearance-family store + scoped provider pass (≈ tier A of §6
-with the §4 violation store, not the §7 self-maintained index). Bit-exactness
-guard: [tests/test_drc_incremental/](../../tests/test_drc_incremental/).
-This document is the **decision record** (measurements · rejected alternatives ·
-design rationale). The numbers below were taken on macOS, conda env `cadagent`,
-with an instrumented build that is not part of the tree.
+Status: **implemented** — `runDRCIncremental` landed with the 2026-06-29 `mcts`
+merge (`9f0c19d6a`): KIID-signature diff + retained clearance-family store +
+scoped provider pass (≈ tier A of §6 with the §4 violation store, not the §7
+self-maintained index). High-level summary: the engine README;
+bit-exactness guard: [tests/test_drc_incremental/](../../tests/test_drc_incremental/).
+This document is kept as the **decision record** (measurements · rejected
+alternatives · design rationale). Measurements 2026-06-23, macOS, conda env
+`cadagent`, instrumented build then reverted.
 
 ---
 
@@ -44,7 +45,7 @@ heavy all-pairs work, not an un-parallelized accident.
 
 - **Reusing the DRC engine / caching `InitEngine`.** Rule compilation is
   0.7–1 ms. Reusing the engine saves nothing. (The router already keeps a
-  persistent `bds.m_DRCEngine` — see `engine/kicad-patches/rl/pns_rl_router.cpp`.)
+  persistent `bds.m_DRCEngine` — see [pns_rl_router.cpp](../../engine/kicad-patches/rl/pns_rl_router.cpp).)
 - **Pruning irrelevant test providers** (silk/courtyard/solder-mask/creepage/
   text…). Each provider top-level short-circuits via
   `IsErrorLimitExceeded()` when its severity is `ignore`, so the irrelevant
@@ -149,7 +150,7 @@ without engine surgery, if it is ever needed. Per-tier costs: §6 table.
 - `IsNetTieExclusion` reads footprint net-tie groups — already handled because
   we call the real per-pair test; do **not** reimplement it.
 
-(Validation: the §7.8 ladder plus the shipped guard
+(Validation: superseded by the §7.8 ladder and the shipped guard
 [tests/test_drc_incremental/](../../tests/test_drc_incremental/).)
 
 ---
@@ -242,7 +243,7 @@ neighbour — the same inflation `DRC_RTREE` uses):
 The engine already emits a per-step `BoardSnapshot` (tracks/vias/pads/ratsnest,
 pybind by-ref) and the checkpoint restore already computes added/removed/modified
 sets by `KIID` + `boardItemsEqual`
-(`engine/kicad-patches/rl/pns_rl_router.cpp`). Drive the
+([pns_rl_router.cpp](../../engine/kicad-patches/rl/pns_rl_router.cpp)). Drive the
 index from the **same** change set:
 - **Linear rollout (PPO)** — hook the mutation points directly: `fixRoute`
   (commit → added tracks/vias), `delete_*` (removed), so the delta is known at
@@ -313,10 +314,10 @@ lockstep with geometry — the same pattern as the track clones that give the
 
 ## Appendix: environment / repro
 
-- Env / full build: [README.md](../../README.md) (conda `cadagent`,
-  `engine/build_rl_router.sh`). Quick C++ iteration: edit
+- Env / full build: [README](../../README.md) (conda `cadagent`, module path),
+  the engine's own README (`engine/README.md`: patch → build flow). Quick C++ iteration: edit
   `build_rl/kicad_src/...` (gitignored), `cd build_rl && ninja kicad_rl_router`
-  (~5 s per TU); canonical sources in `engine/kicad-patches/rl/`.
+  (~5 s per TU); canonical sources in [kicad-patches/rl/](../../engine/kicad-patches/rl/).
 - Known trap: MarkObstacles mode (`set_routing_mode(0)`) + raw `fix_route`
   segfaults — do not use it to synthesize violations. Use a board that already
   has them (e.g. the `figure3_6pos_2layers_crossed` fixture).

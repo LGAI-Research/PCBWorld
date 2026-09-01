@@ -128,11 +128,11 @@ def _evaluate_sample(
 ) -> dict:
     """Wrap eval.metrics.evaluate_one with our metric shape.
 
-    Maps the evaluator's keys onto the per-sample schema that
-    BoardResult.aggregate (downstream) consumes:
+    Maps the new evaluator's keys onto the existing per-sample schema so
+    BoardResult.aggregate (downstream) keeps working without changes:
       drv_count := drv_errors_and_promoted_count (the broader of the two
-                   counters — same convention as the drc_dense_promoted
-                   reward).
+                   counters — same convention as drc_dense_promoted reward
+                   used for v54-class training).
     """
     from eval.metrics import evaluate_one as _eval_routed
 

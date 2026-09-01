@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Unified eval front door — the ``train.py``/``profile.py`` peer for scoring.
+"""Unified eval front door — the ``train.py``/``visualize.py`` peer for scoring.
 
 Thin dispatch only; the 3-stage pipeline (rollout -> post-hoc DRC -> aggregate)
 lives in ``eval/pipeline.py`` (single command, so no subcommands — all flags
 pass straight through; ``--help`` shows the pipeline's own help). Needs the
-built C++ router (``kicad_rl_router``) importable — set ``PYTHONPATH`` as in
-README.md before running.
+built C++ router (``kicad_rl_router``) importable — set ``PYTHONPATH`` /
+``LD_LIBRARY_PATH`` as in the README before running.
 
 Usage:
     python scripts/eval.py --ckpt <path> --boards-dir <path> --seed 42 --n-rollouts 5

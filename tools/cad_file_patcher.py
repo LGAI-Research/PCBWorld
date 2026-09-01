@@ -50,10 +50,9 @@ from typing import Iterable
 
 
 # ---------------------------------------------------------------------------
-# sys.path bootstrap — adds the repo root and the built router dir so the
-# script runs with just `conda activate cadagent && python
-# tools/cad_file_patcher.py ...` (no manual PYTHONPATH needed). This file lives
-# in tools/, so the repo root is one level up.
+# sys.path bootstrap — mirrors eval-api.sh so the script runs with just
+# `conda activate cadagent && python tools/cad_file_patcher.py ...` (no manual
+# PYTHONPATH needed). This file lives in tools/, so the repo root is one level up.
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]

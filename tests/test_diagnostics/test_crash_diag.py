@@ -8,8 +8,8 @@ delete on clean exit"):
 - write_postmortem + SubprocDecoderVecEnv._recover_worker: parent-side death
   record on SIGKILL (the OOM-killer signature) with unlimited respawn
 
-The real end-to-end segfault sim inside a *decoder worker* stays manual
-(a segfaulting pytest worker would trip xdist itself).
+The real end-to-end segfault sim inside a *decoder worker* stays manual (a
+segfaulting pytest worker would trip xdist itself).
 """
 
 from __future__ import annotations

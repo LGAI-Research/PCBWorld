@@ -25,8 +25,9 @@ from collections import defaultdict
 from pathlib import Path
 
 EPS = 1e-9
-# Roots of the eval-log trees (not distributed with this repo). Point the env
-# vars at your local copies of the logs (see baselines/eval/README.md).
+# Roots of the eval-log trees. No baked-in defaults: the historical output
+# tree sits on read-only shared storage, so point the env vars at your local
+# copies of the logs (see baselines/eval/README.md).
 def _require_env_path(name: str) -> Path:
     val = os.environ.get(name)
     if not val:

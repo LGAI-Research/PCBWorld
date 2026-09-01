@@ -6,10 +6,10 @@ stream. Those UUIDs are the obstacle/cluster sort tie-break, so a fixed seed mus
 make routing reproducible not just run-to-run in one process, but across
 *separate OS processes* (different heap / ASLR).
 
-A same-process check cannot see this: two engines in one interpreter share the
-seeded generator. This test routes the same board+action sequence in two
-independent ``subprocess`` workers and compares the full geometry+UUID
-fingerprint:
+Earlier determinism checks were same-process only (one engine, then another in the
+same interpreter — they share the seeded generator). This test closes that gap by
+routing the same board+action sequence in two independent ``subprocess`` workers
+and comparing the full geometry+UUID fingerprint:
 
   * same fixed seed  → byte-identical fingerprint (geometry AND uuids).
   * entropy seeding   → uuids diverge (control: proves the harness detects a
@@ -109,10 +109,10 @@ def test_entropy_seed_diverges_cross_process():
     )
 
 
-# Shove-mode worker: same route driven in RM_Shove. Residual address-order
-# (exact-duplicate temporaries at the shove iteration budget) leaks precisely in
-# shove paths that walkaround never exercises — the ITEM::Serial tie-break
-# covers it, and this pins that cross-process.
+# Shove-mode worker: same route driven in RM_Shove. The 260720 replay fork showed
+# that residual address-order (exact-duplicate temporaries at the shove iteration
+# budget) leaks precisely in shove paths that walkaround never exercises — the
+# ITEM::Serial tie-break (v0.20+) closes it; this pins it cross-process.
 _WORKER_SHOVE = _WORKER.replace("MODE_WALKAROUND", "MODE_SHOVE")
 
 

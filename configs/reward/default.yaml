@@ -1,5 +1,7 @@
-# LEGACY — the fallback `get_reward_config()` name, kept for tests that need a
-# DRC-free terminal rule. The training recipes use the drc_* rules instead.
+# LEGACY — retained for test compatibility only (tests/test_env/test_aug_scale_reward.py
+# asserts specific aug_scale behavior under this config's terminal-mode semantics).
+# Not used by v20+ training. Scheduled for deletion in a later cleanup phase
+# once aug_scale tests are migrated off the legacy reward configs.
 #
 # Default reward config: terminal mode (episode-end Φ only).
 # Only step_penalty per step, Φ(s_final) at episode end.

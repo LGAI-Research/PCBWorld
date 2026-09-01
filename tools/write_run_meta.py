@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Write a ``_run_meta.json`` provenance sidecar into an output cell dir.
 
-Records the resolved input path + git commit + producing command,
-so any produced cell is traceable to its source
+Records the resolved input path + git commit + producing command, so any
+produced cell is traceable to its source
 even though inputs and outputs live under different roots. Hand-invoked by rollout
 wrappers, e.g.::
 

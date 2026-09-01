@@ -1,16 +1,18 @@
-"""``--eval-base-seed`` / ``--seed`` actually reach the env.
+"""``--eval-base-seed`` / ``--seed`` actually reach the env (regression).
 
-The per-slot seed must be applied through ``env.reset(seed=...)``, not merely
-computed and written into the output row: validation board sampling (the env-side
-per-episode draw = ``keep_routing_fraction``) is unseeded otherwise, which makes
-``val/*`` irreproducible and best-ckpt selection an argmax over uncontrolled noise.
+Previously the rollout **computed the per-slot seed and only wrote it into the
+output row** without passing it to ``env.reset(seed=...)``. Validation board
+sampling (the env-side per-episode draw = ``keep_routing_fraction``) was
+therefore unseeded, ``val/*`` was irreproducible, and best-ckpt selection was
+an argmax over uncontrolled noise.
 
 Two segments are pinned separately:
 
-1. transport — ``VecBackend.reset_batch(indices, seeds)`` carries the seed through
-   to the worker's ``env.reset(seed=...)`` (across the process boundary).
-2. rollout — ``_run_one_batch`` passes ``base_seed + board.index*100 + rollout_idx``
-   to reset and records the **same** value in the row.
+1. transport — ``VecBackend.reset_batch(indices, seeds)`` carries the seed
+   through to the worker's ``env.reset(seed=...)`` (across the process
+   boundary).
+2. rollout — ``_run_one_batch`` passes ``base_seed + board.index*100 +
+   rollout_idx`` to reset and records the **same** value in the row.
 
 Reproducibility of the env-side seeded reset itself is pinned separately by
 ``tests/test_env/test_net_subset.py``

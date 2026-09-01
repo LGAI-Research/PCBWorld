@@ -1,6 +1,6 @@
 """mask-in-obs equivalence tests — wrapper-embedded act-time masks.
 
-``KiCadRLWrapper`` embeds the 4 act-time mask arrays under ``obs["_masks"]``
+``KiCadRLWrapper`` embeds the act-time mask arrays under ``obs["_masks"]``
 on every step/reset (computed in-worker right after ``_refresh_cache``);
 ``gather_mask_arrays(obs_list=)`` stacks them locally instead of issuing 4
 ``env_method`` IPC round-trips per rollout step (query fallback for obs
@@ -72,6 +72,7 @@ class _ScriptedEnv:
                 "pointer": self.start_route_pointer_indices(),
                 "mode": self.mode_mask(),
                 "net_valid": self.net_valid_mask(),
+                "offboard": self.offboard_pointer_indices(),
             }
         return obs
 
@@ -119,6 +120,11 @@ class _ScriptedEnv:
         m = np.ones(2, dtype=bool)
         m[self._acc % 2] = (self._acc % 3) != 0
         return m
+
+    def offboard_pointer_indices(self) -> np.ndarray:
+        # variable K per env/step incl. 0 — appended to the pointer block
+        k = self._acc % 2
+        return np.arange(k, dtype=np.int64) + 10 + (self._acc % 3)
 
     def close(self):
         pass
@@ -189,6 +195,35 @@ class TestGatherMaskParity:
             assert np.array_equal(got, want)
 
 
+    def test_offboard_rides_pointer_block(self):
+        """Off-board rows are appended to the same-point rows per env, THEN
+        padded — identically on the obs path, the list path and the
+        env_method path (stack_cand_block_masks)."""
+        envs = [_ScriptedEnv(i, embed_masks=True) for i in range(4)]
+        obs = [e.reset()[0] for e in envs]
+        for s in range(2):
+            obs = [e.step(np.array([s % NUM_ACTIONS, s, s % 3]))[0] for e in envs]
+
+        class _Pool:  # minimal VecBackend.env_method shim
+            def env_method(self, name, *a, indices=None, **kw):
+                return [getattr(envs[i], name)(*a, **kw) for i in indices]
+
+        idx = [0, 1, 2, 3]
+        ptr_obs = gather_mask_arrays(envs, idx, policy_net_select=False,
+                                     obs_list=obs)[1]
+        ptr_list = gather_mask_arrays(envs, idx, policy_net_select=False)[1]
+        ptr_pool = gather_mask_arrays(_Pool(), idx, policy_net_select=False)[1]
+        assert ptr_obs.dtype == np.int64
+        assert np.array_equal(ptr_obs, ptr_list)
+        assert np.array_equal(ptr_obs, ptr_pool)
+        assert any(e.offboard_pointer_indices().size for e in envs)  # not vacuous
+        for k, e in enumerate(envs):
+            want = np.concatenate([e.start_route_pointer_indices(),
+                                   e.offboard_pointer_indices()])
+            assert np.array_equal(ptr_obs[k, :want.size], want)
+            assert (ptr_obs[k, want.size:] == -1).all()
+
+
 # ===================================================================
 # 2. Mask parity — real env (fixture board, C++ router)
 # ===================================================================
@@ -212,6 +247,7 @@ class TestRealEnvMaskParity:
             (m["pointer"], wrapper.start_route_pointer_indices(), "pointer"),
             (m["mode"], wrapper.mode_mask(), "mode"),
             (m["net_valid"], wrapper.net_valid_mask(), "net_valid"),
+            (m["offboard"], wrapper.offboard_pointer_indices(), "offboard"),
         ):
             assert got.dtype == want.dtype, name
             assert np.array_equal(got, want), name
@@ -268,6 +304,66 @@ class TestPPOCollectorMaskInObs:
         assert a.episode_rewards == b.episode_rewards
         assert a.episode_lengths == b.episode_lengths
         assert a.invalid_action_ratio == b.invalid_action_ratio
+
+
+# ===================================================================
+# 4. Off-board pointer mask — semantics (no C++)
+# ===================================================================
+class TestOffboardPointerMask:
+    """``offboard_pointer_indices()``: exactly the DIRECTIONAL candidates
+    outside the board bbox (edges inclusive), never real geometry, and empty
+    with the knob off. Wrapper via ``__new__`` + ``_refresh_cache`` (as in
+    ``test_refresh_cache_raises_on_empty_pool_with_net``), obs via
+    ``make_mock_obs``."""
+
+    @staticmethod
+    def _wrapper(obs, *, offboard_mask):
+        from types import SimpleNamespace
+        from methods.rl_agent.wrappers.adapter import KiCadRLWrapper
+
+        w = object.__new__(KiCadRLWrapper)
+        w.env = SimpleNamespace(board_path="mock.kicad_pcb")
+        w._offboard_mask = offboard_mask
+        w._refresh_cache(obs)
+        return w
+
+    @staticmethod
+    def _routing_obs():
+        from tests._mock_obs import _make_pad
+
+        # 30 x 20 mm board, head at its centre (15, 10). mres8 rungs 25 / 50 mm
+        # leave the board in every direction, the 10 mm rung lands ON the
+        # top / bottom edge (inclusive -> stays), 5 mm and below stay inside.
+        obs = make_mock_obs(n_nets=1, pads_per_net=2, n_ratsnest_per_net=1,
+                            is_routing=True, current_net_phase=1,
+                            bbox=(0.0, 0.0, 30.0, 20.0))
+        # A same-net PAD outside the bbox: real geometry, never masked.
+        obs["board_static"]["nets"]["net_1"]["pads"]["pad_out"] = _make_pad(-5.0, -5.0)
+        obs["_aug"] = {"directional_candidates": "mres8"}
+        return obs
+
+    def test_masks_exactly_the_offboard_directional_cands(self):
+        from pcb_world.vec.candidate_pool import CTYPE_DIRECTIONAL
+
+        obs = self._routing_obs()
+        w = self._wrapper(obs, offboard_mask=True)
+        hx, hy = obs["router_head"]["current_xy"]
+        got = w.offboard_pointer_indices()
+        assert got.dtype == np.int64
+        want = {
+            i for i, ((x, y, _l), ct) in enumerate(zip(w.cand_mm_list, w._cand_ctype))
+            if ct == CTYPE_DIRECTIONAL and max(abs(x - hx), abs(y - hy)) >= 25.0
+        }
+        assert len(want) == 16                      # 8 dirs x {25, 50} mm
+        assert set(got.tolist()) == want            # 10 mm edge rung NOT masked
+        pad_out = [i for i, (x, y, _l) in enumerate(w.cand_mm_list)
+                   if (x, y) == (-5.0, -5.0)]
+        assert pad_out and pad_out[0] not in set(got.tolist())
+
+    def test_off_by_default(self):
+        w = self._wrapper(self._routing_obs(), offboard_mask=False)
+        got = w.offboard_pointer_indices()
+        assert got.shape == (0,) and got.dtype == np.int64
 
 
 def test_refresh_cache_raises_on_empty_pool_with_net(tmp_path, monkeypatch):

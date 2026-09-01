@@ -8,7 +8,7 @@
 #   all     — train + figure
 #
 # Rollout+eval of trained checkpoints is the shared 3-stage path (not duplicated here):
-#   python eval/pipeline.py --ckpt <ckpt> --boards-dir <dir> --output-dir <cell> --skip-drc
+#   <rollout dispatcher> --task d2a --cell transformer_pcbworld --run   (site-specific; not part of this recipe)
 #   python eval/pipeline.py --stages eval,aggregate --output-dir <cell> --check-angle 45
 #
 # Honors DRY_RUN=1 / SMOKE=1 / GPU=N and METHODS / SEEDS overrides.

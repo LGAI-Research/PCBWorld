@@ -354,9 +354,9 @@ def eval_kicad_pcb(
 
 
 # ============================================================================
-# Emission helpers — each lives with its sink (emit_tensorboard next to
-# log_metrics, emit_csv_artifacts next to export_csv/export_json) and is
-# re-imported here for the CLI main().
+# Emission helpers — moved to the sink homes (logger / evaluator); imported
+# here for the CLI main(). emit_tensorboard lives next to log_metrics;
+# emit_csv_artifacts next to export_csv/export_json.
 # ============================================================================
 from methods._shared.logger import emit_tensorboard  # noqa: E402,F401
 from eval.evaluator import emit_csv_artifacts  # noqa: E402,F401
@@ -825,8 +825,7 @@ def main() -> int:
     # CELL level (output_dir holds boards/<id>_<cell>_s<SS>_r<RR> + per_rollout.csv),
     # so the typical call is `--stages eval,aggregate --output-dir <cell>` after
     # rollouts have been unified. Paper-table-specific selection/metrics (Table 1
-    # DRC-aware pick, Table 2 P@k/CP@k) live in the separate paper-extraction
-    # tooling under experiments/_lib/metrics/.
+    # DRC-aware pick, Table 2 P@k/CP@k) live in the separate Stage-4 tooling.
     if args.skip_aggregate:
         print("[eval] --skip-aggregate set")
     else:

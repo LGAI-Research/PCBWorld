@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | <!--VERSION-->v1.0.0<!--/VERSION--> |
+| **Version** | <!--VERSION-->v1.1.0<!--/VERSION--> |
 | **KiCad** | 9.0.8 (via the engine submodule) |
 | **Python** | 3.12+ |
 | **Platform** | Linux x86_64 (primary), macOS |
@@ -147,19 +147,42 @@ PY
 ### 3. Get the real boards (D3)
 
 The real-board benchmark derives from the open
-[PCBench](https://github.com/PCBench/PCBench) collection (MIT):
+[PCBench](https://github.com/PCBench/PCBench) collection (MIT). Board content is
+not bundled with this repo: the D3 set is rebuilt from a PCBench clone by the
+four-step chain in [tools/datagen/pcbench_prep/](tools/datagen/pcbench_prep/README.md)
+— KiCad 5→9 conversion, DRC repair/filter, guide generation, difficulty sort. The chain
+runs `kicad-cli` and the `pcbnew` Python module as child processes; build both from the
+engine's pinned source once (`BUILD_CLI=1 BUILD_PCBNEW=1`, about 4.5 minutes on 64
+cores) — the same KiCad the environment routes with, so the data does not depend on
+which 9.0.x a distribution ships:
 
 ```bash
-git clone https://github.com/PCBench/PCBench.git
+BUILD_CLI=1 BUILD_PCBNEW=1 bash engine/build_rl_router.sh   # adds kicad-cli + pcbnew to build_rl/
+
+[ -d var/datasets/PCBench ] || git clone --depth 1 https://github.com/PCBench/PCBench.git var/datasets/PCBench
+export CADAGENT_DATA_ROOT=$PWD/var/datasets                  # as in §2
+export PCBENCH_PCBS_ROOT=$PWD/var/datasets/PCBench/PCBs
+export PCBENCH_V9_ROOT=$PWD/var/datasets/pcbench_work/v9
+export PCBENCH_NEWDRC_OUT=$PWD/var/datasets/pcbench_work/newdrc
+export PCBENCH_SORTED_OUT=$CADAGENT_DATA_ROOT/pcbench/exacad_sorted
+PP=tools/datagen/pcbench_prep
+python $PP/convert_v9.py --limit 30 --workers 8    # trial: the first 30 boards; drop --limit for all 1 182
+python $PP/drc_fix_v9.py --workers 8
+python $PP/make_guide.py --base-dir $PCBENCH_NEWDRC_OUT --stem processed_v9 --suffix _guide_v3 --workers 8
+python $PP/sort_prefix.py
 ```
 
-Datasets are not bundled with this repo: export `CADAGENT_DATA_ROOT` pointing at
-your dataset root (layout: the `sub` paths in
-[configs/paths.yaml](configs/paths.yaml)); anything that needs a missing dataset
-fails with an error naming the variable. The scripts that turn a PCBench clone
-into the D3 benchmark set (DRC repair, guide generation, unrouted variants) ship
-with this release — the pipeline and its steps are documented in
-[tools/datagen/pcbench_prep/README.md](tools/datagen/pcbench_prep/README.md).
+Each step prints the `kicad-cli` / `pcbnew` it resolved (the engine build; `KICAD_CLI` /
+`PCBNEW_PYTHON` override). The full run — the same commands without `--limit`, with
+`--workers 16` — turns the 1 182 PCBench boards into the paper's **679** DRC-clean D3
+boards under `$CADAGENT_DATA_ROOT/pcbench/exacad_sorted/<NNNN>_<name>/` in about three
+minutes on 16 workers (same set and order; per-step results in that README), replacing
+the trial's entries; [configs/datasets/d3.json](configs/datasets/d3.json) already lists
+them. D3 is evaluation-only: the RL policies are trained on synthetic boards (§2, §4) and
+every D3 result in the paper is zero-shot — no real board is used for training. Datasets
+resolve through `CADAGENT_DATA_ROOT` (layout: the `sub` paths in
+[configs/paths.yaml](configs/paths.yaml)); anything that needs a missing dataset fails
+with an error naming the variable.
 
 ### 4. Train — reproduce the paper's main RL policy (synthetic 2-layer)
 
@@ -202,6 +225,41 @@ your copy, laid out with the `sub` paths listed in
 `pcbench/exacad_sorted`). Anything that needs a dataset without it fails with an
 error naming the variable; the corresponding tests skip when it is unset.
 
+### 6. Route a board with an LLM
+
+The same environment drives an LLM agent: one API call per step, with the board
+state, the legal actions and the reward fed back each turn — the seven actions of
+§1, no separate interface. The first command needs **no API key** and prints the
+exact prompt the agent receives, then executes one action and shows the resulting
+state:
+
+```bash
+python methods/llm_agent/rollout/cadagent.py --mode fixed \
+  --board_path tests/fixtures/simple_routing_board.kicad_pcb --env_num 1
+
+# Route the board end to end with a hosted model — needs a key in the environment
+# (any of these; free tiers work):
+if   [ -n "${GEMINI_API_KEY:-}${GOOGLE_API_KEY:-}" ]; then LLM_PROVIDER=google
+elif [ -n "${TOGETHER_API_KEY:-}" ];                  then LLM_PROVIDER=together
+elif [ -n "${ANTHROPIC_API_KEY:-}" ];                 then LLM_PROVIDER=anthropic
+elif [ -n "${OPENAI_API_KEY:-}" ];                    then LLM_PROVIDER=openai
+fi
+if [ -n "${LLM_PROVIDER:-}" ]; then
+  python methods/llm_agent/rollout/cadagent.py --mode api --api_provider "$LLM_PROVIDER" \
+    --board_path tests/fixtures/simple_routing_board.kicad_pcb \
+    --env_num 1 --max_steps 40 --rollout_episodes 1 --silent
+else
+  echo "no LLM API key in the environment — skipping the API rollout"
+fi
+```
+
+Each provider uses its own default model unless `--api_model` names one. Because
+the OpenAI provider is the SDK's own client, `OPENAI_BASE_URL` points it at **any
+OpenAI-compatible endpoint** — a hosted free tier, a gateway, or a local vLLM
+server — without changing the command. `--prompt_version` selects the prompt
+bundle, `--verbose` prints every prompt and response, and `--dump_dir` saves the
+per-step transcript. A local vLLM rollout is `--mode llm --model_path <hf-id>`.
+
 ## Licensing — two programs, two repositories
 
 **PCBWorld is two separate programs, distributed separately.**
@@ -223,6 +281,33 @@ repository's Python dependencies: [Notice.md](Notice.md).
 > actively considering a move to a permissive license (e.g. BSD-3-Clause) in a
 > future release. The engine repository stays GPLv3 either way — it is derived
 > from KiCad.
+
+## Versioning
+
+Per-release notes: [CHANGELOG.md](CHANGELOG.md) (this repository) and
+`engine/CHANGELOG.md` (the engine).
+
+The two repositories are versioned independently, each as `MAJOR.MINOR.PATCH`, and a
+number moves only when that repository's own content changes:
+
+- **MAJOR** — results are no longer comparable with the previous release (a change to
+  the observation, the reward, DRC scoring or the benchmark splits), or a breaking
+  interface change.
+- **MINOR** — new functionality. For the engine, also any change to the C++ sources,
+  the CMake files or the pinned KiCad revision (rebuild required), and a change of the
+  wire `PROTOCOL_VERSION` — that one bumps both repositories.
+- **PATCH** — everything else: fixes, documentation, and an environment release whose
+  only change is a moved engine pin.
+
+**An environment tag pins exactly one engine commit** — the `engine` submodule gitlink
+of that tag — and that pair is the only supported combination: check out `vX.Y.Z` of
+this repository, run `git submodule update --init`, and you have the engine the
+release was tested with. An engine tag on its own is not a supported combination
+until an environment release pins it. `engine/kicad-patches/ENGINE_VERSION` (copied
+next to the built module, and compared with it by the test suite) is a build
+identifier, not a release number; at run time the environment and the engine agree
+on the wire protocol through the `PROTOCOL_VERSION` handshake, never by matching
+version numbers.
 
 ## Architecture
 

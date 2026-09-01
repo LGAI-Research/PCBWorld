@@ -1,23 +1,23 @@
-"""PNS router honors netclass clearance without a .kicad_pro.
+"""Regression test: PNS router honors netclass clearance without a .kicad_pro.
 
-Clearance source
-----------------
-A stock PNS router reads its routing clearance from ``bds.m_MinClearance``
-(a board-level design rule normally loaded from the project file .kicad_pro).
-When only a .kicad_pcb exists that field is 0, so the router shoves/walks
-around obstacles with zero clearance — producing DRC violations
-(clearance/short) right next to pads even though the net class specifies a
-non-zero clearance.
+Background
+----------
+KiCad's PNS router historically read its routing clearance from
+``bds.m_MinClearance`` (a board-level design rule normally loaded from the
+project file .kicad_pro). When only a .kicad_pcb exists, that field defaults
+to 0, causing the router to shove/walkaround obstacles with zero clearance —
+producing DRC violations (clearance/short) right next to pads even though the
+net class specifies a non-zero clearance.
 
-``engine/kicad-patches/rl/pns_rl_router.cpp`` therefore:
+The patch in ``engine/kicad-patches/rl/pns_rl_router.cpp`` fixes this by:
 
-  1. Promotes the default net class's clearance into the router's Sizes().
-  2. Creates and attaches a ``DRC_ENGINE`` to
+  1. Promoting the default net class's clearance into the router's Sizes().
+  2. Creating and attaching a ``DRC_ENGINE`` to
      ``BOARD_DESIGN_SETTINGS::m_DRCEngine`` at router init, so the PNS rule
      resolver's ``QueryConstraint`` path returns non-zero clearance instead
      of falling through to the null-engine branch.
 
-These tests pin that behaviour: a classic X-crossing between two nets must
+This test pins that behaviour: a classic X-crossing between two nets must
 route cleanly (no clearance/short violations) under SHOVE and WALKAROUND
 modes when only the .kicad_pcb declares the netclass clearance.
 
@@ -27,7 +27,7 @@ Board: 100x100 mm, 2 nets, 4 pads at corners.
   Net 1 pads: (5, 5) and (95, 95)   — diagonal SW↔NE
   Net 2 pads: (5, 95) and (95, 5)   — diagonal NW↔SE
 If both routed straight they cross at the center. The router must detour one
-of them, and the detour must respect the 0.05 mm netclass clearance.
+of them. With the patch, the detour respects the 0.05 mm netclass clearance.
 """
 from __future__ import annotations
 
@@ -134,7 +134,7 @@ def _xcross_board(tmp_path: Path,
                                 trace_width=trace_width))
     # The rendered board declares its rules via an in-pcb net_class block —
     # the engine load contract wants them in a companion .kicad_pro, so
-    # round-trip once to materialize the pair.
+    # round-trip once (what the retired upgrade cache used to do).
     return materialize_pro_pair(bp)
 
 
@@ -206,10 +206,10 @@ def test_pns_and_drc_agree_on_clearance(tmp_path: Path, mode_id: int,
       (2) Every placed track's width equals the declared netclass trace_width
           — PNS used the same width DRC will evaluate.
 
-    This catches drift between the router's internal clearance (from
-    m_MinClearance / DRC_ENGINE) and the DRC checker's clearance (always from
-    netclass/design rules). A mismatch manifests as phantom "Clearance
-    violation" errors along walkaround detours.
+    The goal is to catch any future drift between the router's internal
+    clearance (from m_MinClearance / DRC_ENGINE) and the DRC checker's
+    clearance (always from netclass/design rules). A mismatch manifests as
+    phantom "Clearance violation" errors along walkaround detours.
     """
     board_path = _xcross_board(
         tmp_path, clearance=clearance, trace_width=trace_width,
@@ -246,9 +246,10 @@ def test_xcross_routes_drc_clean(tmp_path: Path, mode_id: int,
                                  mode_name: str) -> None:
     """SHOVE/WALKAROUND must route the X-crossing without clearance/short errors.
 
-    A router falling back to a zero board-level clearance hugs the pad edges
-    on its walkaround/shove path and yields ~3 clearance/short violations, so
-    a clean DRC here pins that the netclass clearance reaches the router.
+    Fails on the pre-patch router (which used bds.m_MinClearance = 0) — the
+    walkaround/shove path would hug pad edges producing ~3 clearance/short
+    violations. Passes after the netclass-clearance + DRC-engine-attach patch
+    in ``engine/kicad-patches/rl/pns_rl_router.cpp``.
     """
     board_path = _xcross_board(tmp_path)
     result = _route_xcross(board_path, mode_id)

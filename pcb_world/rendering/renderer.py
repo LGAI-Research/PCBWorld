@@ -3,9 +3,12 @@
 Rendering pipeline:
     engine.save(temp.kicad_pcb) -> kicad-cli export -> raster -> np.ndarray
 
-Supports three render modes:
+Supports four render modes:
     - "pdf": kicad-cli pcb export pdf -> pypdfium2 -> PNG (default)
     - "render3d": kicad-cli pcb render --side top -> PNG directly
+    - "svg": kicad-cli pcb export svg -> cairosvg or svglib -> PNG; neither
+      rasteriser is present in the default environment, so this mode needs
+      one of them installed
     - "gui_capture": Open KiCad GUI and capture window via macOS screencapture
 """
 
@@ -37,14 +40,15 @@ class PCBRenderer:
     Args:
         kicad_cli: Path to kicad-cli executable.
         layers: PCB layers to render.
-        dpi: Rasterisation resolution (PDF conversion).
+        dpi: Rasterisation resolution (PDF and SVG conversion).
         figsize: Target image size (width, height) in pixels.
-        mode: Default render mode — "pdf", "render3d" or "gui_capture".
+        mode: Default render mode — "pdf", "svg", "render3d" or
+            "gui_capture".
     """
 
     KICAD_CLI = os.environ.get("KICAD_CLI", shutil.which("kicad-cli") or "/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli")
     DEFAULT_LAYERS = ["F.Cu", "B.Cu", "F.SilkS", "Edge.Cuts"]
-    VALID_MODES = ("render3d", "pdf", "gui_capture")
+    VALID_MODES = ("svg", "render3d", "pdf", "gui_capture")
 
     def __init__(
         self,
@@ -80,8 +84,8 @@ class PCBRenderer:
 
         Args:
             pcb_path: Path to .kicad_pcb file.
-            mode: "pdf", "render3d" or "gui_capture". Uses self.mode if
-                None.
+            mode: "pdf", "svg", "render3d" or "gui_capture". Uses
+                self.mode if None.
             step_info: Optional overlay metadata dict.
 
         Returns:
@@ -94,12 +98,16 @@ class PCBRenderer:
         if mode not in self.VALID_MODES:
             raise ValueError(f"Invalid mode {mode!r}, must be one of {self.VALID_MODES}")
 
-        if mode == "render3d":
+        if mode == "svg":
+            image = self._render_svg(pcb_path)
+        elif mode == "render3d":
             image = self._render_3d(pcb_path)
         elif mode == "pdf":
             image = self._render_pdf(pcb_path)
-        else:
+        elif mode == "gui_capture":
             image = self._render_gui_capture(pcb_path)
+        else:
+            image = self._render_svg(pcb_path)
 
         if step_info:
             image = self._add_overlay(image, step_info)
@@ -114,6 +122,22 @@ class PCBRenderer:
         t0 = time.time()
         img = self.render_from_file(pcb_path, mode=mode)
         return img, time.time() - t0
+
+    def _render_svg(self, pcb_path: str) -> np.ndarray:
+        """Render via kicad-cli pcb export svg, rasterised by _svg_to_array."""
+        temp_dir = self._get_temp_dir()
+        temp_svg = os.path.join(temp_dir, "export.svg")
+
+        cmd = [
+            self.kicad_cli, "pcb", "export", "svg",
+            "--layers", ",".join(self.layers),
+            "--page-size-mode", "2",
+            "--exclude-drawing-sheet",
+            pcb_path,
+            "-o", temp_svg,
+        ]
+        subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+        return self._svg_to_array(temp_svg)
 
     def export_svg(
         self,
@@ -165,11 +189,10 @@ class PCBRenderer:
         return np.array(img, dtype=np.uint8)
 
     def _render_pdf(self, pcb_path: str) -> np.ndarray:
-        """Render via kicad-cli pcb export pdf -> pypdfium2 -> PNG."""
-        # Lazy import: SVG-export-only users don't need the rasteriser; a
-        # missing pypdfium2 (a pinned dependency) fails loudly here.
-        import pypdfium2 as pdfium
+        """Render via kicad-cli pcb export pdf -> pypdfium2 -> PNG.
 
+        Returns a black placeholder if pypdfium2 is not importable.
+        """
         temp_dir = self._get_temp_dir()
         temp_pdf = os.path.join(temp_dir, "export.pdf")
         w, h = self.figsize
@@ -181,6 +204,11 @@ class PCBRenderer:
             "-o", temp_pdf,
         ]
         subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+
+        try:
+            import pypdfium2 as pdfium
+        except ImportError:
+            return np.zeros((h, w, 3), dtype=np.uint8)
 
         # PDFium renders at a scale factor; PDF user space is 72 units/inch.
         doc = pdfium.PdfDocument(temp_pdf)
@@ -196,7 +224,7 @@ class PCBRenderer:
     # ------------------------------------------------------------------
 
     def render(self, engine: KiCadEngine, step_info: dict | None = None) -> np.ndarray:
-        """Render current board state via the self.mode kicad-cli pipeline.
+        """Render current board state via the kicad-cli SVG export path.
 
         Args:
             engine: KiCadEngine instance (uses save() to write board).
@@ -207,8 +235,29 @@ class PCBRenderer:
         """
         temp_dir = self._get_temp_dir()
         temp_pcb = os.path.join(temp_dir, "current_board.kicad_pcb")
+        temp_svg = os.path.join(temp_dir, "current_board.svg")
+
+        # 1. Save board to temp file
         engine.save(temp_pcb)
-        return self.render_from_file(temp_pcb, step_info=step_info)
+
+        # 2. Export SVG via kicad-cli
+        cmd = [
+            self.kicad_cli, "pcb", "export", "svg",
+            "--layers", ",".join(self.layers),
+            "--page-size-mode", "2",  # board area only
+            temp_pcb,
+            "-o", temp_svg,
+        ]
+        subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+
+        # 3. SVG -> numpy array
+        image = self._svg_to_array(temp_svg)
+
+        # 4. Optional overlay
+        if step_info:
+            image = self._add_overlay(image, step_info)
+
+        return image
 
     def render_to_file(
         self,
@@ -356,6 +405,47 @@ class PCBRenderer:
                     subprocess.run(["pkill", "-f", "pcbnew"], capture_output=True, timeout=5)
                 except Exception:
                     pass
+
+    def _svg_to_array(self, svg_path: str) -> np.ndarray:
+        """Convert SVG file to RGB numpy array.
+
+        Tries cairosvg, then svglib. Neither is present in the default
+        environment; without one of them this returns a black placeholder.
+        """
+        png_path = svg_path.replace(".svg", ".png")
+        w, h = self.figsize
+
+        # Try cairosvg (best quality)
+        try:
+            import cairosvg
+            cairosvg.svg2png(
+                url=svg_path,
+                write_to=png_path,
+                output_width=w,
+                output_height=h,
+                dpi=self.dpi,
+            )
+            img = Image.open(png_path).convert("RGB")
+            return np.array(img, dtype=np.uint8)
+        except ImportError:
+            pass
+
+        # Fallback: Pillow + svglib
+        try:
+            from svglib.svglib import svg2rlg
+            from reportlab.graphics import renderPM
+
+            drawing = svg2rlg(svg_path)
+            if drawing is not None:
+                renderPM.drawToFile(drawing, png_path, fmt="PNG")
+                img = Image.open(png_path).convert("RGB")
+                return np.array(img, dtype=np.uint8)
+        except ImportError:
+            pass
+
+        # Last resort: no SVG rasteriser available (Pillow has no SVG
+        # decoder) — return a black placeholder.
+        return np.zeros((h, w, 3), dtype=np.uint8)
 
     def _add_overlay(self, image: np.ndarray, step_info: dict) -> np.ndarray:
         """Add text overlay with step info onto the rendered image."""

@@ -2,8 +2,9 @@
 
 Drives the exact functions ``train_iteration`` calls (``select_boards`` ->
 ``collect_rollout`` -> ``compute_targets`` -> ``policy_update_loop``) so the numbers
-reflect production, under a canonical representative config. One config per
-process (KiCad singleton; the main proc never imports the router). Base layer is
+reflect production, under a canonical representative config (ported from the
+validated profiling spike). One config per process
+(KiCad singleton; the main proc never imports the router). Base layer is
 import-only — instrumentation is main-proc monkeypatch (:mod:`.hooks`) + the
 forkserver-preload :mod:`.worker_shim`.
 
@@ -23,7 +24,7 @@ PC = time.perf_counter
 
 @dataclass
 class ProfileConfig:
-    dataset: str = "d2a"                 # d2a (synth 2L) | d3b (real, medium)
+    dataset: str = "d2a"                 # d2a (small) | d2b (large, L40-only)
     n_envs: int = 64
     n_steps: int = 512
     max_steps: int = 256
@@ -43,6 +44,7 @@ class ProfileConfig:
     bf16: bool = False
     compile_regions: str = ""          # comma list of {stack,decode,heads}
     compile_mode: str = "default"      # default | reduce-overhead | max-autotune
+    attn: str = "sdpa"                 # state-pass attention kernel: sdpa | flex
     # model dims (must match the run; defaults = harness config)
     d_model: int = 128
     n_heads: int = 8
@@ -75,7 +77,7 @@ class ProfileConfig:
 
 
 # ---------------------------------------------------------------------------
-# Real trainer build
+# Real trainer build (ported from 260709_vecenv_profile.build_trainer)
 # ---------------------------------------------------------------------------
 def build_trainer(cfg: ProfileConfig, scratch: str):
     from methods.rl_agent.training.train_ppo import build_arg_parser
@@ -83,13 +85,22 @@ def build_trainer(cfg: ProfileConfig, scratch: str):
 
     # d3.json only has train/test (no val) → branch on eval-split.
     # d3b uses only medium/TEST (10 boards, verified by the eval path) — medium/
-    # train mixes in boards the env can't parse (no Edge.Cuts).
+    # train (287) mixes in boards the env can't parse (no Edge.Cuts).
     if cfg.dataset == "d2a":
         boards_json, difficulty, boards_split, eval_split = (
             "configs/datasets/d2a.json", "easy", "train", "val")
+    elif cfg.dataset == "d2b":
+        boards_json, difficulty, boards_split, eval_split = (
+            "configs/datasets/local/d2b.json", "easy", "train", "val")
     elif cfg.dataset == "d3b":
         boards_json, difficulty, boards_split, eval_split = (
             "configs/datasets/d3.json", "medium", "test", "test")
+    elif cfg.dataset == "d2bv_geo_ar":
+        boards_json, difficulty, boards_split, eval_split = (
+            "configs/datasets/local/d2bv_geo_ar.json", "easy", "train", "val")
+    elif cfg.dataset == "d3b_autoreg_v2":
+        boards_json, difficulty, boards_split, eval_split = (
+            "configs/datasets/local/d3b_autoreg_v2.json", "easy", "train", "val")
     else:
         raise SystemExit(f"bad dataset {cfg.dataset}")
 
@@ -122,8 +133,9 @@ def build_trainer(cfg: ProfileConfig, scratch: str):
         "--time-feature", "sin_remaining", "--time-feature-cap", "10000",
     ]
     # 3-val wiring: primary val drives best-ckpt; eval2/eval3 diagnostic sets
-    # have no repo default — pass explicit board-list args to enable them.
-    # The trainer's own _setup_evaluator builds trainer.extra_evaluators from these.
+    # have no repo default — pass explicit board-list args to enable them (the
+    # d2b recipe's lists live in the private tree). The trainer's own
+    # _setup_evaluator builds trainer.extra_evaluators from these.
     if cfg.enable_eval:
         ev2 = cfg.eval2_boards
         ev3 = cfg.eval3_boards
@@ -132,7 +144,7 @@ def build_trainer(cfg: ProfileConfig, scratch: str):
         if ev3:
             argv += ["--eval3-boards", ev3, "--eval3-prefix", "val_d3a"]
     args = build_arg_parser().parse_args(argv)
-    # obs_format is not exposed on the public CLI (cli_skip) — diagnostic
+    # obs_format was removed from the public CLI (cli_skip) — diagnostic A/B
     # values are injected here instead.
     args.obs_format = cfg.obs_format
     return PPOTrainer(args), args
@@ -199,7 +211,7 @@ def run(cfg: ProfileConfig) -> dict:
                 "batch_size": cfg.batch_size, "n_epochs": cfg.n_epochs,
                 "obs_format": cfg.obs_format,
                 "bf16": cfg.bf16, "compile_regions": cfg.compile_regions,
-                "compile_mode": cfg.compile_mode,
+                "compile_mode": cfg.compile_mode, "attn": cfg.attn,
                 "warmup_iters": cfg.warmup_iters, "measured_iters": cfg.measured_iters},
         "fingerprint": {"main": capture_fingerprint()},
     }
@@ -209,14 +221,14 @@ def run(cfg: ProfileConfig) -> dict:
     trainer.setup()
     # Speed-knob A/B (bf16 autocast / torch.compile regions) — policy is
     # created inside setup(), so this wiring happens right after.
-    if cfg.bf16 or cfg.compile_regions:
+    if cfg.bf16 or cfg.compile_regions or cfg.attn != "sdpa":
         regions = tuple(r for r in cfg.compile_regions.split(",") if r)
         trainer.policy.configure_speed(
             bf16=cfg.bf16, compile_regions=regions,
-            compile_mode=cfg.compile_mode,
+            compile_mode=cfg.compile_mode, attn=cfg.attn,
         )
         print(f"[speed-knobs] bf16={cfg.bf16} compile_regions={regions} "
-              f"mode={cfg.compile_mode}", flush=True)
+              f"mode={cfg.compile_mode} attn={cfg.attn}", flush=True)
     result["run"]["spawn_setup_s"] = round(PC() - t, 2)
     print(f"[prof] {cfg.dataset} e{cfg.n_envs} spawn+setup {result['run']['spawn_setup_s']}s", flush=True)
 

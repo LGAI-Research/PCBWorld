@@ -6,9 +6,10 @@ Every board-dependent reward term (the "board-resolution hooks":
 ``wirelength_bbox_normalize``, ``net_bonus_size_log_scale``) has exactly one
 definition — ``PotentialReward.bind_board`` — and both ``PCBWorld`` (training)
 and ``eval.metrics.compute_metrics`` / ``evaluate_one`` (offline scoring, eval
-Stage 2) call it. A scorer that resolves the hooks on its own instead — even one
-of them — makes the two paths price the same board differently, which is exactly
-what this guard rules out.
+Stage 2) call it. Witness for the drift this guards: under the
+bbox-normalized wirelength rule a routed board scored ``final_potential`` −302
+offline vs +28 in the env, because the scorer hand-copied only one of the four
+hooks.
 
 Pinned for every reward yaml in the repo (``configs/reward/*.yaml``), the
 hook-heavy d2b-lineage rules (``tests/fixtures/reward_rules/reward*.yaml``) and a W6-style

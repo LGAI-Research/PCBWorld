@@ -1,14 +1,21 @@
 # --------------------- CadAgent V4 (KiCad PCB Routing) --------------------- #
 #
-# V4 is the "core-only" prompt: it keeps V1's structure with redundant bullets
-# folded together, so the prompt is tight. No Action Reference, no Masking
-# Rules, no multi-step few-shots — just the role, priority, a handful of
-# guidelines, and the layer-change detour pattern. The inline 6-step example
-# teaches the make_via → start_route → make_line transition the env expects.
+# V4 philosophy: return to V1's "core-only" style that outperformed the verbose
+# V2/V3 variants. Empirically (see experiments/eval-20260420-*) V1 finished a
+# 3-net board in 13 steps with +3.67 reward, while V2/V3 stalled at 20 steps
+# with negative reward — the long Action Reference / Masking Rules / few-shots
+# in V2/V3 drowned out the signal and their few-shot even modeled an incorrect
+# make_via → make_line transition (the real env seems to want make_via →
+# start_route → make_line, which V1's inline 6-step example teaches correctly).
+#
+# V4 keeps V1's structure but folds redundant bullets together, so the prompt
+# is even tighter. No Action Reference, no Masking Rules, no multi-step
+# few-shots — just the role, priority, a handful of guidelines, and the
+# layer-change detour pattern.
 #
 # Interface-compatible with V1/V2/V3 (drop-in via CADAGENT_PROMPT_VERSION=v4
 # in cadagent.py). Exported names match V1. CADAGENT_USER_PROMPT uses the
-# {current_step} + {valid_step_count} history format expected by
+# wschoi-branch history format {current_step} + {valid_step_count} to match
 # rollout/cadagent.py and env_manager.py callers.
 # -----------------------------------------------------------------------------
 
@@ -177,7 +184,7 @@ CADAGENT_USER_PROMPT_NO_HIS = """\
 Choose exactly one from:
 {valid_actions}"""
 
-# NOTE: cadagent's history format uses {current_step} + {valid_step_count}
+# NOTE: wschoi-branch history format uses {current_step} + {valid_step_count}
 # (matches .format() kwargs in rollout/cadagent.py and env_manager.py).
 CADAGENT_USER_PROMPT = """\
 ## Step {current_step}

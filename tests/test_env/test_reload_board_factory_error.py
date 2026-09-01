@@ -1,10 +1,10 @@
 """reload_board: a board_factory failure must surface the ORIGINAL exception.
 
-The worker's except-handler must not itself fail — e.g. by referencing ``env``
-after ``del env``. If it does, a factory exception turns into an
-UnboundLocalError inside the handler, the worker dies uncaught, and the parent
-sees only EOF / a silent respawn, leaving the real cause recoverable only from
-var/crashlogs stderr files.
+Regression for the 260825 NC crash: the worker's except-handler referenced
+``env`` after ``del env``, so a factory exception (ncobs loud-fail on a real
+board with clearance 0.0) turned into an UnboundLocalError inside the handler,
+the worker died uncaught, and the parent saw only EOF / a silent respawn — the
+real cause was only recoverable from var/crashlogs stderr files.
 
 Own file: spawns a subprocess pool (multi-second) — pytest-xdist loadfile.
 """

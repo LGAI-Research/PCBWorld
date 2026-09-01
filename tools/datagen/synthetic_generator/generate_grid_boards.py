@@ -67,7 +67,7 @@ def run_generator(n: int, seed: int, out_dir: Path, params: dict[str, float],
         sys.executable, str(GEN_SCRIPT),
         "--n", str(n),
         "--seed", str(seed),
-        "--seed-mode", "legacy",  # grid_scan datasets use the legacy seed formula
+        "--seed-mode", "legacy",  # grid_scan datasets were made with the legacy formula
         "--mode", "grid",
         "--num-layers", str(num_layers),
         "--board-size", _fmt(BOARD_SIZE_MM),

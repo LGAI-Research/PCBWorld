@@ -199,7 +199,8 @@ class TestRatsnestPadGroupInvariant:
     vias only, no dangling copper) the totals match exactly. The targets are
     three real d3b boards with same-coordinate pad stacks (zero-length
     ratsnest); skipped when the corpus is not available (the real-PCB corpus
-    lives at ``$CADAGENT_DATA_ROOT/pcbench/exacad_sorted``, not in the repo).
+    is the ``pcbench_exacad`` dataset of configs/paths.yaml under the data
+    root, which ``CADAGENT_DATA_ROOT`` overrides).
     """
 
     BOARDS = [
@@ -210,12 +211,19 @@ class TestRatsnestPadGroupInvariant:
 
     @staticmethod
     def _corpus() -> Path:
-        import os
+        from configs.loader.paths import resolve_dataset
 
-        root = os.environ.get("CADAGENT_DATA_ROOT")
-        if not root:
-            pytest.skip("CADAGENT_DATA_ROOT unset — real-PCB corpus unavailable")
-        return Path(root) / "pcbench" / "exacad_sorted"
+        try:
+            corpus = resolve_dataset("pcbench_exacad")
+        except RuntimeError as e:  # empty data root (release configuration)
+            pytest.skip(str(e))
+        if not corpus.is_dir():
+            pytest.skip(
+                f"d3b corpus not available: {corpus} — point "
+                "CADAGENT_DATA_ROOT at a dataset root holding the "
+                "pcbench_exacad layout (configs/paths.yaml)."
+            )
+        return corpus
 
     @pytest.mark.parametrize("board", BOARDS)
     def test_unrouted_counts_agree(self, board: str) -> None:

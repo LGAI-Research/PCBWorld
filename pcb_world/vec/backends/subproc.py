@@ -35,9 +35,9 @@ class CloudpickleWrapper:
 
     Env factories often close over lambdas / local functions that the stdlib
     ``pickle`` (used by ``multiprocessing``) cannot handle; cloudpickle can.
-    Inlined here (mirrors Stable-Baselines3's helper) so this backend needs
-    no SB3 import — importing SB3 transitively pulls in OpenCV, a heavy
-    dependency this backend has no use for.
+    Inlined here (mirrors SB3's helper) so this backend carries no
+    ``stable_baselines3`` import — importing sb3 transitively pulls in ``cv2``
+    (bundled ``libSDL2``), a heavy dependency this backend has no use for.
     """
 
     def __init__(self, var: Any) -> None:

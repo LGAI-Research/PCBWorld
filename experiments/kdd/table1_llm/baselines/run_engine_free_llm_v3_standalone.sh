@@ -45,13 +45,17 @@ export PYTHONPATH="${REPO_ROOT}/build_rl/pcbnew/python/rl:${REPO_ROOT}:${PYTHONP
 export LD_LIBRARY_PATH="${REPO_ROOT}/build_rl/lib:${LD_LIBRARY_PATH:-}"
 
 # ── Eval set roots (mirror v1) ─────────────────────────────────────
-SYNTH_2L_TEST_DIR="${SYNTH_2L_TEST_DIR:-${CADAGENT_DATA_ROOT:?set CADAGENT_DATA_ROOT to your dataset root}/synthetic/synth_2L_v2/test}"
-SYNTH_2L_VAL_DIR="${SYNTH_2L_VAL_DIR:-${CADAGENT_DATA_ROOT:?set CADAGENT_DATA_ROOT to your dataset root}/synthetic/synth_2L_v2/val}"
-REAL_BOARD_DIR="${REAL_BOARD_DIR:-${CADAGENT_DATA_ROOT:?set CADAGENT_DATA_ROOT to your dataset root}/pcbench/exacad_sorted}"
+# Defaults resolve through configs/paths.yaml (CADAGENT_DATA_ROOT overrides the
+# root); each $(...) runs only when the env var is unset, and fails loudly on
+# an empty data root.
+_ds() { python -m configs.loader.paths resolve "$1"; }
+SYNTH_2L_TEST_DIR="${SYNTH_2L_TEST_DIR:-$(_ds synth_2L_v2)/test}"
+SYNTH_2L_VAL_DIR="${SYNTH_2L_VAL_DIR:-$(_ds synth_2L_v2)/val}"
+REAL_BOARD_DIR="${REAL_BOARD_DIR:-$(_ds pcbench_exacad)}"
 REAL_BOARD_NAME_FILTER="${REAL_BOARD_NAME_FILTER:-processed_v9_guide_v3.kicad_pcb}"
 
 # ── Few-shot example pools ────────────────────────────────────────
-REAL_FEWSHOT_POOL="${REAL_FEWSHOT_POOL:-${CADAGENT_DATA_ROOT:?set CADAGENT_DATA_ROOT to your dataset root}/pcbench/exacad_sorted}"
+REAL_FEWSHOT_POOL="${REAL_FEWSHOT_POOL:-$(_ds pcbench_exacad)}"
 REAL_FEWSHOT_NAME_FILTER="${REAL_FEWSHOT_NAME_FILTER:-processed_v9_guide_v3.kicad_pcb}"
 SYNTH_FEWSHOT_CACHE="${SYNTH_FEWSHOT_CACHE:-${REPO_ROOT}/cache/synth_2L_fewshot}"
 SYNTH_FEWSHOT_PREP_LIMIT="${SYNTH_FEWSHOT_PREP_LIMIT:-8}"
@@ -59,7 +63,7 @@ SYNTH_FEWSHOT_PREP_LIMIT="${SYNTH_FEWSHOT_PREP_LIMIT:-8}"
 # ── Sample sizes ──────────────────────────────────────────────────
 N_SAMPLES="${N_SAMPLES:-5}"
 N_FEWSHOT="${N_FEWSHOT:-2}"
-LIMIT_REAL="${LIMIT_REAL:-0}"       # 0 = all 100 real boards (0001~0100 in pcbench/exacad_sorted)
+LIMIT_REAL="${LIMIT_REAL:-0}"       # 0 = all 100 real boards (0001~0100 in the pcbench_exacad dataset)
 LIMIT_SYNTH="${LIMIT_SYNTH:-128}"   # full synth_2L_v2/test set
 
 # ── Model / sampling ──────────────────────────────────────────────

@@ -1,13 +1,13 @@
 """Frozen per-observation reference StateTokenizer (test fixture).
 
-Retired from production (the decoder-v1 per-obs tokenizer) and kept
-ONLY as the reference implementation that
+Retired from production (the decoder-v1 per-obs tokenizer) and kept ONLY as
+the reference implementation that
 parity tests compare the live
 ``methods.rl_agent.models.v1.tokenizer.BatchedStateTokenizer`` against
 (``tests/test_state_tokenizer_batched.py`` and friends). Do not use outside
 tests; do not "improve" — bit-equivalence with history is the point.
 
-Single-token-per-entity design:
+Single-token-per-entity layout:
 
   * Each pad / track / via / ratsnest / cand / head / net / edge / board
     becomes ONE token.

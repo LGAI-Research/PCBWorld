@@ -7,14 +7,14 @@ Compares N ``config_resolved.yaml`` dumps (written by
 case are folded to a count; keys whose values differ are printed as a
 key x case matrix. ``--expect`` declares the keys *intended* to differ (the
 experiment axes) — a difference in any OTHER key aborts with exit 1 so the
-human stops the batch launch before an undeclared flag (bundled into only some
-of the cases) confounds an axis. Meta keys
+human stops the batch launch (e.g. the 260704 batch where --time-feature was
+bundled into only one gamma case, confounding the axis). Meta keys
 (``_version`` / ``_git_rev`` / ``_created``) are excluded from the diff.
 
 Usage (dump one config per case first, then diff)::
 
-    for c in caseA caseB caseC; do
-      bash .../train_one.sh --case $c ... --dump-config-only    # concept example
+    for c in $(bash -c 'source sandbox/d2b_midboard/260706_cases.sh; d2b_all_cases'); do
+      DRY_RUN=0 bash .../train_one.sh --case $c ... --dump-config-only  # concept example
     done
     python tools/experiments/preflight_diff.py 'var/.../*/config_resolved.yaml' \
         --expect gamma,masking_rule,no_truncation_bootstrap

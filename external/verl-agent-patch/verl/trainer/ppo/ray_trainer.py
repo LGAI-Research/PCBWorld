@@ -773,7 +773,8 @@ class RayPPOTrainer:
         """Append per-group top-K rollout table entries from one val batch.
 
         Shared by :meth:`_validate` and the cadagent central trainer's
-        validation rollout (``methods/llm_agent/training/trainer.LLMTrainer``), so the
+        validation rollout (``methods/llm_agent/training/trainer.LLMTrainer``),
+        so the
         ``val/generations`` wandb table survives either loop owner.
         """
         ntb = test_batch.non_tensor_batch
@@ -1266,7 +1267,8 @@ class RayPPOTrainer:
         """Run ONE training step (gen -> agent-env rollout -> adv -> update).
 
         Extracted from fit() so an external loop owner (the cadagent central
-        trainer, ``methods/llm_agent/training/trainer.LLMTrainer``) can drive iterations,
+        trainer, ``methods/llm_agent/training/trainer.LLMTrainer``) can drive
+        iterations,
         validation cadence, checkpointing, and logging itself and delegate
         only this step to verl. No validation / checkpointing / logger calls
         happen here; ``self.global_steps`` is managed by the caller.
@@ -1497,7 +1499,7 @@ class RayPPOTrainer:
                 "training/epoch": epoch,
             }
         )
-        # env metrics are logged via compute_data_metrics with unique_idx
+        # env metrics are now logged via compute_data_metrics with unique_idx
         # collect metrics
         metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
         metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))

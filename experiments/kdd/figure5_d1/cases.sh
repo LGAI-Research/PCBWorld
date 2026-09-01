@@ -1,46 +1,7 @@
 #!/usr/bin/env bash
-# Canonical public settings for Figure 5 D1 grid-scalability runs, plus the
-# missing-prerequisite preflight every D1 entrypoint runs before doing work.
+# Canonical public settings for Figure 5 D1 grid-scalability runs.
 
 set -euo pipefail
-
-# --- Missing-prerequisite preflight -----------------------------------------
-# The D1 corpus is not distributed with this repository and no shipped generator
-# produces it, so each entrypoint records the inputs it cannot find and reports
-# them all at once instead of failing deep inside a trainer.
-
-D1_MISSING=()
-
-# Records "<label>: <path>" when <path> does not exist.
-d1_need() {
-  local label="$1" path="$2"
-  [[ -e "$path" ]] || D1_MISSING+=("${label}: ${path}")
-}
-
-# Records "<label>: <path>" unconditionally — for an input already known to be
-# absent, e.g. a glob that matched nothing.
-d1_absent() {
-  D1_MISSING+=("${1}: ${2}")
-}
-
-# Prints every recorded absence as one notice and exits 2. No-op when nothing
-# was recorded.
-d1_preflight() {
-  (( ${#D1_MISSING[@]} )) || return 0
-  {
-    echo "figure5_d1: a required D1 input is absent — nothing was run."
-    printf '  missing  %s\n' "${D1_MISSING[@]}"
-    echo
-    echo "D1 (paper Figure 5) is the synthetic 1-layer grid sweep. Its corpus is"
-    echo "NOT distributed with this repository and no generator here reproduces"
-    echo "it, so Figure 5 cannot be reproduced from a fresh clone. To run this"
-    echo "script, supply the paths above yourself (DATASET_ROOT=... or the"
-    echo "matching command-line flag)."
-    echo "Details: experiments/kdd/figure5_d1/README.md"
-    echo "Dataset conventions: configs/datasets/README.md (row d1)"
-  } >&2
-  exit 2
-}
 
 paper_repro_t1_step_penalty_for_grid() {
   case "$1" in

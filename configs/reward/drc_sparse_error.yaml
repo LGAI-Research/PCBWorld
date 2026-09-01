@@ -1,6 +1,7 @@
-# Sparse (final-only) DRC potential, error-only severity gate.
-# Only error-severity DRCs are counted. Potential is credited once at episode
-# end (Φ(s_final) - Φ(s_0) as a single terminal reward).
+# Sparse (final-only) twin of drc_dense_error.
+# Same potential options as drc_dense_error; only error-severity DRCs are
+# counted. Potential is credited once at episode end
+# (Φ(s_final) - Φ(s_0) as a single terminal reward).
 
 name: drc_sparse_error
 mode: terminal

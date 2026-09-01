@@ -11,7 +11,7 @@ by tests/test_engine_api/test_connected_points.py.
 
 Covered here:
 
-* off / not-routing / empty cluster → every candidate kept;
+* off / not-routing / empty cluster = legacy (every candidate kept);
 * a candidate whose (x, y, layer) is in the cluster is dropped, whatever its
   type (pad / via / track endpoint) — no type re-entry;
 * the match is LAYER-AWARE: the same xy on a layer that is NOT in the cluster
@@ -191,8 +191,8 @@ class TestLayerAware:
     def test_stacked_pad_on_other_layer_survives(self):
         # Two pads at the same xy on different layers, NOT connected to each
         # other. Only the layer-1 one is in the cluster, so the layer-2 pad
-        # stays selectable — an xy-only match would wipe both and could empty
-        # the pool.
+        # stays selectable — the old xy-only match wiped both and could empty
+        # the pool (d3b 0218 net 9).
         stacked = [(0.0, 0.0, 1), (0.0, 0.0, 2), B]
         obs = _full_obs(stacked, ratsnest=[_xy(B)],
                         aug=_aug(cluster=[_key(A, 1)]), is_routing=True)

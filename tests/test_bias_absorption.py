@@ -1,13 +1,13 @@
-"""Same-net attention bias absorbed into q/k channels.
+"""B1 regression: same-net attention bias absorbed into q/k channels.
 
 Absorbing ``α_h·MMᵀ`` into extra q/k channels
 (:func:`methods.rl_agent.models.v1.blocks.build_slot_membership` +
-``MultiHeadAttention``'s ``same_net_aug``) is exactly equivalent to adding
-``α_h·1[same-net]`` to the pre-softmax logits; there is no dense reference
-path. These guards pin the mathematical core (``M @ Mᵀ`` == same-net
-indicator, channel alignment) and the ckpt contract (``same_net_bias.alpha``
-is the only bias entry in ``state_dict``; checkpoints load strict and
-reproduce).
+``MultiHeadAttention``'s ``same_net_aug``) is an exact rewrite of adding
+``α_h·1[same-net]`` to the pre-softmax logits. The dense reference path was
+REMOVED (2026-07-16) after the equivalence sign-off; the surviving guards pin
+the mathematical core (``M @ Mᵀ`` == same-net indicator, channel alignment)
+and the ckpt contract (``same_net_bias.alpha`` unchanged in ``state_dict``;
+old checkpoints load strict and reproduce).
 
 No C++ dependency — pure PyTorch. CPU always runs; CUDA runs too when present
 (the CUDA mem-efficient kernel is where the channel-alignment constraint bites).
@@ -95,15 +95,16 @@ class TestSameNetBiasAbsorption:
         assert m.same_net_bias.alpha.grad.abs().max() > 1e-4
 
     def test_alpha_in_state_dict(self):
-        # ckpt hard requirement: ``alpha`` is the only bias state — no
-        # dense/absorb runtime toggle is a parameter/buffer.
+        # ckpt hard requirement: ``alpha`` is the only bias state; the removed
+        # dense/absorb runtime toggle was never a parameter/buffer.
         m = self._opened_model("cpu")
         sd = m.state_dict()
         assert "same_net_bias.alpha" in sd
 
     def test_checkpoint_roundtrip(self):
         # A saved state_dict loads cleanly into a fresh model (no missing /
-        # unexpected keys) and reproduces identical outputs.
+        # unexpected keys) and reproduces identical outputs — dense-era
+        # checkpoints are byte-identical, so backward compat holds.
         src = self._opened_model("cpu")
         obs = self._varied_batch()
         acts, _ = src.act(obs, deterministic=True)

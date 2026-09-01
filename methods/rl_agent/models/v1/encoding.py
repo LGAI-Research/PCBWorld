@@ -6,11 +6,15 @@ buffer consume, and decodes the policy's ``(action_type, pointer, mode)`` triple
 back to env-space. The learnable embedding tables + transformer live in
 ``net`` ("trainable weights belong to net").
 
-Four sections:
-  * **Geometry** — ``encode_layer``
-  * **State**    — norm context + dataclasses + obs→net/cand ordering
-  * **Action**   — triple decode + pointer→value
-  * **Mask**     — mode/pointer/net masks + VecBackend stacks
+Three sections, relocated byte-for-byte (C1-models, "logic 0" per §7 B-rule)
+from the former scattered codec modules:
+  * **Geometry** — ``encode_layer`` (from ``policy/token_vocabulary``)
+  * **State**    — norm context + dataclasses (from ``policy/state_tokenizer_common``)
+                   + obs→net/cand ordering (from ``wrappers/state_converter``)
+  * **Action**   — triple decode + pointer→value (from ``wrappers/action_converter``)
+  * **Mask**     — mode/pointer/net masks + VecBackend stacks (from ``wrappers/mask``)
+
+Those source modules have been removed; import the codec from here.
 """
 
 from __future__ import annotations
@@ -124,7 +128,7 @@ def _compute_norm_ctx(
     orig_cy = board_static["bbox_y"] + bh / 2
 
     # Orthogonal post-transforms — read regardless of scheme. Absent keys
-    # default to identity.
+    # default to identity so old serialized aug dicts continue to work.
     axis_swap = bool(aug.get("axis_swap", False)) if aug else False
     flip_x = int(aug.get("flip_x", 1)) if aug else 1
     flip_y = int(aug.get("flip_y", 1)) if aug else 1
@@ -233,6 +237,7 @@ def _safe_encode_layer(layer_human: int, n_copper: int) -> tuple[float, float]:
 
     DRC violations on real boards can sit on NON-copper layers (silk/edge/…,
     e.g. layer_human=6 on a 4-copper board) — those must not crash the walk.
+    Same sentinel the <1 case always used.
     """
     if layer_human < 1 or layer_human > n_copper:
         return (0.0, 0.0)
@@ -302,7 +307,7 @@ def _sorted_net_keys(d: dict) -> list[str]:
 
 
 def sorted_net_codes_from_obs(obs: dict) -> list[int]:
-    """Return net codes in the exact order the tokenizer emits NET tokens.
+    """Return net codes in the exact order used by StateTokenizer.
 
     Mirrors ``_sorted_net_keys`` — numeric ascending.
     """
@@ -319,10 +324,11 @@ def sorted_net_codes_from_obs(obs: dict) -> list[int]:
     return codes
 
 
-def cand_mm_list_from_obs(obs: dict) -> list[tuple[float, float, int]]:
-    """Rebuild the candidate (x_mm, y_mm, layer) list in tokenizer order.
+def cand_raw_list_from_obs(obs: dict) -> list[tuple[float, float, int, int]]:
+    """Rebuild the raw candidate ``(x_mm, y_mm, layer, ctype)`` list in
+    tokenizer order.
 
-    Uses the same shared helpers as the tokenizer walk:
+    Uses the same shared helpers as ``StateTokenizer._build_candidate_pool``:
     ``collect_raw_candidates`` + ``build_directional_candidates`` (when routing).
     The tokenizer's ``cand_mm_list`` and this function's output must be
     tuple-wise identical for the wrapper's pointer decode to be correct.
@@ -345,8 +351,13 @@ def cand_mm_list_from_obs(obs: dict) -> list[tuple[float, float, int]]:
             mode=aug.get("directional_candidates"),
         )
 
-    raw = collect_raw_candidates(obs, current_net_id, extra)
-    return [(x, y, layer) for (x, y, layer, _ctype) in raw]
+    return collect_raw_candidates(obs, current_net_id, extra)
+
+
+def cand_mm_list_from_obs(obs: dict) -> list[tuple[float, float, int]]:
+    """:func:`cand_raw_list_from_obs` without the ctype column — the wrapper's
+    pointer-decode table."""
+    return [(x, y, layer) for (x, y, layer, _ctype) in cand_raw_list_from_obs(obs)]
 
 
 # ===========================================================================
@@ -488,9 +499,9 @@ def net_valid_mask(
 
 
 # ---------------------------------------------------------------------------
-# Batch mask queries over a VecBackend (the branch wrapper for ``env_method``).
-# Each stacks per-worker mask methods into a rectangular ndarray, with the same
-# right-padding the subprocess pool applies.
+# Batch mask queries over a VecBackend (the design-intended branch wrapper for
+# ``env_method`` — base.py §11). Each stacks per-worker mask methods into a
+# rectangular ndarray, with the same right-padding the subprocess pool applies.
 # Backend-agnostic: works over any VecBackend exposing ``env_method`` (subproc
 # or ray), so the policy code is decoupled from the transport mechanism.
 # ---------------------------------------------------------------------------
@@ -555,6 +566,39 @@ def stack_pointer_masks(
     for i, p in enumerate(per_env):
         if p.shape[0]:
             out[i, : p.shape[0]] = p
+    return out
+
+
+def stack_cand_block_masks(
+    backend: "VecBackend", indices: Sequence[int] | None = None,
+) -> np.ndarray:
+    """Parallel ``start_route_pointer_indices() ++ offboard_pointer_indices()``
+    → ``(N, K_max)`` int64, right-padded with ``-1``.
+
+    The columns the cand pointer head blocks on EVERY row (net.py
+    ``cand_block_idx``): the same-point rule plus the off-board directional
+    rule (``KiCadRLWrapper.offboard_pointer_indices``, empty unless
+    ``offboard_mask``). Rows are concatenated per env BEFORE padding, so the
+    result is bit-identical to the obs-embedded branch of
+    ``gather_mask_arrays``. Envs without the off-board method (stubs / doubles)
+    contribute their same-point rows alone.
+    """
+    per_ptr = backend.env_method("start_route_pointer_indices", indices=indices)
+    if not per_ptr:
+        return np.zeros((0, 0), dtype=np.int64)
+    try:
+        per_off = backend.env_method("offboard_pointer_indices", indices=indices)
+    except (AttributeError, KeyError, NotImplementedError):
+        per_off = None          # stub backend / env double: rule stays inactive
+    rows = (
+        [np.concatenate([p, o]) for p, o in zip(per_ptr, per_off)]
+        if per_off else list(per_ptr)
+    )
+    K_max = max((r.shape[0] for r in rows), default=0)
+    out = np.full((len(rows), K_max), -1, dtype=np.int64)
+    for i, r in enumerate(rows):
+        if r.shape[0]:
+            out[i, :r.shape[0]] = r
     return out
 
 

@@ -3,7 +3,6 @@
 :func:`iter_rollout` is the single per-step loop shared by the eval rollout
 (``methods/rl_agent/rollout/transformer.py``) and the training collectors
 (``methods/rl_agent/training/collect.py``); ≈ SB3 ``collect_rollouts``.
-
 Contract:
 
 * **The caller owns ``done``** — the primitive never marks a slot done.
@@ -104,9 +103,9 @@ def budgeted_forward(
     batch forward. The walk (CPU tokenize) runs ONCE, **batched** — the batch
     walk both yields ``seq_lens`` for planning and doubles as the no-split
     fast path's ``walked=`` (zero extra walk vs the unsplit path); only an
-    actual split pays a second, per-chunk walk. (The walk stays batched:
-    per-sample B=1 walks here — 64x Python passes + merge, every rollout
-    step — cost 3~7x the batched walk.)
+    actual split pays a second, per-chunk walk. (Per-sample B=1 walks here —
+    64x Python passes + merge, every rollout step — measured 3~7x the
+    batched walk and +5~12% ITER in the 260713 A/B; do not revert.)
     The mode-mask None-vs-tensor convention is the *caller's* batch-level
     decision; chunks only slice it, never re-derive it.
 

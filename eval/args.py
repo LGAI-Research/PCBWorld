@@ -9,8 +9,8 @@ The flag list is *derived from the schema* (:class:`configs.loader.schema.LLMCon
 one nested sub-config per group) via :func:`configs.loader.cli.add_dataclass_args`, so
 the dataclasses are the single visible list of every LLM-eval variable and the
 CLI cannot drift from them. This mirrors the RL side (methods/rl_agent/training/args.py); the
-only difference is ``style="underscore"`` (snake_case flags), which keeps the
-``args.<name>`` surface the shell scripts depend on.
+only difference is ``style="underscore"`` (snake_case flags) to preserve the
+``args.<name>`` surface existing shell scripts depend on.
 
 A small bespoke tail per group keeps the flags whose *form* is custom — the
 required runtime input ``--board_path``, the inverted ``--no_drc_tokens``, the
@@ -99,9 +99,9 @@ def add_env_args(
 def add_boards_args(parser: argparse.ArgumentParser) -> argparse._ArgumentGroup:
     """Attach multi-board selection flags (mirrors the RL trainer's board flags).
 
-    ``--boards_order=single`` (default) consults only ``--board_path``.
-    ``round_robin`` consults ``--boards_json`` to build a list of boards that
-    eval iterates over (one reload per board).
+    ``--boards_order=single`` (default) preserves legacy behaviour — only
+    ``--board_path`` is consulted. ``round_robin`` consults ``--boards_json`` to
+    build a list of boards that eval iterates over (one reload per board).
     """
     g = parser.add_argument_group("boards")
     add_dataclass_args(g, _L.boards, style="underscore")
@@ -113,7 +113,7 @@ def add_boards_args(parser: argparse.ArgumentParser) -> argparse._ArgumentGroup:
         help="JSON split file; required when --boards_order != single "
              "(see the configs/datasets/ registry).",
     )
-    # Per-split dataset directories come from the JSON's top-level
+    # Per-split dataset directories now come from the JSON's top-level
     # ``dataset_dirs[split]`` (see configs/datasets/*.json). No CLI fallback.
     return g
 
@@ -197,7 +197,7 @@ def build_eval_parser(
     add_llm_args(parser)
     add_api_args(parser)
     add_verbose_arg(parser)
-    # Accepted and ignored; hidden from --help.
+    # Legacy aliases (accepted but ignored)
     parser.add_argument("--num_gpus", type=int, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--gpu_devices", type=str, default=None, help=argparse.SUPPRESS)
     return parser

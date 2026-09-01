@@ -1,8 +1,9 @@
-"""Coordinate augmentation in the Decoder wrapper.
+"""aug_scale applied to potential-based reward in MLP and Decoder wrappers.
 
-Sign reflection, input translation, zoom and axis swap run through the
-normalization paths and change the observation the policy sees, while the
-reward stays invariant — the augmentation never leaks into Φ.
+Verifies the refactor in which ``aug_scale`` multiplies Φ across every
+step (not just the terminal step), while ``step_penalty`` is left
+untouched and coordinate augmentation is routed through the existing
+normalization paths without leaking aug_scale into the observation.
 
 All tests drive the real ``PCBWorld`` on a fixture board — no mocks.
 """
@@ -22,6 +23,56 @@ sys.path.insert(0, str(PROJECT_ROOT / "build_rl" / "pcbnew" / "python" / "rl"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
 BOARD = str(PROJECT_ROOT / "tests" / "fixtures" / "simple_routing_board.kicad_pcb")
+
+
+# ---------------------------------------------------------------------------
+# MLP wrapper helpers (reuse the test_reward_modes.py action sequence)
+# ---------------------------------------------------------------------------
+def _find_candidate(env, x, y, layer=None, tol=0.001):
+    for i, (cx, cy, cl) in enumerate(env._candidates_mm):
+        if env._candidate_mask[i] and abs(cx - x) < tol and abs(cy - y) < tol:
+            if layer is None or cl == layer:
+                return i
+    return None
+
+
+def _route_all_nets(env):
+    steps = []
+
+    def do(action):
+        obs, reward, terminated, truncated, info = env.step(np.array(action))
+        steps.append((reward, terminated, truncated, info))
+        return obs, reward, terminated, truncated, info
+
+    do([0, 0])
+    do([1, 0])
+    do([3, 1])
+    do([2, 0])
+
+    do([0, 0])
+    do([1, 0])
+    via_pt = _find_candidate(env, 25.0, 5.5)
+    assert via_pt is not None
+    do([4, via_pt])
+    bottom_pt = _find_candidate(env, 25.0, 5.5, layer=2)
+    assert bottom_pt is not None
+    do([1, bottom_pt])
+    target_pt = _find_candidate(env, 25.0, 25.0)
+    assert target_pt is not None
+    do([4, target_pt])
+    do([2, 0])
+
+    do([0, 0])
+    do([1, 0])
+    far_pad = _find_candidate(env, 40.0, 20.0)
+    assert far_pad is not None
+    do([3, far_pad])
+    return steps
+
+
+# ---------------------------------------------------------------------------
+# MLP — reward scaling
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -271,9 +322,9 @@ class TestNNZoom:
     exact-normalization semantics + reward invariance."""
 
     def test_exact_norm_scale_no_aug(self):
-        """norm_scale is the exact bbox half-extent: a 50x30 board maps
-        its long axis to exactly [-1, 1] and its short axis to
-        [-0.6, 0.6]."""
+        """norm_scale is the exact bbox half-extent (no 1/2/5-series
+        quantization): a 50x30 board maps its long axis to exactly
+        [-1, 1] and its short axis to [-0.6, 0.6]."""
         from methods.rl_agent.models.v1.encoding import (
             _compute_norm_ctx, _norm_pos,
         )
@@ -510,7 +561,7 @@ class TestOrthogonalAxesCombine:
         obs, _ = env.reset()
         env.close()
 
-        # Every augmentation key is present in the injected _aug dict.
+        # All orthogonal keys present alongside new-scheme keys.
         for k in ("scale_x", "scale_y", "aug_cx", "aug_cy",
                   "axis_swap", "flip_x", "flip_y", "nn_dx", "nn_dy",
                   "nn_zoom"):

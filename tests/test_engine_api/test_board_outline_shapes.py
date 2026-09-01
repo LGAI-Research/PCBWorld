@@ -5,8 +5,8 @@ segment (kind 0), arc (kind 1: p1/p2 endpoints + on-arc midpoint) or circle
 (kind 2: p1 == p2 on the circle, mid = antipode). ``parse_pcb_file`` turns
 them into the obs ``board_edges`` per ``outline_mode``:
 
-  tess   — the C++ tessellation path (bit-stable),
-  poly16 — Python re-tessellation at a fixed 16 segments per 90°,
+  tess   — the untouched legacy C++ tessellation path (bit-stable),
+  poly16 — Python re-tessellation at the pre-074f34b09 fixed 16-per-90°,
   arc    — one entry per arc, mid carried through to obs ``boardlines``.
 
 Fixture: crossover_board (modern pcb+pro pair, upgraded once from
@@ -92,9 +92,9 @@ class TestCircleOutline:
     def test_poly16_quarter_fillet_keeps_16_segments(self):
         from pcb_world.engine.pcb_file_parser import _tessellate_arc_poly16
 
-        # Exact 90-degree fillets at int-nm-rounded radii: the C++ path emits
-        # 16 segments, and the mm-double recomputation must match it — the
-        # int() epsilon guard keeps it from truncating to 15.
+        # Exact 90-degree fillets at int-nm-rounded radii: the historical C++
+        # always emitted 16 segments; mm-double recomputation must not
+        # truncate to 15 (regression for the int() epsilon guard).
         for r in (2.54, 3.0, 5.0, 0.9999999):
             s = math.sin(math.pi / 4)
             pts = _tessellate_arc_poly16(r, 0.0, r * s, r * s, 0.0, r)
@@ -212,11 +212,11 @@ class TestOutlineObsModes:
 class TestBoardBBoxIsOutlineOnly:
     """``get_board_bbox`` = Edge.Cuts-only bbox (decoration/routing-invariant).
 
-    The bbox comes from the board outline alone. Merging every object (as
-    ``GetBoundingBox`` does) pulls in silkscreen, annotations and tracks that
-    sit outside the outline and inflates both obs normalization (norm_scale)
-    and the wirelength scale. Pinned on a copy carrying silkscreen graffiti
-    far from the outline: the bbox must stay at the outline size.
+    The old ``GetBoundingBox`` (merge of every object) pulled in silkscreen,
+    annotations and tracks outside the outline, inflating obs normalization
+    (norm_scale) and the wirelength scale (up to 1.6x measured on real boards). Pinned on a copy carrying silkscreen graffiti far from the
+    outline: the bbox must stay at the outline size (the old implementation
+    ballooned to ~400mm → red).
     """
 
     def test_bbox_matches_outline_and_ignores_offboard_silk(self, tmp_path):

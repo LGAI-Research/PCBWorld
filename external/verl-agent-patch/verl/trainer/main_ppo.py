@@ -185,7 +185,8 @@ class TaskRunner:
             val_envs=val_envs,
         )
         if "cadagent" in config.env.env_name.lower():
-            # Central trainer (methods/llm_agent/training/trainer.LLMTrainer):
+            # Central trainer (cadagent repo:
+            # methods/llm_agent/training/trainer.LLMTrainer):
             # owns the loop / validation (canonical val/* via the shared
             # Evaluator) / checkpoint cadence; verl provides train_step only.
             # Other env types keep verl's own fit() loop below.

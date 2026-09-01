@@ -132,7 +132,8 @@ def search_iter(
         # remaining n_simulations-1 can only re-visit the same child and cannot
         # change the outcome. Under the default masking rule this fires on every
         # ``net_end`` state (net_end is the ONLY action allowed once the current net
-        # is fully connected) — measured 95 of 494 decisions across 4 boards.
+        # is fully connected) — measured 95 of 494 decisions across 4 boards, each
+        # previously spending the full budget on a forced move.
         n_sims = 1 if len(root.children) == 1 else cfg.n_simulations
         for i in range(n_sims):
             _simulate(root, env, policy_value, cfg, minmax, root_select, rng)
@@ -186,7 +187,8 @@ def _simulate(
     # return_bootstrap accumulates the EXACT discounted return along the descent:
     #   path_r = Σ_{k<depth} γ^k ΔΦ_k   (each ΔΦ = child.reward, the env's per-step
     #   reward with DRC),   gpow = γ^depth.  Absolute modes ignore both. This is the
-    #   discounted return of the training MDP (γ = cfg.gamma).
+    #   discounted return of the training MDP (γ = cfg.gamma), replacing the old
+    #   single-factor γ^depth·(Φ(leaf)−Φ(root)) approximation.
     path_r = 0.0
     gpow = 1.0
     while True:
@@ -388,8 +390,8 @@ def _puct_select(node: Node, c_puct: float, minmax: _MinMaxStats,
     :class:`~methods._shared.mcts.algorithms.MuZero`)."""
     sqrt_parent = math.sqrt(max(1, node.N))
     # Value-completion: an unvisited child inherits the PARENT's normalized value
-    # instead of 0 (mctx complete_qvalues). 0 otherwise, so the exploration term
-    # alone decides for unvisited children.
+    # instead of 0 (mctx complete_qvalues). 0 otherwise (legacy: exploration term
+    # alone decides for unvisited children).
     unvisited_q = minmax.norm(node.Q) if complete else 0.0
     children = _active_children(node, cfg) if cfg is not None else node.children
     best, best_score = None, -math.inf
@@ -414,8 +416,9 @@ def _az_select(node: Node, c_puct: float, minmax: _MinMaxStats,
     ``_az_final_action`` below, where az-general DOES randomize).
 
     Forked from ``_puct_select`` rather than calling it with ``complete=False``
-    so an AlphaZero-only change here can never silently reach MuZero. The two
-    bodies compute the identical score.
+    so a future AlphaZero-only change here can never silently reach MuZero.
+    The two bodies compute the identical score today; that is expected to
+    change as each gets its own fidelity passes.
 
     NB: az-general normalizes U by ``sqrt(Ns[s])`` (the node's own raw visit
     count; its values are bounded [-1, 1]). This core instead min-max-
@@ -460,7 +463,8 @@ def _muzero_select(node: Node, cfg: MctsConfig, minmax: _MinMaxStats,
                    rng: random.Random) -> Node:
     """MuZero interior/root select — ``~/muzero-general`` ``select_child()``.
 
-    Two divergences from the generic ``_puct_select``:
+    Two divergences from the generic ``_puct_select`` this replaces for
+    MuZero:
 
       1. pb_c-scaled exploration (``_muzero_ucb_score``) instead of a flat
          ``c_puct`` — ``cfg.c_puct`` is UNUSED here.

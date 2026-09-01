@@ -9,6 +9,7 @@ but drop out of the problem definition.
 Driven on the 2-net scripted board (NET1, NET2); routing helpers mirror
 ``test_best_board_early_stop.py``. The DRC-filter predicate is unit-tested
 directly (no engine) since it is pure Python.
+
 """
 
 import os
@@ -121,7 +122,7 @@ def test_whole_board_not_terminated_by_one_net():
 
 
 # ---------------------------------------------------------------------------
-# target_nets=None — the unrestricted whole-board problem
+# Regression — target_nets=None is the legacy path
 # ---------------------------------------------------------------------------
 
 def test_target_nets_none_matches_baseline():
@@ -168,7 +169,7 @@ def test_drc_filter_keeps_target_involving_only():
 
 
 def test_drc_filter_none_keeps_all():
-    """No filter (None) keeps every violation, including orphans."""
+    """No filter (None) keeps every violation, including orphans (legacy)."""
     d = DRCUtils()
     d.update([_viol(["NET2"]), _viol([]), _viol(["NET1"])])
     assert d.get_violation_count() == 3
@@ -202,7 +203,7 @@ def test_reset_keeps_nontarget_routing():
 
 
 def test_reset_wipe_all_when_preserve_off():
-    """preserve_nontarget_routing=False gives a bare-board reset: even a
+    """preserve_nontarget_routing=False restores the bare-board reset: even a
     non-target pre-routed net is wiped."""
     env = PCBWorld(board_path=BOARD, target_nets={2},
                    preserve_nontarget_routing=False)
@@ -234,7 +235,7 @@ def test_reset_keep_nets_preserves_only_kept():
 
 
 def test_reset_keep_nets_empty_wipes_all():
-    """An empty keep set (or none) wipes everything — a bare reset."""
+    """An empty keep set (or none) wipes everything — legacy bare reset."""
     env = PCBWorld(board_path=BOARD)
     env.reset(seed=0)
     _preroute(env._engine, A1, B1)
@@ -298,10 +299,10 @@ def test_keep_fraction_full_keeps_everything(routed_board):
 def test_keep_nets_reproducible_from_ctor_seed(routed_board):
     """The K draw is reproducible from the CONSTRUCTOR seed alone.
 
-    Training collectors call ``reset()`` with no seed, so the draw must come
-    from the ctor seed rather than from gymnasium's entropy seeding of
-    np_random. Same ctor seed -> same K; different ctor seeds must not all
-    collapse to one draw.
+    Training collectors call ``reset()`` with no seed, so before ``seed`` was
+    wired through the env, np_random fell back to gymnasium's entropy seeding
+    and K was unreproducible on every board reload. Same ctor seed -> same K;
+    different ctor seeds must not all collapse to one draw.
     """
     def k_for(seed: int):
         env = PCBWorld(
@@ -341,17 +342,17 @@ def test_keep_fraction_half_resamples_from_pristine_file(routed_board):
 
 
 def test_keep_fraction_survives_damaged_kept_copper(routed_board):
-    """An episode can shove — displace or even disconnect — KEPT copper while
-    routing a neighbouring net, and reset has no in-place restore. The
-    reload-per-reset contract must recover: damage the kept net's routing,
-    then reset — no RuntimeError, and the new episode starts from the file's
-    complete designer routing again."""
+    """R2 crash regression: an episode can shove — displace or even
+    disconnect — KEPT copper while routing a neighbouring net, and reset has
+    no in-place restore. The reload-per-reset contract must recover: damage
+    the kept net's routing, then reset — no RuntimeError, and the new episode
+    starts from the file's complete designer routing again."""
     env = PCBWorld(board_path=routed_board, keep_routing_fraction=(1.0, 1.0))
     _, info = env.reset(seed=0)
     assert info["keep_nets"] == [1, 2]
     env._engine.delete_routing_of_nets([1])     # simulate shove damage
     env._engine.build_connectivity()
-    _, info2 = env.reset()                      # reload-per-reset recovery
+    _, info2 = env.reset()                      # pre-fix: RuntimeError here
     tracks = {t.net_code for t in env._engine.get_tracks()}
     env.close()
     assert info2["keep_nets"] == [1, 2]

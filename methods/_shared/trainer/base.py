@@ -97,8 +97,8 @@ class Trainer(ABC):
         t0 = time.perf_counter()
         # True only when the loop below exits normally (incl. wallclock stop).
         # teardown() reads it: an aborted run must NOT signal "train_done" to
-        # an --async-val watcher — the watcher would exit and the relaunch
-        # would then run with no watcher at all.
+        # an --async-val watcher (260825: a crashed trainer marked done, the
+        # watcher exited, and the relaunch ran with no watcher at all).
         self.fit_completed = False
         try:
             for iteration in range(self.start_iteration, self.iterations + 1):

@@ -4,6 +4,10 @@ These are support utilities (reward-scale stabilizers, value-fit diagnostic,
 device resolution), not the training skeleton (rollout collection lives in
 :mod:`methods.rl_agent.training.collect`, advantage + update in
 :mod:`methods.rl_agent.algorithms`).
+
+``auto_device`` is branch-neutral (a plain torch device-string resolver); it
+lives here next to the other small RL-training helpers, and the lazy
+``methods.rl_agent.policy.agent`` import points at this module.
 """
 from __future__ import annotations
 
@@ -19,7 +23,7 @@ class RunningRewardStd:
 
     Provides a stable advantage scale across iterations. Only tracks
     variance/std — mean is NOT subtracted (GRPO uses ``group_mean`` as the
-    per-iteration baseline).
+    per-iteration baseline). Mirrors :class:`train_grpo_mlp.RunningRewardStd`.
     """
 
     def __init__(self) -> None:
@@ -46,19 +50,20 @@ class RunningRewardStd:
 
 
 # ---------------------------------------------------------------------------
-# Reward normalizer (PPO — discounted-return scaling)
+# Reward normalizer (PPO — SB3 VecNormalize-equivalent)
 # ---------------------------------------------------------------------------
 class RewardNormalizer:
-    """Reward normalization for PPO, following the VecNormalize scheme.
+    """SB3-equivalent reward normalization for PPO.
 
-    Implements the reward pipeline of Stable-Baselines3's ``VecNormalize``:
+    Mirrors :class:`stable_baselines3.common.vec_env.VecNormalize` reward
+    pipeline:
 
     * Maintains a per-env discounted return ``R_t = gamma * R_{t-1} + r_t``
-      that resets to 0 after a terminal/truncated step; the reset happens
+      that resets to 0 after a terminal/truncated step (the reset happens
       AFTER the running stats have already absorbed the step that ended
-      the episode.
+      the episode — exact SB3 ordering).
     * Tracks running variance of those returns via Welford's algorithm
-      (mean is NOT subtracted — rewards are divided by std only).
+      (mean is NOT subtracted — VecNormalize divides by std only).
     * ``normalize(r) = clip(r / sqrt(var + eps), -clip, +clip)`` returns
       a per-step scaled reward.
 
@@ -67,7 +72,7 @@ class RewardNormalizer:
     Args:
         n_envs: number of parallel envs whose returns are tracked.
         gamma: discount factor used to roll the returns forward (must
-            match the trainer's ``gamma``).
+            match the trainer's ``gamma`` for SB3 parity).
         clip: symmetric clipping bound after dividing by std.
         epsilon: numerical floor inside the sqrt.
     """
@@ -97,7 +102,7 @@ class RewardNormalizer:
         """Running stats for checkpointing.
 
         Per-env ``_returns`` are transient (n_envs may differ on resume) and
-        are NOT saved; they restart at 0 on load.
+        are NOT saved — SB3 VecNormalize likewise resets returns on load.
         """
         return {"mean": self._mean, "var": self._var, "count": self._count}
 
@@ -130,8 +135,8 @@ class RewardNormalizer:
         # 2. Welford update over the just-updated returns vector.
         self._update_running(self._returns)
 
-        # 3. Compute normalized rewards (BEFORE resetting returns — the
-        #    order is stats first, normalize next, then reset).
+        # 3. Compute normalized rewards (BEFORE resetting returns — SB3
+        #    order: stats first, normalize next, then reset).
         normalized = np.clip(
             rewards / self.std, -self.clip, self.clip,
         ).astype(np.float32)

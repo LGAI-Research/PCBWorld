@@ -1,4 +1,4 @@
-"""Checks that speed_profiler's timed mirrors stay in sync with their base functions.
+"""Regression check that speed_profiler's timed mirrors stay in sync with their base functions.
 
 The mirrors in hooks.py/worker_shim.py are copies of the base control flow with
 timers added, so a change to a base would leave the profiler measuring a stale

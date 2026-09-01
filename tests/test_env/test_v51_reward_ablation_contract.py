@@ -1,8 +1,8 @@
 """Contract checks for the v51 reward-ablation launchers.
 
 These tests intentionally avoid the KiCad C++ engine.  They pin the reward
-math and CLI semantics that the v51 ablation launch scripts rely on before a
-large ablation queue is launched.
+math and CLI semantics that the v51 SSH/SLURM scripts rely on before a large
+ablation queue is launched.
 """
 
 from __future__ import annotations

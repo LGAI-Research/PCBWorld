@@ -1,13 +1,13 @@
 """Algorithm-neutral minibatch update loop shared by PPO and GRPO.
 
-The per-algorithm update lives in ``algorithms/{ppo,grpo}.py``; this module
-holds the *shared* scaffold of that step — teacher-forcing re-eval +
+SB3 maps ``PPO.train()`` (the per-algo update) → ``algorithms/{ppo,grpo}.py``;
+this holds the *shared* scaffold of that step — teacher-forcing re-eval +
 clipped-ratio policy loss + optimizer step — and dispatches the per-minibatch
 loss assembly to :func:`methods.rl_agent.algorithms.ppo.ppo_update_step` /
 :func:`methods.rl_agent.algorithms.grpo.grpo_update_step`.
 
 Memory safety (OOM auto-recovery). The default path runs the whole logical
-minibatch in a single fwd+bwd. If that
+minibatch in a single fwd+bwd (byte-identical to the original loop). If that
 raises ``torch.cuda.OutOfMemoryError`` (large boards → long sequences → the
 PPO-update attention blows past VRAM), the minibatch is retried with **sorted
 1/4-peel gradient accumulation**: the samples are sorted by sequence length, a
@@ -34,8 +34,8 @@ Preemptive planning (opt-in, ``mem_budget=``). When a calibrated
 minibatch is *pre-split* into predicted-peak-fitting chunks BEFORE the forward
 (``_planned_minibatch_step``) — same ``_accumulate_chunk`` math, so the
 gradient stays identical up to fp reassociation, but no forward is wasted on
-an OOM retry. The reactive path above is both the ``mem_budget=None``
-default and the conceptual backstop: an OOM despite planning
+an OOM retry. The reactive path above remains both the ``mem_budget=None``
+default (byte-identical) and the conceptual backstop: an OOM despite planning
 discards the partial gradient (``zero_grad``) and reruns the whole minibatch
 with a transiently halved budget — which, unlike the reactive peel, is exact
 even for a backward-OOM. See ``tests/test_mem_budget.py``.
@@ -95,7 +95,7 @@ def policy_update_loop(
 
     ``mem_budget``: a calibrated (``ready``) MemBudgetModel switches minibatch
     execution to preemptive budget-planned chunking (see module docstring);
-    ``None`` (default) selects the reactive path above.
+    ``None`` (default) keeps the reactive path above byte-identical.
 
     ``ddp``: a :class:`~methods.rl_agent.training.ddp.DDPCtx` switches every
     minibatch to the rank-sharded step (``_ddp_shard_step``): rank-0 perm
@@ -103,7 +103,7 @@ def policy_update_loop(
     ``sum / global_mb_size``, and one gradient SUM-allreduce inserted right
     before ``clip_grad_norm_`` — numerically equivalent to ``ddp=None`` on the
     whole batch (tests/test_ddp_equivalence.py). Every rank must call this
-    with the identical buffer and kwargs. ``None`` (default) is the
+    with the identical buffer and kwargs. ``None`` (default) is the unchanged
     single-process path.
     """
     if algo == "ppo" and not policy.use_critic:
@@ -112,7 +112,7 @@ def policy_update_loop(
         # DDP already shards VRAM 1/world; per-rank budget calibration for the
         # planner is not implemented (also asserted trainer-side at
         # --update-gpus parse).
-        raise ValueError("ddp update does not support mem_budget")
+        raise ValueError("ddp update does not support mem_budget (phase 1)")
 
     # DDP obs-strip: workers may receive obs_list=None when walk_flat is
     # carried — the walked= update path never reads obs (tokenizer ignores
@@ -122,17 +122,18 @@ def policy_update_loop(
     old_lp_np = buffer["old_log_probs"]
     masks_np = buffer["action_masks"]
     N = len(obs_list) if obs_list is not None else buffer["walk_flat"]["B"]
-    # pointer_masks is optional: a buffer without it gets a (N, 0) array (no
-    # masking applied). A 1-D array is promoted to (N, 1) so the policy still
+    # Back-compat: older buffers (pre-same-point-masking) may not carry
+    # pointer_masks; default to a (N, 0) array (no masking applied).
+    # Legacy 1-D buffers are auto-promoted to (N, 1) so the policy still
     # blocks the single recorded cand.
     ptr_masks_np = buffer.get(
         "pointer_masks", np.full((N, 0), -1, dtype=np.int64),
     )
     if ptr_masks_np.ndim == 1:
         ptr_masks_np = ptr_masks_np.reshape(-1, 1)
-    # mode_masks is optional: absent means no routing-mode masking.
+    # Back-compat: older buffers may not carry mode_masks.
     mode_masks_np: np.ndarray | None = buffer.get("mode_masks")
-    # Policy-driven net_select only: None on the env-driven path.
+    # Policy-driven net_select only: None when legacy env-driven path.
     nvm_np: np.ndarray | None = buffer.get("net_valid_masks")
     adv_np = buffer["advantages"]
 
@@ -340,14 +341,14 @@ def _reactive_peel_step(
 ) -> tuple[dict[str, float], int]:
     """Default single-process minibatch step (a sibling of ``_ddp_shard_step``
     / ``_planned_minibatch_step`` — same dispatch shape): whole minibatch in
-    one fwd+bwd; on CUDA OOM, retry reactively with the sorted 1/4-peel
-    gradient accumulation.
+    one fwd+bwd (byte-identical to the original fixed-batch loop); on CUDA OOM,
+    retry reactively with the sorted 1/4-peel gradient accumulation.
 
     Returns ``(stats, n_oom)`` — ``n_oom`` is 0 on the no-OOM fast path, else
     1 + the peel's internal OOM count.
     """
     try:
-        # no-OOM path: whole minibatch in one fwd+bwd.
+        # no-OOM path: whole minibatch in one fwd+bwd (byte-identical).
         stats = _fixed_batch_step(
             policy, optimizer, device, algo=algo, clip_eps=clip_eps,
             entropy_coef=entropy_coef, vf_coef=vf_coef,
@@ -506,8 +507,8 @@ def _fixed_batch_step(
     mb_obs, mb_walk, mb_act, mb_old_lp, mb_masks, mb_ptr_masks, mb_mode_masks,
     mb_nvm, mb_adv, mb_ret, mb_size,
 ) -> dict[str, float]:
-    """Single-forward minibatch step (the no-OOM path).
-    ``mb_walk`` is the caller's gather closure —
+    """Single-forward minibatch step (the no-OOM path; byte-identical to the
+    original fixed-batch loop). ``mb_walk`` is the caller's gather closure —
     ``mb_walk()`` returns this minibatch's walk dict (flat-walk index-gather).
     Returns per-minibatch loss stats."""
     new_lp, entropy, new_values = policy.evaluate_actions_and_value(

@@ -359,14 +359,15 @@ def _run_one_batch(
     # Per-slot seed: derived from (base_seed, board, rollout) so a rollout is
     # reproducible regardless of which pool slot it lands in. It is both
     # RECORDED in the output rows and APPLIED at reset — ``env.reset(seed=...)``
-    # seeds that env's gymnasium ``np_random``.
+    # seeds that env's gymnasium ``np_random``. Previously it was only recorded,
+    # so the seed column labelled rows that nothing had actually seeded.
     #
-    # Scope: ``np_random``'s only consumer is the keep_routing_fraction draw,
-    # which eval pins off (see rl.eval_transformer), so applying the seed is a
-    # no-op on eval numbers; it covers any env-side per-episode sampling. The
-    # nondeterminism that DOES move val/* is elsewhere — policy sampling when
-    # deterministic=False (torch RNG; val_greedy is immune) and the wrapper's
-    # own ``_rng``.
+    # Scope, honestly: ``np_random``'s only consumer today is the
+    # keep_routing_fraction draw, which eval pins off (see rl.eval_transformer),
+    # so applying the seed is currently a no-op on eval numbers. It closes the
+    # gap for any future env-side per-episode sampling. The nondeterminism that
+    # DOES move val/* is elsewhere — policy sampling when deterministic=False
+    # (torch RNG; val_greedy is immune) and the wrapper's own ``_rng``.
     slot_seeds = [
         base_seed + board.index * 100 + rollout_idx
         for board, rollout_idx in zip(slot_boards, slot_rollouts)

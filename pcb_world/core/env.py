@@ -306,7 +306,7 @@ class PCBWorld(gym.Env):
 
         # Canonical env-core config. When given, it is the single source for
         # the env-core kwargs (the RL factory and LLM worker construct via it);
-        # the individual kwargs above are used directly when it is None.
+        # individual kwargs above act as the field defaults / legacy path.
         if env_config is not None:
             max_steps = env_config.max_steps
             masking_rule = env_config.masking_rule
@@ -372,7 +372,7 @@ class PCBWorld(gym.Env):
         # observation byte-identical to pre-knob checkpoints.
         self._net_constraint_obs = bool(net_constraint_obs)
         # Net-subset (partial routing): restrict the problem to these net codes.
-        # None = route every net (whole board). When set, only these nets appear as
+        # None = route every net (legacy). When set, only these nets appear as
         # routable targets (board_static.nets), carry ratsnest/routing_geometry,
         # count toward unrouted/termination, and gate DRC violations; other nets'
         # pads remain physical obstacles the router clears from.
@@ -383,7 +383,7 @@ class PCBWorld(gym.Env):
         # Net-aware reset strip policy. When True (default), reset wipes ONLY the
         # routing of the nets being re-routed (the target subset) and keeps every
         # other pre-routed net's copper — independently of lock (keeping a net !=
-        # fixing it; lock only governs shove movability). No-op vs the
+        # fixing it; lock only governs shove movability). No-op vs the legacy
         # bare-board reset when target_nets is None (reroute set = all nets) or
         # when there is no non-target routing. False = always wipe all routing.
         self._preserve_nontarget_routing: bool = bool(preserve_nontarget_routing)
@@ -551,9 +551,10 @@ class PCBWorld(gym.Env):
 
         # Seed PNS's "current via size" from the Default netclass, matching
         # what pcbnew uses when the user invokes ``add via`` without an
-        # explicit preset. The values are sourced from the engine, so KiCad 9
-        # boards (which carry no legacy setup tokens) apply the board's own
-        # declared via_size / via_drill instead of silently falling back to
+        # explicit preset. This is the same intent the old code had (apply
+        # the board's declared via_size / via_drill) but sourced from the
+        # engine so modern KiCad 9 boards (which dropped the legacy setup
+        # tokens) work correctly instead of silently falling back to
         # ``SIZES_SETTINGS`` defaults — ``m_viaDrill=0.25 mm`` — that don't
         # always match the board's Default netclass drill and produce
         # avoidable DRC violations on ``make_via``.
@@ -879,7 +880,7 @@ class PCBWorld(gym.Env):
         # LAST engine step: rewind the global KIID/UUID generator to its construction-time
         # position so this episode's routing draws the same UUID stream as every other
         # episode. The generator is seeded once at ctor and otherwise advances monotonically
-        # across episodes (reset does not re-seed it), which would drift the UUID-keyed
+        # across episodes (reset does not re-seed it), which would drift the UUID
         # obstacle tie-break between episodes; this pins it. Done after every board mutation
         # above (delete/build_connectivity/reward-DRC) so those draws are discarded, mirroring
         # restore()'s final rewind. No-op under entropy seeding.
@@ -935,7 +936,7 @@ class PCBWorld(gym.Env):
         static state (``_board_info``, obs caches, spaces, ``_routable_nets``)
         keys on the file contents and stays valid as-is; only the live-engine
         push-downs from ``__init__`` are replayed here. Costs one board load
-        (~10 ms on the d3b/d2b sources).
+        (~10 ms — measured 260822 on d3b/d2b sources).
         """
         # Checkpoint handles die with their router; drop ours first so the
         # RAII release runs against the still-live engine.
@@ -1172,9 +1173,10 @@ class PCBWorld(gym.Env):
                 snap = self._engine.get_reward_snapshot(run_drc=False)
                 base_state = RewardState.from_snapshot(snap)
             # Overlay ONLY the episode-end DRC counts; every other field
-            # (via_count, per-net connectivity, …) carries over — a hand-written
-            # field list would silently drop via_count and leave terminal-mode
-            # via_penalty uncharged at episode end. per_step rewards never read
+            # (via_count, per-net connectivity, …) carries over. Re-listing the
+            # fields by hand silently dropped via_count, so terminal-mode
+            # via_penalty was never charged at episode end (caught by
+            # tests/test_reward_parity.py). per_step rewards never read
             # final_state; its per_step info["final_potential"] is reached only
             # when the terminal step was a non-valid action (after_state None).
             final_state = replace(
@@ -1227,7 +1229,7 @@ class PCBWorld(gym.Env):
                 potential_diff = self._potential_reward.compute_final(final_state)
             elif truncated:
                 potential_diff = self._potential_reward.compute_truncation(final_state)
-            # Optional Gaussian noise on terminal Φ (terminal mode only)
+            # Optional Gaussian noise on terminal Φ (terminal mode only, legacy)
             if (terminated or truncated) and self._reward_noise_std > 0:
                 noise = self.np_random.normal(0, self._reward_noise_std)
                 noise = np.clip(noise, -4 * self._reward_noise_std,
@@ -1436,9 +1438,10 @@ class PCBWorld(gym.Env):
         Nets that resolve to the **Default** netclass take the fast path:
         we do nothing, since ``__init__`` already seeded the router with
         those values via ``initRouter`` + the default-netclass via sizes.
-        Re-pushing identical values mid-episode perturbs PNS size-cache
-        state on boards that sit on the DRC boundary, so we only override
-        when a non-Default class is actually in effect — BUT a raw default value
+        Re-pushing identical values mid-episode was observed to perturb
+        PNS size-cache state on boards that sit on the DRC boundary (see
+        ``test_via_strategy_drc_zero``), so we only override when a
+        non-Default class is actually in effect — BUT a raw default value
         can itself sit below the DRC floor (e.g. default track_width 0.2 <
         min 0.3), so for Default we still push ONLY the fields the clamp
         actually RAISED above their raw value (never an identical re-push).
@@ -1506,7 +1509,7 @@ class PCBWorld(gym.Env):
             if nc is not None and getattr(nc, "name", ""):
                 return nc
 
-        # Fallback: name-equality heuristic (binding without the lookup).
+        # Fallback: name-equality heuristic (used on pre-extension builds).
         net_ctx = self._board_info.nets.get(net_id)
         if net_ctx is not None:
             net_name = net_ctx.net_name

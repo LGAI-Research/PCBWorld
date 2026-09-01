@@ -5,7 +5,9 @@ original d2b generator lacked: non-``gr_rect`` outlines (4-line rect, corner
 fillets, rectilinear polygons, circles), internal cutouts, NPTH mounting
 holes, oval-drill slots, and a diversified THT pad profile.
 
-Target rates come from a census of the real boards (d3b basis, per board):
+Target rates are the 2026-08-16 census of the real boards (script:
+``sandbox/d2b_midboard/260816_geo_census.py``, data:
+``var/results/d2b_midboard/260816_geo_census.json``; d3b basis, per board):
 
   outline   rect(4 gr_line) ~51% | lines+arcs ~26% | rectilinear ~20% |
             circle ~1%   (``gr_rect`` primitive: 0% on real boards)
@@ -49,8 +51,8 @@ THT_ANNULUS = (0.4, 0.6)         # pad dia = drill + annulus  -> 1.2..1.6
 THT_SHAPE_WEIGHTS = (("circle", 0.5), ("oval", 0.3), ("rect", 0.2))
 THT_OVAL_EXTRA = 0.4             # oval pad long dim = pad + 0.4 (capped)
 
-# --- shape-census mode (--shape-census; census of d3b_train 275 boards:
-# 8,691 SMD / 11,847 THT pads). Opt-in so existing dataset seeds stay
+# --- shape-census mode (--shape-census; 2026-08-18 census of d3b_train 275
+# boards: 8,691 SMD / 11,847 THT pads). Opt-in so existing dataset seeds stay
 # byte-reproducible; when on, THT weights switch to the census mix and SMD
 # pads (legacy: always roundrect) draw a per-net census shape. Rare families
 # (trapezoid/custom, <1%) are folded into the dominant buckets.

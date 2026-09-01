@@ -1,11 +1,11 @@
 """Obs-semantics self-probe — ckpt-embedded digest of the tokenizer walk.
 
-Why this exists: a change of obs *semantics* that keeps tensor shapes (e.g. a
-different coordinate normalization) leaves no evidence in ckpt args (no knob
-changed) or in weight shapes (no tensor resized), so a checkpoint would
-silently eval under a different coordinate meaning. The other two defenses —
-args replay and weight-shape self-detection — cannot see this class by
-construction.
+Why this exists: obs *semantics* changes that keep tensor shapes (e.g. the
+2026-08 nice_scale→exact-scale normalization swap) leave no evidence in ckpt
+args (no knob changed) or in weight shapes (no tensor resized), so an old
+checkpoint silently evals under a different coordinate meaning. The two
+existing defenses — args replay and weight-shape self-detection — cannot see
+this class by construction.
 
 Mechanism: every checkpoint embeds a PROBE — a fixed synthetic observation
 plus the sha256 of the tokenizer's pure-CPU Phase-1 walk (``_walk_obs``) over
@@ -14,22 +14,23 @@ it, computed by the code that trained the checkpoint. Loading re-encodes the
 is exactly "the obs semantics this policy was trained under still hold":
 
 - semantics change (values, normalization, ordering)  → digest differs → error
-- code change that preserves encoder output           → digest equal   → silent
-- an obs element the stored probe does not carry       → the elements it does
-  carry still encode the same → pass (matching how the compat shims treat
-  such additions)
-- current code cannot encode the stored probe at all   → error (that inability
+- refactor that preserves encoder output              → digest equal   → silent
+- NEW obs element added later                          → old probe lacks it,
+  its existing elements still encode the same → pass (matches the compat-shim
+  reality for such additions)
+- new code cannot encode the stored probe at all       → error (that inability
   is itself the incompatibility evidence)
 
-Because the comparison baseline travels inside the checkpoint, the repo-side
-probe builder can evolve without mis-judging any checkpoint, and no version
-constant is ever bumped.
+Because the comparison baseline travels inside the checkpoint, evolving the
+repo-side probe builder never mis-judges old checkpoints, and nobody ever
+bumps a version constant.
 
 Escape hatch (deliberate archaeology only): ``CADAGENT_ALLOW_OBS_MISMATCH=1``
 downgrades the load-time hard error to a loud warning and stamps
 ``policy.obs_schema_mismatch`` so result writers can mark the output.
-A checkpoint that carries no probe cannot be checked — loaders print a note
-and skip it.
+Checkpoints saved before this module have no probe — loaders print a note and
+skip (retroactive enforcement is impossible; e.g. the pre-exact-scale
+campaigns must be re-evaluated on their training-era code by hand).
 
 Determinism: the walk is pure CPU/numpy; floats are rounded to 1e-6 before
 hashing to absorb libm/BLAS jitter across hosts. Unknown types in the walk

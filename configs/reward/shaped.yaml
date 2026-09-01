@@ -1,6 +1,7 @@
-# LEGACY — kept for tests that need a DRC-free per-step rule
-# (tests/test_env/test_aug_scale_reward.py, tests/test_env_config.py).
-# The training recipes use the drc_* rules instead.
+# LEGACY — retained for test compatibility only (tests/test_env/test_aug_scale_reward.py
+# asserts specific aug_scale behavior under this config's per_step+no-drc semantics).
+# Not used by v20+ training. Scheduled for deletion in a later cleanup phase
+# once aug_scale tests are migrated off the legacy reward configs.
 #
 # Shaped reward: per_step potential-based shaping every step.
 # r_t = Φ(s') - Φ(s) - step_penalty

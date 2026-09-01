@@ -15,7 +15,7 @@
 
 # ---------------------------------------------------------------------------
 # NOTE: This file is a patched copy of
-#   external/verl-agent/agent_system/environments/env_manager.py
+#   agents/verl-agent/agent_system/environments/env_manager.py
 #
 # Changes vs. upstream:
 #   - Added KiCadLLMVerlManager (see bottom of file)
@@ -625,7 +625,8 @@ class KiCadLLMVerlManager(KiCadLLMRolloutManager, EnvironmentManagerBase):
     Cadagent-specific state and per-step rollout logic — SimpleMemory,
     rejection streak, board_static cache, prompt assembly, adaptive
     max_steps — all live in ``KiCadLLMRolloutManager``
-    (``methods/llm_agent/training/manager.py``). This shim only adds verl-agent-specific
+    (``methods/llm_agent/training/manager.py``). This shim only adds
+    verl-agent-specific
     pieces:
 
       - ``_post_step_info`` stamps ``to_numpy(valids[i])`` onto each info as
@@ -634,7 +635,7 @@ class KiCadLLMVerlManager(KiCadLLMRolloutManager, EnvironmentManagerBase):
         infos. ``success_evaluator`` is inherited from
         :class:`EnvironmentManagerBase`.
 
-    Observation anatomy (from KiCadHLEnv):
+    Observation anatomy (from PCBWorld):
         board_static      — static board metadata, pads, obstacles, design rules
         routing_geometry  — per-net tracks / vias / ratsnest (dynamic)
         router_head       — current router position, layer, net, phase, step info
@@ -672,7 +673,7 @@ class KiCadLLMVerlManager(KiCadLLMRolloutManager, EnvironmentManagerBase):
     # ------------------------------------------------------------------
 
     def _post_step_info(self, infos, valids):
-        # Telemetry only — KiCadHLEnv applies the parse-fail penalty
+        # Telemetry only — PCBWorld applies the parse-fail penalty
         # itself (see projection._FALLBACK_ACTION + env.step's
         # `_parse_invalid` branch), so we do NOT stack a reward here.
         for i, info in enumerate(infos):
@@ -816,7 +817,7 @@ def make_envs(config):
         val_envs = AppWorldEnvironmentManager(_val_envs, projection_f, config)
         return envs, val_envs
     elif "cadagent" in config.env.env_name.lower():
-        from configs.schema import LLMTrainConfig
+        from configs.loader.schema import LLMTrainConfig
         from methods._shared.board_scheduler import (
             BoardScheduler,
             BoardSchedulerConfig,
@@ -826,14 +827,15 @@ def make_envs(config):
 
         # cadagent-side config slice (the env.cadagent.* block + the env.*
         # knobs cadagent reads). Defaults live in configs/defaults/llm_train.yaml
-        # (configs.schema.LLMTrainConfig); the verl Hydra config supplies the
+        # (configs.loader.schema.LLMTrainConfig); the verl Hydra config supplies the
         # per-run overrides — this just sources the fallbacks from one place.
         cad = LLMTrainConfig.from_verl_config(config)
         board_path = cad.board_path
         env_kwargs = cad.to_env_kwargs()
 
         # Board scheduling (single / round_robin / per_env_random / per_env_epoch).
-        # Defaults to single-board behaviour.
+        # Defaults to single-board behaviour so pre-existing configs keep
+        # working unchanged.
         boards_order = cad.boards_order
         train_scheduler = BoardScheduler(BoardSchedulerConfig(
             mode=boards_order,
@@ -843,9 +845,9 @@ def make_envs(config):
             split=cad.boards_split,
             seed=cad.seed,
         ))
-        # Val scheduler. Two distinct paths so the single-board case stays
-        # independent of the JSON / dataset:
-        #   val_boards_order='single' (default) → just single_board.
+        # Val scheduler. Two distinct paths so the legacy single-board case
+        # stays independent of the JSON / dataset:
+        #   val_boards_order='single' (default) → legacy: just simple_board.
         #   val_boards_order=round_robin/per_env_*  → load val_boards_split
         #     (defaults to the train boards_split) from the same boards_json.
         val_boards_order = cad.val_boards_order

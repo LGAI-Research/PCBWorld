@@ -8,7 +8,7 @@ single ``final_potential``-winner per (board, seed) and reads every reported
 metric off that winner, and (d) aggregates board-means into per-seed scalars so
 the across-seed mean / sample-std match the paper's convention.
 
-Locked conventions:
+Design decisions (locked in the approved plan):
 
 * ``best = final_potential winner`` for *every* metric, including ``clean_pass``.
   The reward potential is constructed so that if any rollout is a clean pass, the
@@ -18,9 +18,8 @@ Locked conventions:
 * ``±`` is the sample std (ddof=1) across the (typically 4) seeds; single-seed
   cells report ``†`` (std undefined).
 * ``time`` is read only from ``per_board_rollout_time`` (mean over a board's
-  rollouts). LLM and rule-based cells carry no such column; their timing comes
-  from the model-level lookups below (:func:`llm_time_for` /
-  :func:`rule_based_time_for`).
+  rollouts). LLM cells currently lack it -> reported as missing here; a *separate*
+  agent fills it later (see ``llm_time_pattern.py``).
 
 READ-ONLY GUARANTEE: everything under ``experimental_results/`` is only ever
 opened for reading (``open_ro``); all writes go to ``paper_outputs/`` and are
@@ -47,21 +46,21 @@ EXP = (REPO_ROOT / "var" / "results" / "kdd").resolve()
 PAPER_OUT = (REPO_ROOT / "var" / "results" / "kdd" / "paper_outputs").resolve()
 
 
-# Task IDs are d1/d2a/d3* in code; the read-only var/results/kdd tree stores
-# them as t1/t2/t3*. Reads fall back to the t-series spelling; outputs written
-# here use the d-names.
+# Task IDs are d1/d2a/d3* in code, but the var/results/kdd tree predates that
+# naming and keeps t1/t2/t3* on disk (read-only — never renamed there). Reads
+# fall back to the legacy spelling; new outputs use the d-names.
 _LEGACY_TASK_DIRS = {"d1": "t1", "d2a": "t2",
                      "d3": "t3", "d3a": "t3a", "d3b": "t3b", "d3c": "t3c"}
-# LLM cell prefixes are interactive_/plan_only_/engine_free_ in code; on disk
-# the same cells carry pcbworld_/apiseq_/cadgen_.
+# LLM cell prefixes are interactive_/plan_only_/engine_free_ in code; existing
+# disk cells keep the legacy prefixes.
 _LEGACY_CELL_PREFIXES = {"interactive_": "pcbworld_", "plan_only_": "apiseq_",
                          "engine_free_": "cadgen_"}
-# Exact-name cell aliases: the ``reference`` cell is stored as ``human``.
+# Exact-name cell aliases (eval-only reference boards were the "human" cell).
 _LEGACY_CELL_NAMES = {"reference": "human"}
 
 
 def legacy_rel(rel: str | Path) -> str:
-    """Translate a d-series rel path to the t-series spelling used on disk."""
+    """Translate a d-series rel path to its legacy t-series disk spelling."""
     parts = []
     for tok in Path(rel).parts:
         if tok in _LEGACY_TASK_DIRS:
@@ -80,7 +79,7 @@ def legacy_rel(rel: str | Path) -> str:
 
 
 def canon_rel(rel: str | Path) -> str:
-    """Inverse of :func:`legacy_rel` — t-series disk spelling to d-series."""
+    """Inverse of :func:`legacy_rel` — legacy t-series spelling to d-series."""
     inv_task = {v: k for k, v in _LEGACY_TASK_DIRS.items()}
     inv_pre = {v: k for k, v in _LEGACY_CELL_PREFIXES.items()}
     inv_name = {v: k for k, v in _LEGACY_CELL_NAMES.items()}
@@ -104,8 +103,8 @@ def canon_rel(rel: str | Path) -> str:
 def cell_dir(rel: str) -> Path:
     """Absolute path to a cell from its rel path under ``experimental_results``.
 
-    Falls back to the t-series task dir when the d-series path does not exist
-    on disk."""
+    Falls back to the legacy t-series task dir when the d-series path does
+    not exist on disk (pre-rename result trees stay untouched)."""
     p = (EXP / rel).resolve()
     if not p.exists():
         legacy = (EXP / legacy_rel(rel)).resolve()
@@ -121,8 +120,8 @@ def cell_name(rel_or_dir: str | Path) -> str:
 
 def disk_cell_name(rel: str) -> str:
     """Cell token as it appears in on-disk artifact names — the RESOLVED dir's
-    basename. On-disk cells carry the pcbworld_/apiseq_/cadgen_ prefixes inside
-    artifact filenames, so artifact parsing must use this, not
+    basename. Legacy cells keep their pre-rename prefixes (pcbworld_/apiseq_/
+    cadgen_) inside artifact filenames, so artifact parsing must use this, not
     :func:`cell_name`."""
     return cell_dir(rel).name
 
@@ -160,8 +159,8 @@ def assert_output_path(path: str | Path) -> Path:
     """Guarantee an output path lives under ``paper_outputs`` and *not* under the
     experiment-results tree. Returns the resolved path (parent dirs created)."""
     p = Path(path).resolve()
-    # PAPER_OUT lives *under* EXP, so it is the one writable subtree carved out
-    # of the otherwise read-only results tree.
+    # PAPER_OUT now lives *under* EXP (in-repo var/ layout), so it is the one
+    # writable subtree carved out of the otherwise read-only results tree.
     if _under(p, EXP) and not _under(p, PAPER_OUT):
         raise RuntimeError(f"output path is inside experimental_results (read-only!): {p}")
     if not _under(p, PAPER_OUT):
@@ -173,9 +172,9 @@ def assert_output_path(path: str | Path) -> Path:
 # --------------------------------------------------------------------------- #
 # Metric vocabulary  (logical name -> per_rollout.csv column)
 # --------------------------------------------------------------------------- #
-# DRV headline = errors-only (drv_errors_only_count) -- the same severity
-# bucket clean_pass uses. (errors+promoted / total_drv are also available
-# below for reference.)
+# DRV headline = errors-only (drv_errors_only_count), per user request -- the
+# same severity bucket clean_pass uses. (errors+promoted / total_drv still
+# available below for reference.)
 METRIC_COL = {
     "clean_pass":          "clean_pass",
     "potential":           "final_potential",      # raw Phi (can be negative)
@@ -199,8 +198,8 @@ WINNER_MODE = "final_potential"
 def load_rollouts(rel: str) -> list[dict[str, str]]:
     """All ``per_rollout.csv`` rows for a cell (read-only).
 
-    A CSV carrying ``clean_success`` is exposed under the paper name
-    ``clean_pass`` (var/ is read-only and never rewritten)."""
+    Pre-rename CSVs (var/ is never rewritten) carry ``clean_success``; it is
+    exposed under the paper name ``clean_pass``."""
     path = cell_dir(rel) / "per_rollout.csv"
     with open_ro(path) as fh:
         import csv
@@ -301,8 +300,8 @@ def load_initial_cache() -> dict[str, float]:
 # LLM per-episode time (PCBWorld / API-level / Code-level cells)
 # --------------------------------------------------------------------------- #
 # The unified LLM cells are boards-only, so per_board_rollout_time is blank. The
-# routing latency lives in the LLM eval aggregate csv as `sec/rollout`
-# (= the paper's sec/ep), mapped onto each LLM cell by (interface, model, ns).
+# real routing latency lives in the original LLM eval aggregate as `sec/rollout`
+# (= the paper's sec/ep). We map it onto each LLM cell by (interface, model, ns).
 _LLM_TIME_CSV = (REPO_ROOT / "var" / "results" / "kdd" / "legacy"
                  / "aggregated_metrics" / "llm_eval_metrics.csv")
 _LLM_DATASET_NS = {"synth2l": "d2a", "pcbench": "d3/d3a"}  # csv dataset -> namespace
@@ -314,9 +313,10 @@ def _norm_model(m: str) -> str:
 
 
 def load_llm_time() -> dict[tuple[str, str, str], float]:
-    """(interface, model, namespace) -> mean sec/rollout, from the LLM eval
-    aggregate csv. interface in {interactive, plan_only, engine_free};
-    namespace in {d2a, d3/d3a}. Empty if the csv is absent."""
+    """(interface, model, namespace) -> mean sec/rollout, from the legacy LLM
+    aggregate. interface in {interactive, plan_only, engine_free}; namespace in
+    {d2a, d3/d3a}.
+    Empty if the csv is absent."""
     global _LLM_TIME
     if _LLM_TIME is not None:
         return _LLM_TIME
@@ -330,7 +330,7 @@ def load_llm_time() -> dict[tuple[str, str, str], float]:
                 ns = _LLM_DATASET_NS.get((r.get("dataset", "") or "").lower())
                 if t is None or ns is None or not model:
                     continue
-                # the csv names models with the on-disk cell prefixes
+                # the legacy csv keeps the old model prefixes on disk
                 if model.startswith("apiseq_"):
                     iface, mdl = "plan_only", model[len("apiseq_"):]
                 elif model.startswith("cadgen_"):
@@ -358,10 +358,11 @@ def llm_time_for(rel: str) -> float | None:
     return None
 
 
-# KRT / OrthoRoute cells carry no persisted routing time, so it is filled here
-# by lookup, keyed (leaf, namespace). D2 / D3-A use the paper's reported numbers
-# (Table 3/22); KRT D3-B is the measured mean elapsed_routing_s over its 10
-# baseline boards. Ortho D3-B has no entry -> reported as '--'.
+# KRT / OrthoRoute routing time was not persisted in the unified cells, so it is
+# filled here by lookup. D2 / D3-A reuse the original paper's numbers (Table
+# 3/22); KRT D3-B is the measured mean elapsed_routing_s from the 2026-05-28
+# baseline run (~/logs/eval_260528_baselines/baseline_runs/t3b/krt/.../manifest.json,
+# 10 boards, all ok). Ortho D3-B has no run -> stays '--'. Keyed (leaf, namespace).
 RULE_BASED_TIME_PAPER = {
     ("krt",   "d2a"):    0.82,
     ("krt",   "d3/d3a"): 0.65,
@@ -399,9 +400,9 @@ def reduce_cell(rel: str, metrics: Sequence[str]) -> dict:
     # (board, seed) -> metric dict
     by_bs = {bs: best_at_k(g) for bs, g in groups.items()}
 
-    # potential_gain backfill: when the per_rollout column is absent or blank,
-    # derive it from final_potential minus the per-board cached
-    # initial_potential (compute_initial_potential.py).
+    # potential_gain backfill: if the per_rollout column is absent/blank (cells
+    # predating the eval change), derive it from final_potential minus the
+    # per-board cached initial_potential (compute_initial_potential.py).
     if "potential_gain" in metrics:
         cache = load_initial_cache()
         ns = board_namespace(rel)
@@ -570,7 +571,7 @@ def fmt_pm(mean: float | None, std: float | None, nd: int = 2, pct: bool = False
 
 
 # --------------------------------------------------------------------------- #
-# Matplotlib style (shared figure conventions)
+# Matplotlib style shared by the figure scripts
 # --------------------------------------------------------------------------- #
 def setup_mpl():
     import matplotlib

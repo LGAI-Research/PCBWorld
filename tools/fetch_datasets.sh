@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Stage / resolve datasets through the single-source resolver (configs/paths.yaml).
 #
-# Policy: repeated-read jobs (training/sweep) stage a
-# local real-copy (var/datasets) to dodge shared-NFS tail latency; single-pass
+# Policy — repeated-read jobs (training/sweep) stage a
+# local real-copy (var/datasets) to dodge shared-NFS tail latency (R3); single-pass
 # jobs (eval) resolve directly. This is the CLI wrapper around configs.loader.paths.
 #
 # Run in the `cadagent` conda env (needs PyYAML). Usage:

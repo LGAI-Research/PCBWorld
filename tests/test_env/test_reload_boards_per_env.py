@@ -62,9 +62,9 @@ def test_reload_boards_per_env_different_boards(pool_kwargs):
 def test_reload_boards_respawns_dead_worker(pool_kwargs):
     """A worker killed before ``reload_boards`` is respawned on its NEW board.
 
-    A worker segfault landing between iterations must not make
-    ``reload_boards`` raise EOFError and take the whole trainer down —
-    dead-worker recovery covers the reload path, not only the step path.
+    Regression guard for the 260803 campaign crash: a worker segfault landing
+    between iterations made ``reload_boards`` raise EOFError and killed the
+    whole trainer (recovery only covered the step path).
     """
     import os
     import signal

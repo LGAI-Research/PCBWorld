@@ -169,12 +169,21 @@ A pipeline run writes into `--output-dir`:
 
 ```
 <output-dir>/
-├── artifacts/                 # saved routed .kicad_pcb (when --save-artifacts on)
+├── boards/                    # routed rollouts, unified cell grammar (when --save-artifacts on):
+│                              #   <board_id>_<cell>_s<SS>_r<RR>.kicad_pcb (+ .kicad_pro/.kicad_prl)
 ├── per_rollout.csv            # one row per rollout, DRC columns filled by Stage 2
 ├── per_board_avg.csv          # per-board aggregates (alias: per_board.csv)
 ├── manifest.json              # env_kwargs + resolved args
 └── eval_overall_summary.json  # overall summary + stage wall times
 ```
+
+With `--save-artifacts on`, Stage 1 saves each rollout under a temporary
+`artifacts/` staging dir and then flattens it into `boards/` under the unified
+cell grammar (`flatten_rollout_artifacts`; `<cell>` = the output dir basename,
+`s<SS>` = the ckpt's training seed), rewriting the `artifact_path` column to
+match. Stage 3 (`aggregate_boards`) parses exactly that grammar from
+`per_rollout.csv` and **fails loudly** (`SystemExit`) when no row matches it —
+it never exits 0 with nothing written.
 
 `per_rollout.csv` is flushed incrementally during the rollout and updated in
 place by the post-hoc DRC stage (keyed by the saved board filename, which is

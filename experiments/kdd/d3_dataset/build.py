@@ -43,7 +43,8 @@ A boards-json (the schema consumed by
       "easy":   {"train": [...100 boards...], "test": [...99 boards...]},
       "medium": {"train": [...287...],        "test": [...10...]},
       "hard":   {"train": [...292...],        "test": [...10...]},
-      "dataset_dirs": {"train": "<--sorted-dir>", "test": "<--sorted-dir>"}
+      "dataset_dirs": {"train": "<--sorted-dir>", "test": "<--sorted-dir>"},
+      "board_filename": "processed_v9_guide_v3.kicad_pcb"
     }
 
 Board names are written with their numeric prefix (e.g.
@@ -52,14 +53,10 @@ Board names are written with their numeric prefix (e.g.
 Post-build overrides
 --------------------
 Manual swaps applied to the generator's output (and not yet wired as a CLI
-flag) are recorded in the JSON's top-level ``_test_overrides`` block.
-medium.test carries one such swap (``0373_badge2016_Badge_init`` →
+flag) are recorded in the JSON's top-level ``_test_overrides`` block. As of
+2026-05-22, medium.test has one such swap (``0373_badge2016_Badge_init`` →
 ``0376_cat-trainer_teensy_base_pcb``) — same quantile bin and CSV pins, but
 without the file-pad outlier (650 components / 668 pad objects).
-
-One board is also dropped from the pool outright (reason + name in
-``configs/datasets/README.md``); it falls in the medium tier, so the shipped
-``configs/datasets/d3.json`` has medium.train = 286 rather than the 287 above.
 """
 from __future__ import annotations
 
@@ -172,6 +169,7 @@ def build(args: argparse.Namespace) -> dict:
         "medium": {"train": medium_train, "test": medium_test},
         "hard":   {"train": hard_train,   "test": hard_test},
         "dataset_dirs": {"train": sorted_dir_str, "test": sorted_dir_str},
+        "board_filename": "processed_v9_guide_v3.kicad_pcb",
     }
 
 

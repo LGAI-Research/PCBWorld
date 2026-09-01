@@ -114,7 +114,7 @@ class RewardConfig(Protocol):
 class YamlRewardConfig:
     """Reward configuration loaded from a YAML config dict.
 
-    Supports both the unified ``potential:`` format and the legacy
+    Supports both the new unified ``potential:`` format and the legacy
     ``step_reward:`` / ``final_reward:`` format.  Legacy configs use
     ``final_reward`` weights as the ground truth for the unified potential.
     """
@@ -147,7 +147,7 @@ class YamlRewardConfig:
             )
 
         if "potential" in config:
-            # Unified potential format
+            # New unified format
             self._potential_cfg: dict[str, Any] = dict(config["potential"])
             self._potential_cfg.pop("use_drc", None)  # deprecated, ignored
             self._step_penalty: float = self._potential_cfg.pop(
@@ -156,7 +156,9 @@ class YamlRewardConfig:
             self._invalid_action_penalty: float = self._potential_cfg.pop(
                 "invalid_action_penalty", 0.01,
             )
-            # Penalty for unparseable agent output (LLM env only).
+            # Penalty for unparseable agent output (LLM env only). Default
+            # matches the legacy env_manager parse_reward (-0.2) so existing
+            # configs see no behavior change.
             self._parse_fail_penalty: float = self._potential_cfg.pop(
                 "parse_fail_penalty", 0.2,
             )
@@ -174,8 +176,8 @@ class YamlRewardConfig:
             self._mask_reject_penalty = config.get("mask_reject_penalty", 0.09)
             final_cfg = dict(config.get("final_reward", {}))
             # Build potential config from final_reward weights (ground truth).
-            # use_drc=False maps to drc_penalty=0, so the resulting potential
-            # has no DRC contribution.
+            # Legacy use_drc=False is preserved by forcing drc_penalty=0 so the
+            # resulting potential has no DRC contribution.
             legacy_use_drc = final_cfg.get("use_drc", False)
             drc_pen = final_cfg.get("drc_penalty", 0.5) if legacy_use_drc else 0.0
             self._potential_cfg = {
@@ -265,13 +267,15 @@ _REWARD_CONFIG_CACHE: dict[str, RewardConfig] = {}
 
 _CONFIGS_REWARD_DIR = Path(__file__).resolve().parents[2] / "configs" / "reward"
 
-# Accepted aliases → canonical config names.
+# Backward-compatible name mapping (old names → new canonical names).
 _NAME_COMPAT: dict[str, str] = {
     "shaped_log_all": "drc_only_dense",
     "step_drc": "drc_linear",
-    # The bare name resolves to the GRPO variant: its truncation_mode=full is
-    # GRPO-only, because GRPO has no critic bootstrap to absorb terminal Φ
-    # (the PPO variant is drc_sparse_promoted_ppo, truncation_mode=none).
+    # drc_sparse_promoted was renamed to drc_sparse_promoted_grpo when the
+    # PPO variant (drc_sparse_promoted_ppo, truncation_mode=none) was split
+    # off — the truncation_mode=full version is GRPO-only because GRPO has
+    # no critic bootstrap to absorb terminal Φ. Legacy v51/v56 scripts still
+    # reference the bare name; alias keeps them resolving.
     "drc_sparse_promoted": "drc_sparse_promoted_grpo",
 }
 
@@ -300,7 +304,7 @@ def get_reward_config(name: str = "default") -> RewardConfig:
 
     Resolution order:
         1. If *name* ends with .yaml/.yml -> load directly from that path.
-        2. Apply the alias mapping.
+        2. Apply backward-compatible name mapping.
         3. If *name* is already cached -> return cached instance.
         4. Look for configs/reward/{name}.yaml -> load and cache.
         5. Raise KeyError if not found.
@@ -309,7 +313,7 @@ def get_reward_config(name: str = "default") -> RewardConfig:
     if name.endswith((".yaml", ".yml")):
         return load_reward_config(name)
 
-    # 2. Alias mapping
+    # 2. Backward-compatible name mapping
     name = _NAME_COMPAT.get(name, name)
 
     # 3. Cache hit

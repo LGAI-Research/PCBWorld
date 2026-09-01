@@ -2,7 +2,8 @@
 
 These tests require the C++ kicad_rl_router library.
 Run with:
-    conda activate cadagent
+    source .venv/bin/activate
+    export DYLD_LIBRARY_PATH='build_rl/kicad/KiCad.app/Contents/Frameworks'
     export PYTHONPATH='build_rl/pcbnew/python/rl:.'
     pytest tests/test_diagnostics/test_mdp_integration.py -v
 """
@@ -32,6 +33,11 @@ def board_path():
     if not os.path.exists(path):
         pytest.skip(f"Fixture not found: {path}")
     return path
+
+
+@pytest.fixture
+def output_dir(tmp_path):
+    return str(tmp_path / "test_output")
 
 
 @pytest.mark.skipif(not shutil.which("kicad-cli"), reason="kicad-cli not found on PATH")
@@ -78,3 +84,5 @@ class TestPCBRenderer:
             assert isinstance(frame, np.ndarray)
         finally:
             renderer.close()
+
+

@@ -6,7 +6,8 @@ Maps ``(dataset_name, grid?, split?, board_id)`` to:
     * pre-converted Specctra DSN (``_unrouted.dsn``)
     * pre-converted ORP (``.orp``)
 
-All locations are derived from env vars (no hardcoded host-specific paths).
+All locations come from env vars, falling back to the configs/paths.yaml
+registry (no hardcoded host-specific paths in this module).
 The runner reads these to (a) feed each baseline its preferred input format,
 and (b) feed ``eval.metrics.evaluate_one`` the matching ``.kicad_pro``.
 
@@ -24,35 +25,37 @@ multiple grids can be configured side-by-side. The runner's ``--grid``
 flag selects which pair to look at.
 
 All envs accept absolute paths. When a specific var is unset, the location
-falls back to a fixed sub-path under ``$CADAGENT_DATA_ROOT`` (the repo-wide
-dataset root); with neither set, resolution raises ``KeyError`` with a
-helpful message.
+falls back to the named logical dataset in ``configs/paths.yaml`` (resolved
+through ``configs.loader.paths``, i.e. under the repo-wide data root); with
+an empty data root, resolution raises with a message naming
+``CADAGENT_DATA_ROOT``.
 """
 
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
 
 # ---------------------------------------------------------------------------
-# Root resolution — the specific env var wins; otherwise the location falls
-# back to a fixed sub-path under $CADAGENT_DATA_ROOT (the repo-wide dataset
-# root, layout: configs/paths.yaml). There are no machine-specific defaults:
-# with neither variable set, resolution raises a KeyError naming both.
+# Root resolution — the specific env var wins; otherwise the location comes
+# from the logical dataset registered in configs/paths.yaml (env
+# CADAGENT_DATA_ROOT overrides the root, the yaml default falls back). No
+# machine-specific path is hardcoded here.
 # ---------------------------------------------------------------------------
 
-_DATA_ROOT_SUBS = {
-    "PCBENCH_PCB_ROOT": "pcbench/exacad_sorted",
-    "PCBENCH_DSN_ROOT": "pcbench/exacad_sorted_dsn",
-    "SYNTH2L_PCB_ROOT": "synthetic/synth_2L_v2",
-    "SYNTH2L_DSN_ROOT": "synthetic/synth_2L_v2_dsn",
+_DATASET_NAMES = {
+    "PCBENCH_PCB_ROOT": "pcbench_exacad",
+    "PCBENCH_DSN_ROOT": "pcbench_exacad_dsn",
+    "SYNTH2L_PCB_ROOT": "synth_2L_v2",
+    "SYNTH2L_DSN_ROOT": "synth_2L_v2_dsn",
 }
 for _g in (10, 50, 100, 200, 500):
-    _DATA_ROOT_SUBS[f"SYNTH1L_PCB_ROOT_{_g}"] = f"synthetic/synth_1L_grid{_g}_5net_v02"
-    _DATA_ROOT_SUBS[f"SYNTH1L_DSN_ROOT_{_g}"] = f"synthetic/synth_1L_grid{_g}_5net_v02_dsn"
+    _DATASET_NAMES[f"SYNTH1L_PCB_ROOT_{_g}"] = f"synth_1L_grid{_g}_5net_v02"
+    _DATASET_NAMES[f"SYNTH1L_DSN_ROOT_{_g}"] = f"synth_1L_grid{_g}_5net_v02_dsn"
 
 PCBENCH_STEM = "processed_v9_guide_v3"
 SUPPORTED_GRIDS = (10, 50, 100, 200, 500)
@@ -90,14 +93,14 @@ def _env_root(name: str) -> Path:
     val = os.environ.get(name)
     if val:
         return Path(val)
-    data_root = os.environ.get("CADAGENT_DATA_ROOT")
-    if data_root:
-        return Path(data_root) / _DATA_ROOT_SUBS[name]
-    raise KeyError(
-        f"{name} is not set (and CADAGENT_DATA_ROOT is not set either) — "
-        f"export {name}, or CADAGENT_DATA_ROOT with the dataset at "
-        f"<root>/{_DATA_ROOT_SUBS[name]}."
-    )
+    # Lazy import with a repo-root bootstrap so this module also works when
+    # imported without the runner's sys.path setup (e.g. from the _lib dir).
+    repo_root = str(Path(__file__).resolve().parents[4])
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+    from configs.loader.paths import resolve_dataset
+
+    return resolve_dataset(_DATASET_NAMES[name])
 
 
 def _require_grid(grid: int | None) -> int:

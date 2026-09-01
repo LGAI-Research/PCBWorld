@@ -1,18 +1,20 @@
-"""Rejection sampling in the bbox-shifted augmentation anchors on the **real outline**.
+"""Rejection sampling in the bbox-shifted augmentation anchors on the **real
+outline** (regression).
 
-``sample_bbox_shifted`` accepts only samples where every point entity stays inside
-the board after the board is virtually scaled. Two properties of that acceptance
-test are pinned here:
+``sample_bbox_shifted`` must accept only samples where every point entity stays
+inside the board after the board is virtually scaled. The old acceptance test
+got two things wrong (260819 audit):
 
-1. It is judged against the actual Edge.Cuts outline, not the **axis-aligned bbox**
-   — on a non-rectangular board (``d2b_geo`` / ``d2bv_geo``) bbox ⊋ outline, so a
-   pad can sit inside the bbox while sticking out of the board.
-2. The constraint set covers OBSTACLE entities (NPTH holes/slots) and netless NC
-   pads, not just **net pad centers**.
+1. It used the **axis-aligned bbox** instead of the actual Edge.Cuts outline —
+   on a non-rectangular board (``d2b_geo`` / ``d2bv_geo``) bbox ⊋ outline, so a
+   pad could stick out of the board and still be accepted.
+2. The constraint set was **net pad centers only** — OBSTACLE entities (NPTH
+   holes/slots) and netless NC pads left the board freely.
 
-Verification runs without the engine on a hand-built L-shaped board with a notch.
-For an L shape the "inside" test has a closed form
-(``not (x > 20 and y > 20)``), giving an implementation-independent ground truth.
+Verification runs without the engine on a hand-built L-shaped board with a
+notch. For an L shape the "inside" test has a closed form
+(``not (x > 20 and y > 20)``), giving an implementation-independent ground
+truth.
 """
 from __future__ import annotations
 
@@ -102,7 +104,8 @@ def test_pads_stay_inside_the_real_outline(fmt):
     """Non-rectangular board: no pad leaks into the notch, which is inside the
     bbox but outside the outline."""
     # (19.5, 19.5) sits right next to the notch's inner corner: as the outline
-    # shrinks the notch swallows this pad, while it stays inside the scaled bbox.
+    # shrinks the notch swallows this pad, while it stays inside the scaled
+    # bbox — the old check's blind spot.
     pads = [(5.0, 5.0), (34.0, 8.0), (8.0, 34.0), (19.5, 19.5)]
     samples = _draw(_obs(fmt, pads))
     _assert_all_inside(samples, pads)
@@ -111,7 +114,8 @@ def test_pads_stay_inside_the_real_outline(fmt):
 @pytest.mark.parametrize("fmt", ["indexed", "json"])
 def test_obstacles_and_nc_pads_are_constrained(fmt):
     """OBSTACLE (NPTH) entities and netless NC pads belong to the constraint set
-    too — the single net pad sits mid-board and constrains nothing on its own."""
+    too — the only net pad sits mid-board, so the old check let these be pushed
+    off the board freely."""
     pads = [(20.0, 10.0)]
     obstacles = [(34.0, 8.0), (5.0, 5.0)]
     upads = [(8.0, 34.0)]

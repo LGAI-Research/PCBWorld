@@ -132,7 +132,7 @@ def test_save_emits_pro_even_when_source_project_lock_held(tmp_path: Path):
     process holding the same source concurrently, or a stale lock left by a
     crash. ``SaveProjectAs`` copies that flag onto the output project file,
     whose ``SaveToFile`` then silently no-ops: a routed ``.kicad_pcb`` lands
-    WITHOUT its rules sidecar (a parallel-eval hazard). The
+    WITHOUT its rules sidecar (parallel-eval hazard). The
     engine's ``save()`` clears the flag scoped to the save-as (this engine
     never writes the SOURCE project) and fails loudly if the sidecar still
     did not land.
@@ -169,8 +169,10 @@ def test_save_leaves_no_prl_sidecar(tmp_path: Path):
 
     KiCad's project save emits a local-settings sidecar (``.kicad_prl`` —
     GUI view state; nothing the engine or scoring reads) as a side effect.
-    ``save()`` removes a prl it created and preserves one that already
-    existed at the path.
+    The old normalize-and-cache layer cleaned these up; the strict-load
+    contract removed that layer and the cleanup with it, leaking one .prl
+    per save. ``save()`` now removes a prl it created and
+    preserves one that already existed at the path.
     """
     src = tmp_path / MODERN_PAIR.name
     shutil.copy(MODERN_PAIR, src)
@@ -200,8 +202,8 @@ def test_convert_pernet_tool_converts_proless_board(tmp_path: Path):
 
     Its input is by definition pro-less (freshly generated pernet boards), so
     it must go through the raw-router primitive — opening via ``KiCadEngine``
-    would refuse every input. Also pins that the conversion leaves no
-    ``.kicad_prl`` litter.
+    refuses every input (the exact breakage the 260827 review found). Also
+    pins that the conversion leaves no ``.kicad_prl`` litter.
     """
     import importlib.util
 

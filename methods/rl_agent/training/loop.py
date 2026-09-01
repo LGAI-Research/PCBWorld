@@ -96,13 +96,14 @@ def build_evaluators(args, agent, device, eval_boards, *, mem_budget=None,
     # Optional diagnostic eval sets (eval2..eval5): fixed board-lists (e.g.
     # real d3-b / d3-a) evaluated each cadence under <prefix>/*. Reuse
     # _rollout_fn (same agent / env_kwargs), only the board list differs;
-    # do NOT drive best-ckpt. Disabled when unset.
+    # do NOT drive best-ckpt. Disabled (backward-compatible) when unset.
     #
     # --eval-diag-max-steps / --eval-diag-masking-rule pin the diagnostic
-    # protocol cell-independently: inline eval otherwise inherits the TRAIN
-    # env_kwargs, so cells varying max_steps or masking would change their own
-    # diagnostics. Primary val and val_greedy stay native — they drive/read
-    # best-ckpt under the run's own protocol.
+    # protocol cell-independently (rules/experiments.md §6: inline eval
+    # otherwise inherits the TRAIN env_kwargs, so cells varying max_steps or
+    # masking would silently change their own diagnostics). Primary val and
+    # val_greedy stay native — they drive/read best-ckpt under the run's own
+    # protocol.
     diag_max_steps = getattr(args, "eval_diag_max_steps", None)
     diag_masking = getattr(args, "eval_diag_masking_rule", None)
     if diag_max_steps is None and diag_masking is None:
@@ -210,7 +211,7 @@ class RLTrainer(Trainer):
         self.mem_budget_rollout = None
         self._mem_budget_calibrated = False
         # --update-gpus > 1: DDPUpdateGroup (spawned update workers + rank-0
-        # ctx). None = single-GPU update (the default path).
+        # ctx). None = single-GPU update (the unchanged default path).
         self.ddp = None
         # Validation-driven best-ckpt tracking, shared by PPO + GRPO (see
         # on_validation). Init to the worst value for the configured direction
@@ -326,6 +327,13 @@ class RLTrainer(Trainer):
     # Kwargs the TRAINING pool adds on top of the shared RLEnvConfig surface.
     # Everything else comes from ``to_pool_kwargs()`` — the SAME dict val/eval
     # builds — so a knob added there reaches training with no edit here.
+    #
+    # Until 2026-08-20 this method hand-listed all 28 kwargs, and five knobs
+    # (action_history_len / net_constraint_obs / outline_obs / simplify_outline
+    # / keep_routing_fraction) were never added to that list: training silently
+    # ran on the factory defaults while val used the CLI value (obs drift, 87
+    # affected runs). Keep this tuple minimal — every entry is a train/val
+    # difference that has to be declared at launch (--expect-env-diff).
     #: Knobs that exist only while training — passed to the factory as one
     #: explicit ``train_extras`` bundle. Eval omits the bundle entirely, so its
     #: absence means "no training layer" rather than a silent per-knob default
@@ -391,7 +399,8 @@ class RLTrainer(Trainer):
         ``config_resolved.yaml`` records the parsed CLI namespace — the run's
         *intent*. This records the *effect*: the kwargs the factory resolved for
         training (snapshotted inside it, post-default) and the kwargs validation
-        will resolve for itself.
+        will resolve for itself. The 2026-08-20 five-knob drift was invisible
+        precisely because only intent was ever stored.
 
         The val side is computed, not guessed: ``resolve_eval_env_kwargs`` is the
         same function ``eval_transformer`` calls, so no rollout is needed to know
@@ -421,9 +430,9 @@ class RLTrainer(Trainer):
         # val has — recording it as present would put train_extras in every
         # run's diff and force a declaration that says nothing. "All-default"
         # is judged from the TRAINING side: _env_kwargs always forces the
-        # pool-level advance_rng_on_reload on, so the comparison adds it to the
-        # bare factory bundle — matching against the bundle as-is (advance=False)
-        # would never succeed and every run would have to declare train_extras.
+        # pool-level advance_rng_on_reload on, so comparing against the bare
+        # factory bundle (advance=False) can never match and every run would
+        # be back to declaring train_extras (the pre-fix state).
         train_env = dict(train_env)
         from methods.rl_agent.wrappers.factory import _TRAIN_EXTRAS
         if train_env.get("train_extras") == {
@@ -464,13 +473,16 @@ class RLTrainer(Trainer):
         regions = tuple(
             r for r in getattr(self.args, "compile_regions", "").split(",") if r
         )
-        if bf16 or regions:
+        attn = getattr(self.args, "attn", "sdpa")
+        if bf16 or regions or attn != "sdpa":
             policy.configure_speed(
                 bf16=bf16, compile_regions=regions,
                 compile_mode=getattr(self.args, "compile_mode", "default"),
+                attn=attn,
             )
             print(f"  speed knobs: bf16={bf16} compile_regions={regions} "
-                  f"mode={getattr(self.args, 'compile_mode', 'default')}")
+                  f"mode={getattr(self.args, 'compile_mode', 'default')} "
+                  f"attn={attn}")
         n_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
         if self.USE_CRITIC:
             n_critic = sum(p.numel() for p in policy.critic_head.parameters())
@@ -821,7 +833,8 @@ class RLTrainer(Trainer):
         elapsed = time.time() - t0
         self._log_common(metrics, buffer, iteration, elapsed)
         if self.ddp is not None:
-            # Keep the per-iteration buffer-transfer cost observable.
+            # Buffer-transfer cost was un-measured pre-integration — keep the
+            # per-iter bytes/seconds observable (phase-2 /dev/shm call basis).
             mb = bcast_bytes / (1024.0 * 1024.0)
             self.writer.add_scalar("diag/ddp_buffer_bcast_mb", mb, iteration)
             self.writer.add_scalar("diag/ddp_buffer_bcast_s", bcast_s, iteration)
@@ -1142,7 +1155,8 @@ class RLTrainer(Trainer):
         Aborted run (``fit_completed`` False — exception, signal): do NEITHER.
         The watcher then keeps polling this save-dir, so a relaunch into the
         same directory is picked up by the same watcher, and teardown does not
-        sit in the 4h drain wait.
+        sit in the 4h drain wait. (260825: a crashed trainer marked done, the
+        watcher exited, and the relaunched cell ran with no watcher at all.)
         """
         if getattr(self, "fit_completed", False):
             self.async_val.mark_train_done()
@@ -1200,9 +1214,11 @@ class RLTrainer(Trainer):
         ``state_fn`` is lazy so the async path only touches disk on improvement.
         """
         # None-tolerant formatting: an ``overall`` entry can be None (e.g. a
-        # rollout that crashed over a whole board), which would raise a
-        # TypeError inside format(). The summary print shows NA and carries on;
-        # best-ckpt selection is filtered by the None/finite guard below.
+        # rollout that crashed over a whole board — measured 260813 A10
+        # iter-10: routability_mean=None, and the format() TypeError killed a
+        # 300-iter trainer outright). The summary print shows NA and carries
+        # on; best-ckpt selection is filtered by the None/finite guard below,
+        # as before.
         def _f(key: str, spec: str) -> str:
             v = ov.get(key)
             return format(v, spec) if isinstance(v, (int, float)) else "NA"
@@ -1249,7 +1265,7 @@ class RLTrainer(Trainer):
 
 
 class PPOTrainer(RLTrainer):
-    """Clipped-objective PPO with a critic head."""
+    """SB3-style clipped-objective PPO with a critic head."""
 
     ALGO = "ppo"
     USE_CRITIC = True

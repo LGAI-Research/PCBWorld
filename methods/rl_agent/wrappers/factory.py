@@ -5,10 +5,10 @@ Construct the canonical RL env surface — a single :class:`KiCadRLWrapper`
 pool of them (:class:`SubprocDecoderVecEnv`, required by KiCad's singleton
 RLRouter constraint).
 
-Layer note: this module imports only *down* (``pcb_world.core``) and
-*sideways within wrappers* (``methods.rl_agent.wrappers.adapter``,
-``pcb_world.vec.backends``) — never up into ``training``. Training drives
-these via keyword config it owns.
+Layer note: this module lives in ``envs/wrappers/rl`` and imports only
+*down* (``pcb_world.core``) and *sideways within wrappers*
+(``methods.rl_agent.wrappers.adapter``, ``pcb_world.vec.backends``) — never up into
+``training``. Training drives these via keyword config it owns.
 """
 
 from __future__ import annotations
@@ -28,8 +28,9 @@ from methods.rl_agent.wrappers.adapter import KiCadRLWrapper
 #: the required set is exactly ``RLEnvConfig.to_pool_kwargs()`` — the shared
 #: surface train and eval both build — plus ``seed`` / ``policy_net_select``,
 #: which both sides pass explicitly. A knob added to that surface therefore can
-#: never reach an env through a silent factory default.
-#: ``tests/test_env_contract.py`` pins the correspondence.
+#: never reach an env through a silent factory default. (2026-08-20: five knobs
+#: did exactly that for months because loop.py hand-listed its kwargs and missed
+#: them.) ``tests/test_env_contract.py`` pins the correspondence.
 _REQ: Any = object()
 
 #: Knobs that exist only while TRAINING (no eval counterpart), passed as one
@@ -45,7 +46,8 @@ _TRAIN_EXTRAS: dict[str, Any] = {
     "aug_zoom": False,
     # Pool-level: keep each worker's stream moving across env rebuilds. Read by
     # ``make_decoder_env_pool``; ``make_decoder_env`` resolves and ignores it
-    # (one bundle, one vocabulary).
+    # (one bundle, one vocabulary — the alternative was a defaulted parameter,
+    # which is what this whole contract exists to remove).
     "advance_rng_on_reload": False,
 }
 
@@ -90,6 +92,7 @@ def make_decoder_env(
     directional_candidates: str | None = _REQ,
     connectivity_filter: bool = _REQ,
     pad_graze_margin_mm: float = _REQ,
+    offboard_mask: bool = _REQ,
     use_yaml_drc_fallback: bool = _REQ,
     drc_config_path: str | None = _REQ,
     simplify_outline: bool = _REQ,
@@ -107,12 +110,16 @@ def make_decoder_env(
     feature conversion). Group rollouts use a Python list of these wrappers
     rather than ``DummyVecEnv`` because dict obs cannot be numpy-stacked.
     """
-    # Unknown kwargs are never swallowed: absorbing one silently (e.g.
-    # directional_grid_size, whose replacement is directional_candidates
-    # "grid<N>") would route with the wrong candidate set. Every unknown name
-    # raises; names whose destination is known get a pointer to it instead of a
-    # bare "unexpected keyword argument".
+    # directional_grid_size was folded into directional_candidates ("grid<N>").
+    # Unlike behavior-neutral removed kwargs, silently swallowing it would
+    # route with the wrong candidate set — reject loudly.
     if unexpected:
+        # Nothing is swallowed. This used to be ``**_deprecated`` so callers
+        # passing a REMOVED knob (use_drc, …) kept working — but the same
+        # catch-all silently absorbed knobs that had merely MOVED, so a call
+        # could ask for augmentation and get an env without any. An unknown
+        # kwarg now always raises; names whose destination we know get a
+        # pointer instead of a bare "unexpected keyword argument".
         if "directional_grid_size" in unexpected:
             raise TypeError(
                 "make_decoder_env: directional_grid_size was renamed — pass "
@@ -182,6 +189,7 @@ def make_decoder_env(
         directional_candidates=directional_candidates,
         connectivity_filter=connectivity_filter,
         pad_graze_margin_mm=pad_graze_margin_mm,
+        offboard_mask=offboard_mask,
     )
 
 
@@ -211,6 +219,7 @@ def make_decoder_env_pool(
     directional_candidates: str | None = _REQ,
     connectivity_filter: bool = _REQ,
     pad_graze_margin_mm: float = _REQ,
+    offboard_mask: bool = _REQ,
     use_yaml_drc_fallback: bool = _REQ,
     drc_config_path: str | None = _REQ,
     simplify_outline: bool = _REQ,
@@ -254,9 +263,12 @@ def make_decoder_env_pool(
         train_extras, where="make_decoder_env_pool",
     )["advance_rng_on_reload"]
     if unexpected:
-        # Unknown kwargs are never swallowed (see make_decoder_env): every
-        # unknown name raises, and names whose destination is known get a
-        # pointer to it.
+        # Nothing is swallowed. This used to be ``**_deprecated`` so callers
+        # passing a REMOVED knob (use_drc, …) kept working — but the same
+        # catch-all silently absorbed knobs that had merely MOVED, so a call
+        # could ask for augmentation and get an env without any. An unknown
+        # kwarg now always raises; names whose destination we know get a
+        # pointer instead of a bare "unexpected keyword argument".
         if "directional_grid_size" in unexpected:
             raise TypeError(
                 "make_decoder_env_pool: directional_grid_size was renamed — pass "
@@ -276,8 +288,9 @@ def make_decoder_env_pool(
             # slot_perm, auto net-select) to its starting point — under
             # per-iteration board reloads that replays the same draws every
             # iteration. Mixing the rebuild count into the seed keeps the
-            # stream moving forward across rebuilds. reload_seq == 0 uses ``s``
-            # unchanged, so pools that never advance (eval) are unaffected.
+            # stream moving forward across rebuilds. reload_seq == 0 keeps the
+            # legacy seed exactly, so pools that never advance (eval) stay
+            # bit-identical.
             seed_i = s if reload_seq == 0 else int(
                 np.random.SeedSequence([s, reload_seq]).generate_state(1)[0]
             )
@@ -305,6 +318,7 @@ def make_decoder_env_pool(
                 directional_candidates=directional_candidates,
                 connectivity_filter=connectivity_filter,
                 pad_graze_margin_mm=pad_graze_margin_mm,
+                offboard_mask=offboard_mask,
                 use_yaml_drc_fallback=use_yaml_drc_fallback,
                 drc_config_path=drc_config_path,
                 simplify_outline=simplify_outline,
@@ -321,8 +335,9 @@ def make_decoder_env_pool(
 
     # What the envs were ACTUALLY built with, snapshotted at the function's
     # entry (so it is post-default, post-resolution). Callers dump this rather
-    # than the args they *meant* to pass, so the record (ckpt args,
-    # config_resolved.yaml, run name) stores effect rather than intent.
+    # than the args they *meant* to pass — the whole point of the 2026-08-20
+    # audit was that every existing record (ckpt args, config_resolved.yaml,
+    # run name) stored intent and none stored effect.
     _effective = {**_passed, "train_extras": dict(train_extras or {})}
 
     def _stamp(pool):

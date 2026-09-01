@@ -56,14 +56,18 @@ python3 tools/datagen/pcbench_prep/make_guide.py --base-dir <newdrc-out>
 | `--log` | `/tmp/make_guide_log.json` | Per-board result log (overwritten on each run) |
 | `--verbose` | off | Per-board progress and tracebacks (serial mode prints one line per board) |
 
-External requirements:
+External requirements (resolved by [kicad_tools.py](kicad_tools.py); the run prints the
+choice on its first line):
 
-- `kicad-cli` on `PATH` — every DRC trial shells out to `kicad-cli pcb drc --format json
-  --severity-error`.
-- `/usr/bin/python3` able to `import pcbnew` — used for zone refill before each DRC run.
-  The interpreter path is hard-coded, and the helper script is written to
-  `/tmp/_make_guide_refill_helper.py`. If the refill fails or times out, DRC runs on the
-  un-refilled board instead, which can change zone-related violation counts.
+- `kicad-cli` — every DRC trial shells out to `kicad-cli pcb drc --format json
+  --severity-error --all-track-errors`. Default: the engine's own build
+  (`build_rl/kicad/kicad-cli`, from `BUILD_CLI=1 BUILD_PCBNEW=1 bash engine/build_rl_router.sh`),
+  else `kicad-cli` on `PATH`; `KICAD_CLI` overrides.
+- an interpreter that imports `pcbnew` — used for zone refill before each DRC run. Default:
+  the running interpreter with the engine's `build_rl/pcbnew` on `PYTHONPATH`, else
+  `/usr/bin/python3` (an apt-installed KiCad); `PCBNEW_PYTHON` overrides. The helper script is
+  written to `/tmp/_make_guide_refill_helper.py`. If the refill fails or times out, DRC runs on
+  the un-refilled board instead, which can change zone-related violation counts.
 
 ## 4. Flow
 
@@ -171,7 +175,7 @@ All in [make_guide.py](make_guide.py).
 `skip` reasons: `no pcb` (no `<stem>.kicad_pcb`), `no Default class` (neither the pro nor
 the pcb defines a class named `Default`), `no routed segments` (no segment/arc carries a
 net). `error: all DRC trials errored` means `kicad-cli` produced no usable report for any
-trial — check that `kicad-cli` is on `PATH` first.
+trial — check the `tools:` line the run printed first (which `kicad-cli` it resolved).
 
 The run also prints a status tally at the end.
 
@@ -183,6 +187,6 @@ The run also prints a status tally at the end.
 | **Nets with mixed widths** | The widest track on the net wins — the design intent is assumed to be the wider one. Only nets that DRC blames get narrowed, and only far enough to clear the violation |
 | **Nets without segments** | A net routed only through a zone, or unconnected, has no width to observe and is pinned to the default width, so it lands in the `Default` class |
 | **Widening can break DRC** | Raising a net to its max width can create clearance violations that the original board did not have; that is exactly what the trial loop detects and walks back |
-| **Zone refill** | Without a `pcbnew`-capable `/usr/bin/python3`, DRC sees unfilled zones and the accept/reject decision is made on different violation counts |
+| **Zone refill** | Without a `pcbnew`-capable interpreter (the `tools:` line names it), DRC sees unfilled zones and the accept/reject decision is made on different violation counts |
 | **`fail` boards are still written** | `status: fail` means the guide files exist but carry known violations; filter on the log before using a batch |
 | **Runtime** | Each board runs DRC up to `N_TRIAL + 1` times, each with a zone refill; `--workers` parallelises across boards, not within one |

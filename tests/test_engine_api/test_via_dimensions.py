@@ -44,7 +44,8 @@ class TestDesignRulesVisibility:
 
     def test_engine_via_diameter_from_default_netclass(self, rules):
         # Fixture's companion .kicad_pro puts via_diameter on the Default
-        # netclass (0.6 mm); the per-netclass view is the reliable source.
+        # netclass (0.6 mm). The per-netclass view is the reliable
+        # source post-engine-refactor.
         assert rules.default_netclass.via_diameter_mm == pytest.approx(0.6, abs=0.01)
 
     def test_engine_via_drill_from_default_netclass(self, rules):
@@ -137,9 +138,10 @@ class TestViaDimensionsInPlacedVia:
 class TestDesignRulesSurfacedOnEnvInit:
     """Verify env init surfaces the engine's design rules on board_static.
 
-    env.py reads the hardest-per-netclass view from
-    ``KiCadEngine.get_design_rules`` and exposes it under
-    ``board_static["board_constraints"]``.
+    Under the engine-based refactor, env.py no longer copies pcb-setup
+    via dimensions into the engine; instead it reads the hardest-per
+    -netclass view from ``KiCadEngine.get_design_rules`` and exposes it
+    under ``board_static["board_constraints"]``.
     """
 
     @pytest.fixture

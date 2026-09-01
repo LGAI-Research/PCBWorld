@@ -431,7 +431,6 @@ pycparser==3.0
     # via cffi
 pydantic==2.12.5
     # via
-    #   pcbworld (pyproject.toml)
     #   anthropic
     #   compressed-tensors
     #   fastapi
@@ -515,7 +514,6 @@ regex==2026.7.19
     #   vllm
 requests==2.33.1
     # via
-    #   pcbworld (pyproject.toml)
     #   gguf
     #   google-api-core
     #   google-auth

@@ -1,8 +1,8 @@
 [project]
 name = "pcbworld"
-# Kept in sync with the README.md <!--VERSION--> marker; enforced by
-# tools/docs/check_docs.py (version-sync).
-version = "1.0.0"
+# Single source of truth = README.md <!--VERSION--> marker; kept in sync by
+# the version tooling and enforced by tools/docs/check_docs.py (version-sync).
+version = "1.1.0"
 requires-python = ">=3.12"
 
 # All direct dependencies are pinned (==) to the versions measured in the working
@@ -17,11 +17,9 @@ dependencies = [
     "cloudpickle==3.1.2",
     "psutil==7.2.2",
     "tqdm==4.67.3",
-    "requests==2.33.1",
-    "pydantic==2.12.5",
     "gymnasium==1.2.3",
     # --- rendering / figures ---
-    # rasterises kicad-cli PDF exports (pcb_world/rendering); BSD/Apache-licensed
+    # rasterises kicad-cli PDF exports (pcb_world/rendering); BSD/Apache — replaced LGPL cairosvg
     "pypdfium2==5.12.1",
     "pillow==12.1.1",
     "matplotlib==3.10.8",
@@ -59,5 +57,9 @@ dependencies = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]   # collected recursively
-addopts = "-n 32 --dist loadfile"   # parallel via pytest-xdist; disable with -n 0 (needed for --pdb/-s). 32 > 16 on the 64-core hosts (26.4s -> 21.3s); -n auto (=64) is SLOWER (29s, worker-startup bound)
+testpaths = ["tests"]   # the public suite; the private test tree is run separately (see the README)
+addopts = "-m 'not deprecated' -n 32 --dist loadfile"   # parallel via pytest-xdist; disable with -n 0 (needed for --pdb/-s). 32 > 16 on the 64-core hosts (26.4s -> 21.3s); -n auto (=64) is SLOWER (29s, worker-startup bound)
+markers = [
+    "visual: visual test scenarios with artifact generation",
+    "deprecated: tests for deprecated (v5 low-level) environment — run with pytest -m deprecated",
+]

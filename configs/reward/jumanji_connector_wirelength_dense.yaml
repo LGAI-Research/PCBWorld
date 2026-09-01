@@ -1,7 +1,7 @@
 # Transformer/KiCad physical-wirelength equivalent of Jumanji Connector dense reward.
 #
 # Connector-v2 applies a per-grid-step penalty to every still-moving agent.
-# The KiCad 1L datasets map a 100mm board to grid{10,100,1000}, so:
+# The v56 KiCad 1L datasets map a 100mm board to grid{10,100,1000}, so:
 #   grid10:   0.03 / 10mm  = 0.003 per mm
 #   grid100:  0.003 / 1mm  = 0.003 per mm
 #   grid1000: 0.0003 / .1mm = 0.003 per mm

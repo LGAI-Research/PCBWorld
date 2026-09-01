@@ -7,16 +7,19 @@
 #
 # truncation_mode: full — on truncation the env emits Φ(s_final) as an explicit
 # reward, exactly as on termination. GRPO has no critic / GAE bootstrap, so the
-# terminal Φ has to come from the env for learning to work.
+# terminal Φ has to come from the env for learning to work (the trainer's
+# post-hoc Φ-add has also been removed — see
+# methods/rl_agent/training/train_grpo.py:408-428).
 #
 # PPO terminal runs use drc_sparse_promoted_ppo (truncation_mode: none) instead
 # — the SB3-idiomatic path where the critic's V(s_next) bootstrap absorbs future
 # Φ. The YAML is split only so that each algorithm implements the same terminal
 # reward in the way that is self-consistent for it.
 #
-# Alias: reward_config.py's _NAME_COMPAT maps the bare name
-# `drc_sparse_promoted` to this file. New scripts should spell out the
-# _grpo / _ppo suffix.
+# Legacy alias: the old v51/v56 scripts refer to this file by the bare name
+# `drc_sparse_promoted`, so reward_config.py's _NAME_COMPAT carries the alias
+# (drc_sparse_promoted → drc_sparse_promoted_grpo). New scripts should spell
+# out the _grpo / _ppo suffix.
 
 name: drc_sparse_promoted_grpo
 mode: terminal

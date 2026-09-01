@@ -33,7 +33,7 @@ BASES: dict[str, tuple[str, str, str]] = {
     "hooks.rollout_decomp": (
         "methods.rl_agent.rollout.primitive", "iter_rollout", "0e00823aa2523c05"),
     "hooks.update_decomp": (
-        "methods.rl_agent.algorithms._common", "_fixed_batch_step", "7092b166ca194c45"),
+        "methods.rl_agent.algorithms._common", "_fixed_batch_step", "fb4eb25030a516ea"),
     "hooks.update_decomp/chunk": (
         "methods.rl_agent.algorithms._common", "_accumulate_chunk", "a1123a1704568a84"),
     "worker_shim._decoder_worker": (

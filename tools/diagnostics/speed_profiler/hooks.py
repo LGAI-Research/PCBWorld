@@ -100,9 +100,9 @@ def update_decomp():
     count every pass). Its clip/step happen in the caller and stay in the resid.
 
     Mirrors of methods/rl_agent/algorithms/_common.py:{_fixed_batch_step,
-    _accumulate_chunk} (flat walk-cache: mb_walk = gather closure,
-    walked=mb_walk()/mb_walk(positions), entropy_norm pass-through) — re-sync
-    if those bodies change.
+    _accumulate_chunk} (base @ 2026-08-16, flat walk-cache: mb_walk =
+    gather closure, walked=mb_walk()/mb_walk(positions), entropy_norm
+    pass-through) — re-sync if those bodies change.
     """
     import torch
     import torch.nn as nn

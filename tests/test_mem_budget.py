@@ -332,7 +332,7 @@ class TestRolloutSplit:
         assert torch.allclose(lp_w, lp_b, atol=1e-6)
 
     def test_act_walked_parity(self):
-        """``walked=`` on the act path (what the split forward passes) must be
+        """``walked=`` on the act path (added for the split forward) must be
         bit-identical to the internal walk — mirror of the update-path
         walk-cache contract."""
         obs_list = self._varied_obs()

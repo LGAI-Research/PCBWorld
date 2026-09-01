@@ -59,6 +59,7 @@ def _with_obs(wrap, tag):
     wrap._last_obs = {"router_head": {"tag": tag}}
     wrap._sorted_net_codes = [1, 2, tag]
     wrap._cand_mm = [(float(tag), 0.0, 1)]
+    wrap._cand_ctype = [tag % 3]              # CTYPE_* per _cand_mm entry
     return wrap
 
 
@@ -75,6 +76,7 @@ def test_obs_bundle_round_trips(wrap):
     assert wrap._last_obs == {"router_head": {"tag": 7}}
     assert wrap._sorted_net_codes == [1, 2, 7]
     assert wrap._cand_mm == [(7.0, 0.0, 1)]   # pointer decode sees node 7 again
+    assert wrap._cand_ctype == [7 % 3]        # ctype table travels with it
 
 
 def test_obs_bundle_opt_out_and_absent(wrap):

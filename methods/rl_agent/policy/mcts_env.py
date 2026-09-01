@@ -258,6 +258,11 @@ class RLSearchEnv:
         #     zero-length same-point move: prior≈0 hides it under a trained
         #     policy, but a uniform prior (BaselinePolicyValue) would explore it.
         ptr_masked = {int(i) for i in np.asarray(w.start_route_pointer_indices())}
+        # Off-board directional candidates ride the same all-row block
+        # (KiCadRLWrapper.offboard_pointer_indices; empty unless offboard_mask).
+        _ob = getattr(w, "offboard_pointer_indices", None)
+        if _ob is not None:
+            ptr_masked |= {int(i) for i in np.asarray(_ob())}
         # Candidates the engine will refuse for make_via no matter what
         # (``via_on_thru_pad``). Opt-in: see MctsConfig.prefilter_refused for why
         # this narrows the set relative to the policy's own samplable actions.
@@ -732,9 +737,8 @@ class LogitPolicyValue:
         import torch
 
         from methods.rl_agent.models.v1.encoding import (
-            stack_action_masks, stack_mode_masks, stack_net_valid_masks,
-            stack_offlayer_masks,
-            stack_pointer_masks,
+            stack_action_masks, stack_cand_block_masks, stack_mode_masks,
+            stack_net_valid_masks, stack_offlayer_masks,
         )
         from methods.rl_agent.models.v1.net import ACT_NET_SELECT, SLOT_USAGE
 
@@ -748,7 +752,7 @@ class LogitPolicyValue:
         amask = torch.as_tensor(
             stack_action_masks(pool, indices=[0]), dtype=torch.bool, device=dev)
         pmask = torch.as_tensor(
-            stack_pointer_masks(pool, indices=[0]), dtype=torch.int64, device=dev)
+            stack_cand_block_masks(pool, indices=[0]), dtype=torch.int64, device=dev)
         mode_np = stack_mode_masks(pool, indices=[0])
         mode_arr = np.asarray(mode_np) if mode_np is not None else None
         mmask = (

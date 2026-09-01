@@ -4,7 +4,7 @@ These exercise the pure control logic — ``_derive_check_angle`` and the
 ``run_plain`` best@k loop (count / wallclock-budget / greedy-collapse and the
 ``selection_key`` winner pick) — WITHOUT a policy checkpoint or the C++ engine
 by stubbing the single-rollout function. The full end-to-end path (real env +
-native ``.kicad_pro`` scoring) is covered by a manual smoke run.
+native ``.kicad_pro`` scoring) is covered by the manual MCTS comparison smoke run.
 """
 
 from __future__ import annotations

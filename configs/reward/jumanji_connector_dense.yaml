@@ -1,4 +1,4 @@
-# Jumanji Connector dense reward, used by the 1-layer method comparison.
+# Jumanji Connector dense reward used by v56 1-layer method comparison.
 #
 # Team-aggregate form:
 #   r_t = newly_connected_nets - step_penalty * unconnected_before

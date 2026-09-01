@@ -51,9 +51,14 @@ if [[ -n "${ROUTER_BUILD_DIR:-}" && -d "${ROUTER_BUILD_DIR}/pcbnew/python/rl" ]]
   fi
 fi
 
-# Crash diagnostics (pcb_world/diag): explicit default so every subprocess of a
-# dispatch resolves the same dir. Run scripts may point this at <run_dir>/crashlogs.
-export KICAD_CRASH_LOG_DIR="${KICAD_CRASH_LOG_DIR:-${CADAGENT_REPO_ROOT}/var/crashlogs}"
+# Crash diagnostics (pcb_world/diag): deliberately NOT exported here. Every
+# consumer already resolves the same default without it — default_log_dir()
+# falls back to <repo>/var/crashlogs, and engine server children inherit the
+# parent env / resolve the same default in-process — while exporting it defeats
+# tests/conftest.py's isolation guard (the suite's deliberate crash-test
+# artifacts are routed to a throwaway tmp dir ONLY when the var is unset, so a
+# green pytest run with env.sh sourced would litter var/crashlogs/). Run
+# scripts that want per-run logs may still export KICAD_CRASH_LOG_DIR=<run_dir>/crashlogs.
 
 quickstart_log() {
   printf '[quickstart] %s\n' "$*" >&2

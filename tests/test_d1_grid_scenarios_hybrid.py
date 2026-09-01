@@ -24,6 +24,22 @@ from experiments.kdd.figure5_d1.plot_grid_scenarios import (
 )
 
 
+def _connector_array_root() -> Path:
+    """Fixed Connector-v2 instance arrays: D1_BASELINE_ARRAY_ROOT overrides,
+    else the ``d1_connector_arrays`` dataset of configs/paths.yaml (an
+    absolute-sub entry outside the data root); the caller skips when the
+    resolved directory is absent."""
+    env = os.environ.get("D1_BASELINE_ARRAY_ROOT")
+    if env:
+        return Path(env)
+    from configs.loader.paths import resolve_dataset
+
+    try:
+        return resolve_dataset("d1_connector_arrays")
+    except RuntimeError as e:  # empty data root (release configuration)
+        pytest.skip(str(e))
+
+
 def _write_npz(path: Path, *, grid_size: int = 10) -> None:
     starts = np.asarray([[[0, 0], [2, 2]]], dtype=np.int32)
     targets = np.asarray([[[8, 4], [2, 8]]], dtype=np.int32)
@@ -79,11 +95,10 @@ def test_build_partial_routes_avoid_existing_route_occupancy_when_possible() -> 
 
 
 def test_build_partial_routes_avoid_overlap_on_fixed_connector_instances() -> None:
-    array_root_env = os.environ.get("D1_BASELINE_ARRAY_ROOT", "")
-    if not array_root_env or not Path(array_root_env).exists():
+    array_root = _connector_array_root()
+    if not array_root.exists():
         pytest.skip("fixed Connector-v2 arrays are not available "
                     "(set D1_BASELINE_ARRAY_ROOT to their directory)")
-    array_root = Path(array_root_env)
 
     for grid_size in (10, 50):
         instance = load_connector_instance(array_root / f"grid{grid_size}" / "test.npz")
@@ -154,11 +169,10 @@ def _direction_name(direction: tuple[int, int]) -> str:
 
 
 def test_route_head_directions_cover_four_neighbor_moves_on_fixed_instances() -> None:
-    array_root_env = os.environ.get("D1_BASELINE_ARRAY_ROOT", "")
-    if not array_root_env or not Path(array_root_env).exists():
+    array_root = _connector_array_root()
+    if not array_root.exists():
         pytest.skip("fixed Connector-v2 arrays are not available "
                     "(set D1_BASELINE_ARRAY_ROOT to their directory)")
-    array_root = Path(array_root_env)
 
     expected_examples = {
         (10, 0): "down",

@@ -203,10 +203,12 @@ def _build_worker_policy_and_optimizer(args, device, *, use_critic: bool):
     regions = tuple(
         r for r in getattr(args, "compile_regions", "").split(",") if r
     )
-    if bf16 or regions:
+    attn = getattr(args, "attn", "sdpa")
+    if bf16 or regions or attn != "sdpa":
         policy.configure_speed(
             bf16=bf16, compile_regions=regions,
             compile_mode=getattr(args, "compile_mode", "default"),
+            attn=attn,
         )
     optimizer = torch.optim.AdamW(
         policy.parameters(), lr=args.lr, eps=1e-5, weight_decay=1e-4,

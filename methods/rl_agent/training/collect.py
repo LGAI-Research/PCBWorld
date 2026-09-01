@@ -368,8 +368,8 @@ def collect_n_steps_ppo(
         for i in range(n_envs):
             obs_buffer.append(batch.obs[i])
         # Cache the walk: keep the step's batched walk (over all live == all
-        # envs, env-index order) AS-IS — no per-sample split. The forward
-        # already computed it.
+        # envs, env-index order) AS-IS — no per-sample split (a per-step split
+        # was the 260714 rollout regression). The forward already computed it.
         if batch.walk is not None:
             step_walks.append(batch.walk)
         actions_buf[t] = batch.actions
