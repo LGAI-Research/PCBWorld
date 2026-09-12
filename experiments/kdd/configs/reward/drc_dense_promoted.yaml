@@ -1,0 +1,26 @@
+# Per-step DRC potential, severity-extended gate.
+# On top of ERROR severity it counts the three promoted warnings the router
+# itself causes
+#   - track_dangling
+#   - via_dangling
+#   - net_conflict
+# in both the reward penalty and the state DRC tokens.
+# The single knob drc_severity_mode keeps the DRC-token filter in env._get_obs
+# and PotentialReward._drc_penalty on the same violation set.
+
+name: drc_dense_promoted
+mode: per_step
+
+potential:
+  completion_bonus_log_scale: 1.0
+  unconnected_penalty: 1.0
+  wirelength_penalty: 0.0
+  via_penalty: 0.0
+  wire_via_emission: per_step
+  drc_shape: log_per_net
+  drc_log_scale: 1.0
+  drc_log_agg_scale: 3.0
+  drc_log_offset: 2.0
+  step_penalty: 0.0
+  truncation_mode: none
+  drc_severity_mode: errors_and_promoted

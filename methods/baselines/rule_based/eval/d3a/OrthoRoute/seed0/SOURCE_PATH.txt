@@ -1,0 +1,4 @@
+source_root=bench_results_evalfinal
+source_algo=orthoroute_gpu_20260506
+source_dir=bench_results_evalfinal/PCBench/orthoroute_gpu_20260506
+n_boards=100

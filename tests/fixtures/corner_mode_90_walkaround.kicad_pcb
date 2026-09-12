@@ -1,0 +1,88 @@
+(kicad_pcb
+	(version 20241228)
+	(generator "pcbnew")
+	(generator_version "9.0")
+	(general
+		(thickness 1.6)
+		(legacy_teardrops no)
+	)
+	(paper "A4")
+	(layers
+		(0 "F.Cu" signal)
+		(2 "B.Cu" signal)
+		(1 "F.Mask" user)
+		(3 "B.Mask" user)
+		(5 "F.SilkS" user "F.Silkscreen")
+		(25 "Edge.Cuts" user)
+		(35 "F.Fab" user)
+	)
+	(setup
+		(pad_to_mask_clearance 0)
+	)
+	(net 0 "")
+	(net 1 "A")
+	(net 2 "B")
+	(footprint "TestFP:THT2"
+		(layer "F.Cu")
+		(uuid "00000000-0000-0000-0000-000000000010")
+		(at 105 112)
+		(property "Reference" "J1"
+			(at 0 -2 0)
+			(layer "F.SilkS")
+			(uuid "00000000-0000-0000-0000-000000000011")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "Value" "THT2"
+			(at 0 2 0)
+			(layer "F.Fab")
+			(uuid "00000000-0000-0000-0000-000000000012")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
+		(pad "1" thru_hole circle
+			(at 0 0)
+			(size 1.6 1.6)
+			(drill 0.8)
+			(layers "*.Cu" "*.Mask")
+			(net 1 "A")
+			(uuid "00000000-0000-0000-0000-000000000013")
+		)
+		(pad "2" thru_hole circle
+			(at 15 0)
+			(size 1.6 1.6)
+			(drill 0.8)
+			(layers "*.Cu" "*.Mask")
+			(net 1 "A")
+			(uuid "00000000-0000-0000-0000-000000000014")
+		)
+	)
+	(gr_rect
+		(start 100 100)
+		(end 125 124)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(fill no)
+		(layer "Edge.Cuts")
+		(uuid "00000000-0000-0000-0000-000000000020")
+	)
+	(segment
+		(start 110 110)
+		(end 110 123)
+		(width 0.5)
+		(layer "F.Cu")
+		(net 2)
+		(uuid "00000000-0000-0000-0000-000000000030")
+	)
+	(embedded_fonts no)
+)

@@ -1,0 +1,31 @@
+# PPO-only variant of drc_sparse_promoted_grpo: the same reward definition with
+# truncation_mode set to none instead of full.
+#
+# Why the PPO variant is separate:
+#   * GRPO has neither a critic nor a GAE bootstrap, so the terminal Φ signal
+#     has to be emitted by the env as an explicit reward — hence
+#     drc_sparse_promoted_grpo uses truncation_mode: full.
+#   * PPO absorbs future Φ through the critic's V(s_next) under GAE bootstrap,
+#     so the SB3-style match is truncation_mode: none with truncation
+#     bootstrapping left on (--no-truncation-bootstrap not passed). Using full
+#     here would double-count: Φ + γ·V(s_next) ≈ 2Φ.
+#
+# With step_penalty=0 and truncation_mode: none, ΣR over a truncated trajectory
+# depends on the critic learning V(s_truncate), so mean_reward starts below
+# final_potential_mean early in training. That is expected; only a diverging
+# value loss is a problem.
+
+name: drc_sparse_promoted_ppo
+mode: terminal
+
+potential:
+  completion_bonus_log_scale: 1.0
+  unconnected_penalty: 1.0
+  wirelength_penalty: 0.0
+  drc_shape: log_per_net
+  drc_log_scale: 1.0
+  drc_log_agg_scale: 3.0
+  drc_log_offset: 2.0
+  step_penalty: 0.0
+  truncation_mode: none
+  drc_severity_mode: errors_and_promoted

@@ -1,0 +1,426 @@
+# configs/pcbworld.yaml — the ONE source of default values for every CLI surface (the shipped PCBWorld setting).
+#
+# Each section feeds one dataclass in configs/loader/schema.py (section: class):
+#   env: EnvConfig (+ EnvConfig.reward)   rl_train: RLTrainConfig/PPOConfig/GRPOConfig   rl_policy: RLPolicyConfig
+#   rl_eval: RLEvalConfig                 llm: LLMConfig (nested groups)                 llm_train: LLMTrainConfig
+# Edit a value here to change the default everywhere (argparse defaults, checkpoint fallbacks); the
+# dataclasses define the schema, this file the values. Sections were separate files before 2026-09-11.
+
+# ────────────────────────────────────────────────────────────────────────────────────────────────────
+env:
+  # Shared env-core defaults  →  configs.loader.schema.EnvConfig (+ EnvConfig.reward)
+  #
+  # SINGLE SOURCE for the env construction knobs. The SAME values are used as:
+  #   * the RL-training argparse defaults (methods/rl_agent/training/args.py), and
+  #   * the RL-eval ckpt fallback (RLEnvConfig.from_checkpoint): eval reads the
+  #     env config the policy was TRAINED with from the checkpoint, and only
+  #     falls back to these when the checkpoint lacks a key.
+  # => training and eval use the same env config by construction.
+  #
+  # Values below are the training defaults (training is what writes the ckpt).
+  # corner_mode is the ENGINE code (0=MITERED_45, 2=MITERED_90); the training CLI
+  # accepts 45/90 sugar and converts to this.
+
+  max_steps: 1024
+  masking_rule: pcbworld_masking                # configs/masking/<name>.yaml — the one shipped rule (net_end free, no finish)
+  reward_rule: pcbworld_reward                 # configs/reward/<name>.yaml — the one shipped rule (linear pad-group ladder)
+  reward_noise_std: 0.0
+  emit_drc_tokens: true
+  corner_mode: 0
+  use_yaml_drc_fallback: false
+  drc_config_path: null             # required (no implicit default) when use_yaml_drc_fallback is on
+  engine_seed: 77                   # KIID/UUID seed set once at engine init →
+                                    # reproducible routing + UUID-keyed DRC. <0 = entropy.
+  shove_iter_limit: 250             # PNS shove loop iteration bound (wallclock timeout
+                                    # removed for determinism; this is the reproducible cap).
+  followbranch_iter_limit: 1000000  # TOPOLOGY::followBranch DFS pop bound (ditto).
+  reject_if_stuck: true             # make_line aborts (draws nothing, action fails) when the
+                                    # walkaround can't reach the target, instead of committing a
+                                    # partial dangling stub. false = legacy commit-partial behavior.
+  simplify_outline: true           # load-time rewrite of tessellated micro-segment outline
+                                    # chains (Edge.Cuts/Margin) into native arcs/merged lines
+                                    # (pcb_world/engine/outline_simplify.py). Kills the PNS
+                                    # walkaround cluster blowup on baked-curve boards; changes
+                                    # obs EDGE token counts, so keep off inside a running
+                                    # campaign for comparability.
+  obs_format: json                  # observation format the env emits: "json" = legacy nested
+                                    # dict; "indexed" = indexed_v1 array tables (pcb_world/core/
+                                    # indexed_obs.py) — cheaper to pickle/tokenize, bit-identical
+                                    # tokens. RL-decoder-only; LLM/eval paths stay on json.
+  outline_obs: arc                 # Edge.Cuts representation in the obs boardlines:
+                                    # "tess" = C++ error-bounded tessellation (0.005mm, legacy/
+                                    # current); "poly16" = fixed 16-per-90° re-tessellation
+                                    # (pre-074f34b09 A/B reference); "arc" = one entry per arc/
+                                    # circle with the on-arc midpoint (obs-schema change =>
+                                    # retrain; legacy 2-point ckpts refuse arc obs).
+  action_history_len: 1             # obs["action_history"] window: how many recent action
+                                    # records (type/pointer/net/success) the env keeps and
+                                    # emits, newest first. Default 1 = the historical
+                                    # prev-action single-step window (compat-conservative);
+                                    # history ablations raise it via --action-history-len.
+                                    # Legacy ckpts consume entry 0 only.
+  net_constraint_obs: true         # per-net DRC constraint observation: every board_static
+                                    # net carries its resolved netclass values (track_width/
+                                    # clearance/via_diameter/via_drill; KiCad inherit→Default,
+                                    # BDS-min clamped — identical to the engine push on
+                                    # net_select), feeding the NET-token tw/cl/vd channels
+                                    # (constant 0 when off). Obs-drift => retrain; the ckpt
+                                    # stores the setting so eval follows automatically.
+  directional_candidates: multi_resolution   # directional (ring) candidate preset (pcb_world/vec/candidate_pool.py);
+                                  # null = pad/existing-copper candidates only. Checkpoints store it.
+  offboard_mask: true               # hard-mask directional candidates whose (x, y) falls outside the board
+                                  # outline. Pre-knob checkpoints eval with it off (schema pin).
+  keep_routing_fraction: null       # keep-routing augmentation (train-only): [lo, hi] →
+                                    # each board load samples f~U[lo,hi] and keeps that
+                                    # fraction of the nets' file routing as the episode's
+                                    # initial state (rest re-routed from scratch). Needs
+                                    # boards whose file carries complete routing (d3 real
+                                    # boards). null = off; eval always off.
+
+  # Per-run overrides of the selected reward_rule YAML (None = use the rule's
+  # value). -> configs.loader.schema.RewardOverrides (EnvConfig.reward).
+  reward:
+    via_penalty: null
+    wirelength_penalty: null
+    drc_penalty: null
+    drc_log_scale: null
+    drc_log_agg_scale: null
+    drc_log_offset: null
+    reward_step_penalty: null
+    wire_via_emission: null
+
+# ────────────────────────────────────────────────────────────────────────────────────────────────────
+rl_train:
+  # RL training orchestration defaults  →  configs.loader.schema.{RLTrainConfig,PPOConfig,GRPOConfig}
+  #
+  # Train-only knobs (env-core is in env.yaml, network is in rl_policy.yaml). These
+  # are the argparse defaults for methods/rl_agent/training/args.py (shared) and the PPO/GRPO
+  # entrypoints. The trainer still reads args.<flag>; this YAML is just the single
+  # place to see/edit the default numbers.
+
+  shared:
+    iterations: 1000
+    # optimization (PPO-style clipped surrogate, both algos)
+    lr: 3.0e-4
+    clip_eps: 0.2
+    entropy_coef: 0.01
+    # normalize each sample's joint entropy by its max achievable entropy
+    # ln(N_valid) (per-head, masked) before the bonus — makes the bonus
+    # action-space-size invariant (e.g. mres 4x candidate ladders)
+    entropy_norm: false
+    batch_size: 256
+    max_grad_norm: 0.5
+    warmup_iters: 0
+    # peak-VRAM budget planner (methods/rl_agent/training/mem_budget.py): calibrate
+    # peak(B,L) on the first buffer, pre-split update minibatches AND rollout
+    # forwards to fit the measured free VRAM (24/48GB auto). Off = reactive
+    # OOM-peel only.
+    mem_budget: false
+    # logging / checkpointing
+    save_freq: 50
+    log_every: 1
+    seed: 42
+    device: auto
+    # inline held-out eval cadence
+    eval_n_rollouts: 5           # rollouts per eval board; fp_mean_of_means is unbiased in N, but max-style metrics are best-of-N and not comparable across different N
+    eval_base_seed: 1000
+    # board / dataset selection
+    boards_order: single
+    boards_json: null       # multi-board mode requires an explicit --boards-json (configs/datasets/)
+    boards_difficulty: easy
+    boards_split: train
+    boards_dataset_dir: null     # deprecated per-run dataset copy override
+    # inline held-out eval cadence (null = auto / once per round-robin pass)
+    eval_split: null
+    eval_every: null
+    eval_boards_per_batch: null
+    eval_board_limit: null
+    # secondary (diagnostic) inline eval set — evaluated each --eval-every alongside
+    # the primary --eval-split, logged under eval2_prefix/*. Does NOT drive best-ckpt.
+    eval2_boards: null           # plain-text board-list file (e.g. real d3-b); null = disabled
+    eval2_prefix: val_d3b        # dashboard prefix for the --eval2-boards set
+    eval3_boards: null           # third diagnostic board-list file (e.g. real d3-a); null = disabled
+    eval3_prefix: val_d3a        # dashboard prefix for the --eval3-boards set
+    eval4_boards: null           # fourth diagnostic board-list file (e.g. d2-b val subset); null = disabled
+    eval4_prefix: val_d2b        # dashboard prefix for the --eval4-boards set
+    eval5_boards: null           # fifth diagnostic board-list file (e.g. d2-a val subset); null = disabled
+    eval5_prefix: val_d2a        # dashboard prefix for the --eval5-boards set
+    # diagnostic-protocol pinning: override max_steps / masking-rule for the
+    # eval2..eval5 sets only (cross-cell comparability when cells vary the train
+    # protocol). null = inherit the run's train protocol.
+    eval_diag_max_steps: null
+    eval_diag_masking_rule: null
+    eval_at_init: false          # eval the initial (zero-shot) policy at iter 0 (logged, excluded from best-ckpt)
+    eval_greedy: true            # greedy(argmax) 1-rollout pass on the primary val set each cadence -> val_greedy/* (diagnostic; --no-eval-greedy)
+    # detached validation: at each eval cadence, queue the policy into <save-dir>/val_queue/
+    # for an external watcher process (methods/rl_agent/training/async_val.py) instead of
+    # evaluating inline; results land in the trainer's own TB/W&B run when they arrive
+    async_val: false
+    # Weights & Biases (wandb = master toggle; default off — opt in with --wandb)
+    wandb: false
+    wandb_project: null
+    wandb_entity: null
+    wandb_group: null
+    wandb_run_name: null
+    wandb_tags: null
+    # vectorized env (--no-vecenv inverts); resume checkpoint path
+    vecenv: true
+    resume: null
+
+  ppo:
+    n_epochs: 10
+    n_envs: 64
+    n_steps: 2048
+    gamma: 0.995
+    gae_lambda: 0.95
+    vf_coef: 0.5
+    norm_reward_clip: 10.0
+    # BC-initialised fine-tuning (PPOConfig / loop.py PPOTrainer) — all off by default
+    init_ckpt: null
+    finetune_lr: 2.0e-5              # applied with --init-ckpt unless --lr is given explicitly (BC-init recipe)
+    finetune_clip_eps: 0.1           # applied with --init-ckpt unless --clip-eps is given explicitly
+    critic_warmup_iters: 0
+    critic_warmup_lr: 1.0e-4
+    critic_warmup_min_ev: 0.0        # >0: keep warming up past critic_warmup_iters until EV >= this (streak) ...
+    critic_warmup_ev_streak: 3       # ... for this many consecutive iterations
+    critic_warmup_max_iters: 0       # hard cap for the EV gate (0 = 3 x critic_warmup_iters)
+    kl_ref_coef: 0.0
+    kl_ref_ckpt: null
+    kl_ref_mask_unseen_drc: false
+    kl_ref_seen_drc_types: "2,4,6"
+    # positive master toggles (inverted CLI: --no-normalize-adv / -truncation-bootstrap / -norm-reward)
+    normalize_adv: true
+    truncation_bootstrap: false
+    norm_reward: true
+    log_dir: ./logs/tb/ppo_decoder
+    save_dir: ./checkpoints/ppo_decoder
+
+  grpo:
+    n_epochs: 4
+    n_envs: 64
+    group_size: 8
+    log_dir: ./logs/tb/grpo_decoder
+    save_dir: ./checkpoints/grpo_decoder
+
+# ────────────────────────────────────────────────────────────────────────────────────────────────────
+rl_policy:
+  # Shared policy-construction defaults  →  configs.loader.schema.RLPolicyConfig
+  #
+  # SINGLE SOURCE for the DecoderOnlyPCBPolicy network knobs. Used as both the
+  # RL-training argparse defaults (the network group) and the RL-eval ckpt
+  # fallback (PolicyConfig.from_checkpoint): eval rebuilds the policy from the
+  # checkpoint's stored args, falling back to these only for missing keys.
+  # => training and eval build the same architecture by construction.
+  #
+  # (use_critic / legacy_pad_layer_encoding / legacy_net_encoding /
+  # legacy_edge_encoding are normally derived from the saved state_dict at load
+  # time; the values here are the construction defaults.)
+
+  d_model: 128
+  n_heads: 4
+  n_layers: 4
+  d_ff: 512
+  max_seq_len: 10000
+  n_freq: 32
+  use_critic: true
+  detach_critic: false
+  coord_encoding: fourier
+  mlp_hidden: 128
+  disable_slot_emb: false
+  # Slot-table size = upper bound on nets per board (matches the ckpt's
+  # slot_emb_table row count); default 512 leaves headroom for real boards (d3b
+  # tops out at 109 nets). Checkpoints without the key fall back to a
+  # literal 64 in from_checkpoint, so changing this default stays load-compatible.
+  # The slot_perm augmentation is a fixed 64-permutation and is incompatible with
+  # != 64 (the trainer checks this).
+  n_max_slots: 512
+  policy_net_select: false
+  same_net_bias: false
+  legacy_pad_layer_encoding: false
+  # NET-token feature width: false = current 4f (track_width + clearance +
+  # via_diameter + per-episode `closed` flag), true = old-checkpoint 3f
+  # (no closed flag). Derived from net_proj.weight shape at ckpt load.
+  legacy_net_encoding: false
+  # EDGE-token points: false = current 3-point (p1 + p2 + on-path midpoint via
+  # its own edge_mid_proj; straight edge -> chord midpoint, outline arc -> the
+  # on-arc midpoint), true = old-checkpoint 2-point (no midpoint — such policies
+  # refuse outline_obs="arc" obs). Derived from the presence of edge_mid_proj in
+  # the state_dict at ckpt load (shared proj shapes are unchanged, so presence —
+  # not shape — is the signal).
+  legacy_edge_encoding: false
+  # HEAD-token time scalar. "step_ratio" (legacy: step/max_steps),
+  # "log_remaining" (log1p(steps_remaining)/log1p(time_feature_cap) — max_steps-
+  # invariant, so boards with different step budgets share one time coordinate),
+  # "sin_remaining" (steps_remaining/cap through a dedicated sinusoidal ladder
+  # anchored to step units: top rung period = 2 steps, so ±1 step resolves at any
+  # horizon — transformer-PE anchoring; keeps log_remaining's max_steps
+  # invariance), or "none" (constant 0 — time-blind ablation: the policy cannot
+  # observe episode progress/deadline). All modes feed the same-width Fourier
+  # slot with zero new weights, so checkpoints are weight-compatible across
+  # modes; old checkpoints lack the key and fall back to step_ratio here.
+  time_feature: sin_remaining
+  # Normalization ceiling (largest plausible max_steps) for log_remaining /
+  # sin_remaining; for sin_remaining also the longest ladder period.
+  time_feature_cap: 10000
+  # ACTION_HISTORY window K: recent action entries tokenized per obs (3 tokens
+  # each, newest first; short histories pad with the idle sentinel). Age is
+  # encoded as Fourier(age/MAX_HISTORY)→proj — no K-shaped weights, so K is a
+  # plain config knob (checkpoints stay load-compatible across K; MAX_HISTORY=32
+  # frozen in models.v1.spec). Default 1 = the historical prev-action single-step
+  # window (compat-conservative; new encoding still adds net-slot + age markers) —
+  # history ablations raise it via --action-history-len. Old prev-action
+  # checkpoints (no history_age_proj in the state_dict) load as
+  # legacy_action_history=true + K=1 — bit-identical single-entry encoding,
+  # slot/age-free.
+  action_history_len: 1
+  legacy_action_history: false
+  # OBSTACLE tokens for netless immovable blockers: NPTH mounting holes / oval
+  # slots (board_static "obstacles"; rule-area keepout zones stay engine-only)
+  # + net-less NC pads ("unconnected_pads"). Pad-shaped channels through the
+  # tied pad_proj, no net slot. Off (default) emits zero tokens — the stream
+  # stays byte-identical to pre-knob checkpoints.
+  obstacle_obs: true
+  # Boundary-shape channel on PAD + OBSTACLE tokens: 6-bucket categorical
+  # (rect/roundrect/circle/oval/other/unknown) through an additive shape_embed.
+  # Off (default) constructs no weights — checkpoints round-trip unchanged; the
+  # loader presence-detects shape_embed for old-checkpoint loads.
+  shape_obs: true
+
+# ────────────────────────────────────────────────────────────────────────────────────────────────────
+rl_eval:
+  # RL eval orchestration defaults  →  configs.loader.schema.RLEvalConfig
+  #
+  # Eval-pipeline-only knobs (env/policy come from the checkpoint at eval time;
+  # see env.yaml / rl_policy.yaml). These are the defaults the eval CLI / helpers
+  # read. NOTE: "on"/"off" are quoted so PyYAML keeps them as strings, not bools.
+
+  rollout_mode: serial
+  n_envs: 1
+  env_drc: null               # null = inherit ckpt's emit_drc_tokens; "on"/"off" to force
+  inline_drc: "off"           # where DRC scoring runs (inline vs post-hoc Stage 2)
+  reward_config: pcbworld_reward     # DRC scoring reward = the shipped training rule (configs/reward/pcbworld_reward.yaml); the paper scored with experiments/kdd/configs/reward/drc_dense_errors_only_eval
+  check_angle: 45             # no-ckpt fallback; normally inherits ckpt corner_mode
+  selection_method: final_potential
+  override_n_max_slots: 1280  # lift the ckpt's trained slot cap at inference; null = inherit
+  save_artifacts: "on"
+  output_root: outputs/eval_overall
+  device: auto
+  early_stop_finish_no_progress: 0
+  early_stop_no_geometry_progress: 0
+  # Best-checkpoint selection — the SINGLE canonical criterion shared by RL
+  # (PPO+GRPO inline best-ckpt) AND LLM (verl trainer.best_metric_key). "the
+  # largest fp gain is best": maximize the val final-potential aggregate.
+  best_metric_key: val/fp_mean_of_means
+  best_metric_mode: max
+
+# ────────────────────────────────────────────────────────────────────────────────────────────────────
+llm:
+  # LLM eval defaults  →  configs.loader.schema.LLMConfig (nested: env/boards/prompt/
+  # rollout/vllm/api — mirrors the eval/args.py CLI groups one-for-one).
+  #
+  # The LLM eval program (methods/llm_agent/rollout/pcbworld.py + the interactive REPL) is a
+  # separate program from RL train/eval: it evaluates an LLM, not an RL checkpoint.
+  # Its env-core knobs use LLM-eval's own default *values* (e.g. max_steps 20 vs
+  # RL's 200). eval/args.py reads these as its argparse defaults, and the flags are
+  # generated from the schema via configs.loader.cli.add_dataclass_args (style=underscore).
+
+  env:                      # eval/args.py add_env_args group
+    max_steps: 20
+    masking_rule: strict
+    reward_rule: grpo_final
+    corner_mode: 0
+    state_format: sexpr     # LLM-only: observation serialization (sexpr|xml)
+    via_penalty: null       # override reward-config via_penalty (null = use config)
+    reward_noise_std: 0.0
+    emit_drc_tokens: true   # inverted CLI: --no_drc_tokens
+    use_yaml_drc_fallback: false
+    drc_config_path: null   # required (no implicit default) when use_yaml_drc_fallback is on
+
+  boards:                   # eval/args.py add_boards_args group
+    boards_order: single
+    boards_json: null         # multi-board mode requires an explicit --boards_json
+    boards_difficulty: easy
+    boards_split: test
+
+  prompt:                   # eval/args.py add_prompt_args group
+    prompt_version: v1      # choices are dynamic (PCBWORLD_PROMPT_VERSIONS)
+
+  rollout:                  # eval/args.py add_rollout_args group
+    env_num: 1
+    seed: 0
+    rollout_episodes: 5
+    num_cpus_per_worker: 1.0
+    history_length: 0
+    temperature: 0.7
+    max_new_tokens: 256
+    dump_dir: null
+    early_stop_no_progress: 0
+
+  vllm:                     # eval/args.py add_llm_args group
+    model_path: Qwen/Qwen2.5-VL-3B-Instruct
+    tensor_parallel_size: 1
+    gpu_memory_utilization: 0.95
+    max_model_len: 4096
+    enable_prefix_caching: false
+    enable_chunked_prefill: false
+    guided_grammar: null
+
+  api:                      # eval/args.py add_api_args group
+    api_provider: openai
+    api_model: null
+    api_key: null
+    api_rpm: null
+    api_itpm: null
+    api_otpm: null
+    api_max_retries: 8
+    api_prompt_cache: false
+    api_reasoning_effort: null
+    api_disable_thinking: false
+
+# ────────────────────────────────────────────────────────────────────────────────────────────────────
+llm_train:
+  # pcbworld LLM (verl) training defaults  →  configs.loader.schema.LLMTrainConfig
+  #
+  # The pcbworld-specific slice of the verl Hydra config — the ``env.pcbworld.*``
+  # block plus the ``env.*`` knobs pcbworld reads. These are the values previously
+  # hardcoded as ``config.env.pcbworld.get('x', <literal>)`` fallbacks in the
+  # verl-agent patch (agent_system/.../env_manager.py) and in the LLM rollout
+  # manager (methods/llm_agent/training/manager.py); they now live here, the single place to
+  # see/edit them. The verl launch script (external/verl-agent-patch/examples/
+  # run_pcbworld.sh) supplies per-run overrides via ``+env.pcbworld.<key>=...``.
+  #
+  # Read into the dataclass with LLMTrainConfig.from_verl_config(cfg); the verl
+  # config keeps its omegaconf surface, this is only the defaults source — exactly
+  # like rl_train.yaml for the RL trainer and llm.yaml for LLM eval.
+
+  # env-core (PCBWorld build knobs; env_kwargs for build_pcbworld_envs)
+  max_steps: 200            # read from config.env.max_steps
+  masking_rule: strict
+  reward_rule: default
+  state_format: sexpr       # LLM-only observation serialization (sexpr|xml)
+  corner_mode: 0            # engine code 0..3 (0=MITERED_45, 2=MITERED_90)
+  via_penalty: null         # null = use reward-config value
+  reward_noise_std: 0.0
+  emit_drc_tokens: true
+
+  # prompt (consumed by methods/llm_agent/training/manager.py)
+  prompt_version: v1
+  history_length: 0         # read from config.env.history_length
+
+  # board scheduling — train (BoardScheduler / BoardSchedulerConfig)
+  boards_order: single      # single | round_robin | per_env_random | per_env_epoch
+  boards_json: null         # multi-board mode requires an explicit --boards-json
+  boards_difficulty: easy
+  boards_split: train
+
+  # board scheduling — val (val_boards_split null = inherit boards_split)
+  val_boards_order: single
+  val_boards_split: null
+
+  # episode scoring + guided decoding
+  score_train_episodes: false   # per-episode DRC scoring for TRAIN rollouts (val always on)
+  guided_decoding_grammar: null # name in methods.llm_agent.wrappers.grammar GRAMMARS (vLLM constrained decode)
+
+  # misc
+  seed: 0                   # read from config.env.seed (BoardScheduler seeding)
+  board_path: null          # required runtime input (env.pcbworld.board_path); no default

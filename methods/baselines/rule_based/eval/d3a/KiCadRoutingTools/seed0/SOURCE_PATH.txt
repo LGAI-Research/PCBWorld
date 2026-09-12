@@ -1,0 +1,4 @@
+source_root=bench_results_evalfinal
+source_algo=kicadroutingtools_via1x_s00_r00
+source_dir=bench_results_evalfinal/PCBench/kicadroutingtools_via1x_s00_r00
+n_boards=100

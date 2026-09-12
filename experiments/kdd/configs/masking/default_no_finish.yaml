@@ -1,0 +1,23 @@
+# Strict condition-based action masking WITHOUT finish action.
+# Same as default.yaml, but "finish" is never allowed.
+# The agent must complete routing manually via make_line/make_via.
+# start_route requires the net NOT fully connected (a completed net can only be
+# ended via net_end, never re-routed with redundant copper).
+
+name: default_no_finish
+
+actions:
+  net_select:
+    when: {has_net: false, is_routing: false}
+
+  start_route:
+    when: {has_net: true, is_routing: false, net_fully_connected: false}
+
+  net_end:
+    when: {has_net: true, is_routing: false, net_fully_connected: true}
+
+  make_line:
+    when: {is_routing: true}
+
+  make_via:
+    when: {is_routing: true}

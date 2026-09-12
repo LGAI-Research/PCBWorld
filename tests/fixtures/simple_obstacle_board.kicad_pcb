@@ -1,0 +1,184 @@
+(kicad_pcb
+  (version 20241229)
+  (generator "test_fixture")
+  (generator_version "9.0.5")
+  (general
+    (thickness 1.6)
+    (legacy_teardrops no)
+  )
+  (paper "A4")
+  (layers
+    (0 "F.Cu" signal)
+    (31 "B.Cu" signal)
+    (32 "B.Adhes" user "B.Adhesive")
+    (33 "F.Adhes" user "F.Adhesive")
+    (34 "B.Paste" user)
+    (35 "F.Paste" user)
+    (36 "B.SilkS" user "B.Silkscreen")
+    (37 "F.SilkS" user "F.Silkscreen")
+    (38 "B.Mask" user "B.Mask")
+    (39 "F.Mask" user "F.Mask")
+    (40 "Dwgs.User" user "User.Drawings")
+    (41 "Cmts.User" user "User.Comments")
+    (44 "Edge.Cuts" user)
+  )
+  (setup
+    (pad_to_mask_clearance 0)
+    (allow_soldermask_bridges_in_footprints no)
+    (pcbplotparams
+      (layerselection 0x00010fc_ffffffff)
+      (plot_on_all_layers_selection 0x0000000_00000000)
+      (disableapertmacros no)
+      (usegerberextensions no)
+      (usegerberattributes yes)
+      (usegerberadvancedattributes yes)
+      (creategerberjobfile yes)
+      (dashed_line_dash_ratio 12.000000)
+      (dashed_line_gap_ratio 3.000000)
+      (svgprecision 4)
+      (plotframeref no)
+      (viasonmask no)
+      (mode 1)
+      (useauxorigin no)
+      (hpglpennumber 1)
+      (hpglpenspeed 20)
+      (hpglpendiameter 15.000000)
+      (pdf_front_fp_property_popups yes)
+      (pdf_back_fp_property_popups yes)
+      (dxfpolygonmode yes)
+      (dxfimperialunits yes)
+      (dxfusepcbnewfont yes)
+      (psnegative no)
+      (psa4output no)
+      (plotreference yes)
+      (plotvalue yes)
+      (plotfptext yes)
+      (plotinvisibletext no)
+      (sketchpadsonfab no)
+      (subtractmaskfromsilk no)
+      (outputformat 1)
+      (mirror no)
+      (drillshape 1)
+      (scaleselection 1)
+      (outputdirectory "")
+    )
+  )
+  (net 0 "")
+  (net 1 "NET1")
+  (net 2 "NET_OBSTACLE")
+
+  (net_class "Default" "Default net class"
+    (clearance 0.2)
+    (trace_width 0.2)
+    (via_dia 0.6)
+    (via_drill 0.3)
+    (uvia_dia 0.3)
+    (uvia_drill 0.1)
+  )
+
+  (footprint "TestPad:Start"
+    (layer "F.Cu")
+    (at 0 0)
+    (property "Reference" "P1"
+      (at 0 -1.5)
+      (layer "F.SilkS")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.15)
+        )
+      )
+    )
+    (property "Value" "Start"
+      (at 0 1.5)
+      (layer "F.Fab")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.15)
+        )
+      )
+    )
+    (pad "1" smd roundrect
+      (at 0 0)
+      (size 0.5 0.5)
+      (layers "F.Cu" "F.Paste" "F.Mask")
+      (roundrect_rratio 0.25)
+      (net 1 "NET1")
+    )
+  )
+
+  (footprint "TestPad:End"
+    (layer "F.Cu")
+    (at 3 5)
+    (property "Reference" "P2"
+      (at 0 -1.5)
+      (layer "F.SilkS")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.15)
+        )
+      )
+    )
+    (property "Value" "End"
+      (at 0 1.5)
+      (layer "F.Fab")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.15)
+        )
+      )
+    )
+    (pad "1" smd roundrect
+      (at 0 0)
+      (size 0.5 0.5)
+      (layers "F.Cu" "F.Paste" "F.Mask")
+      (roundrect_rratio 0.25)
+      (net 1 "NET1")
+    )
+  )
+
+  (footprint "TestPad:Obstacle"
+    (layer "F.Cu")
+    (at 2 0)
+    (property "Reference" "OBS1"
+      (at 0 -1.5)
+      (layer "F.SilkS")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.15)
+        )
+      )
+    )
+    (property "Value" "Obstacle"
+      (at 0 1.5)
+      (layer "F.Fab")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.15)
+        )
+      )
+    )
+    (pad "1" smd rect
+      (at 0 0)
+      (size 2 2)
+      (layers "F.Cu" "F.Paste" "F.Mask")
+      (net 2 "NET_OBSTACLE")
+    )
+  )
+
+  (gr_rect
+    (start -3 -4)
+    (end 6 9)
+    (stroke
+      (width 0.15)
+      (type solid)
+    )
+    (fill none)
+    (layer "Edge.Cuts")
+  )
+)

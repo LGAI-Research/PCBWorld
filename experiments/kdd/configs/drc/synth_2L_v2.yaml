@@ -1,0 +1,19 @@
+name: synth_2L_v2
+description: >
+  Global design rules matching the synth_2L_v2 dataset's per-board
+  .kicad_pro DRC. Substitutes the values that every board in
+  synth_2L_v2/{train,val,test} carries identically, so eval runs
+  with --use_yaml_drc_fallback stay aligned with strict authoritative
+  rules instead of falling back to default.yaml's hobby-grade
+  (~2x looser) values.
+
+global_minima:
+  clearance:             0.30
+  track_width:            0.30
+  via_diameter:           1.20
+  through_hole_drill:     0.60
+  via_annular_width:      0.00
+  hole_to_hole:           0.00
+  uvia_diameter:          0.30
+  uvia_drill:             0.10
+  copper_edge_clearance:  0.30

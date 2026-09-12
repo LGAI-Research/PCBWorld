@@ -1,0 +1,29 @@
+# Local outputs from toy / batch runs — these are reproducible artifacts.
+_run_outputs/
+
+# eval/ per-board logs — large and redundant; summaries are tracked.
+# (SOURCE_PATH.txt records which result tree each seed came from; the
+#  summary.json / summary.txt next to them already captures all paper
+#  numbers, and re-running run_baseline.py reproduces the deterministic
+#  baselines bit-perfectly.)
+eval/**/logs/
+
+# NOTE: the vendored OrthoRoute checkout and freerouting jar moved to external/
+# (OrthoRoute = git submodule; freerouting jar = auto-downloaded, ignored via the
+# root .gitignore). No anchors for them are needed here anymore.
+
+# pip build artifacts
+**/build/
+**/dist/
+**/*.egg-info/
+
+# Editor / IDE
+.idea/
+.vscode/
+
+# Per-tool upstream defaults reference (Korean working doc, local-only).
+BASELINES.md
+
+# Legacy per-tool benchmark drivers (preserved locally for historical
+# traceability, not shipped in the release).
+legacy/

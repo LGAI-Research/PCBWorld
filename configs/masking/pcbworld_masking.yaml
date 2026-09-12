@@ -1,0 +1,24 @@
+# netend_free masking WITHOUT the finish action.
+# = netend_free.yaml minus `finish` — net_end stays open on unfinished
+# nets (consume semantics), while auto-completion (finish to the nearest
+# unconnected pad) is blocked, so a net can only be completed via
+# make_line/make_via.
+# Used by the `--nofinish` axis of train_ablation.sh.
+
+name: pcbworld_masking
+
+actions:
+  net_select:
+    when: {has_net: false, is_routing: false}
+
+  start_route:
+    when: {has_net: true, is_routing: false, net_fully_connected: false}
+
+  net_end:
+    when: {has_net: true, is_routing: false}
+
+  make_line:
+    when: {is_routing: true}
+
+  make_via:
+    when: {is_routing: true}

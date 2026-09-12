@@ -1,0 +1,407 @@
+# PCBWorld — a reinforcement-learning environment for PCB routing
+
+| | |
+|---|---|
+| **Version** | <!--VERSION-->v1.0.0<!--/VERSION--> |
+| **KiCad** | 9.0.8 (via the engine submodule) |
+| **Python** | 3.12+ |
+| **Platform** | Linux x86_64 (primary), macOS |
+| **License** | [BSD-3-Clause](LICENSE) (environment, benchmark and training/evaluation code) |
+
+PCBWorld turns KiCad's PNS interactive router into a
+[Gymnasium](https://gymnasium.farama.org/) environment: an agent places tracks and
+vias on a real board, and every step is scored by the same design-rule checker a
+hardware engineer would run — not a grid abstraction.
+
+- **Real EDA physics.** Actions run through KiCad's production push-and-shove
+  router; rewards come from its DRC. What routes here routes in KiCad.
+- **A complete benchmark.** Synthetic board generators, benchmark task splits, and
+  one uniform three-stage evaluation (rollout → post-hoc DRC → aggregate) applied
+  identically to every method.
+- **Baselines included.** A decoder-only PPO/GRPO transformer trainer, LLM
+  tool-calling agents, and classical rule-based routers (FreeRouting, OrthoRoute,
+  KRT) — all runnable through the same entrypoints.
+
+The environment exposes 6 routing actions plus an LLM-only `idle`, and hierarchical
+JSON-dict observations.
+
+## Demos
+
+An LLM tool-calling agent routing real production boards end to end (time-lapse):
+
+| Case study 1 (`0018_hy_adapter`) | Case study 2 (`0100_smt-zvs-driver`) |
+|---|---|
+| [![Case study 1](PCBWorld_media/0018_Hardware_Playground_hy_adapter_episode_00_env_00_GPT_success_teaser.gif)](PCBWorld_media/0018_Hardware_Playground_hy_adapter_episode_00_env_00_GPT_success.mp4) | [![Case study 2](PCBWorld_media/0100_smt-zvs-driver_IH10-mc_GPT_success_teaser.gif)](PCBWorld_media/0100_smt-zvs-driver_IH10-mc_GPT_success.mp4) |
+
+Click either teaser for the full-length video. All supplementary videos are also
+collected in [PCBWorld_media/index.html](PCBWorld_media/index.html).
+
+## Installation
+
+```bash
+git clone --recursive https://github.com/LGAI-Research/PCBWorld.git pcbworld && cd pcbworld
+
+# One shot: conda env -> pinned baseline downloads -> engine build -> import smoke
+bash tools/setup/setup_all.sh
+```
+
+Linux needs no system packages — the conda env ([environment.yml](environment.yml))
+ships the complete C++ build toolchain. macOS (Homebrew):
+`brew install cmake ninja wxwidgets libgit2 protobuf ngspice libngspice pkgconf nng unixodbc`.
+
+Set `PCBWORLD_ENGINE_HOME` to use an engine checkout somewhere other than `engine/`.
+
+Verify:
+
+```bash
+conda activate pcbworld
+export PYTHONPATH=build_rl/pcbnew/python/rl:.
+python -c 'import kicad_rl_router as krl; print("OK")'   # engine smoke test
+pytest -q                                                # test suite
+```
+
+## Quick start
+
+### 1. Use the environment directly
+
+A standard Gymnasium env over a real `.kicad_pcb` board (run from the
+repository root, with the Installation env vars set):
+
+```python
+from pcb_world.core.env import PCBWorld
+
+env = PCBWorld(board_path="tests/fixtures/simple_routing_board.kicad_pcb",
+               max_steps=200)
+obs, info = env.reset(seed=0)
+# obs is a JSON dict with six keys: action_history, board_static, closed_nets,
+# drc_violations, router_head, routing_geometry.
+# actions are dicts {"action_type": <int index>, **params};
+# env.action_mask_dict() -> {action_name: bool} for the currently valid actions,
+# env.action_masks() the same mask as a positional np.ndarray of 7 bools
+# (SB3 MaskablePPO order).
+
+# Route one net: select it, start at one pad, walk a track to the other pad.
+pads = obs["board_static"]["nets"]["net_1"]["pads"]
+(x0, y0), (x1, y1) = pads["pad_0"]["center"]["xy"], pads["pad_1"]["center"]["xy"]
+env.step({"action_type": 0, "net_id": 1})                                      # net_select
+env.step({"action_type": 1, "x_mm": x0, "y_mm": y0, "layer": pads["pad_0"]["layer"]})  # start_route
+obs, reward, terminated, truncated, info = env.step(
+    {"action_type": 3, "x_mm": x1, "y_mm": y1, "routing_mode": 2})             # make_line (walkaround)
+print(reward)  # ~ +3.78 — the routed connection, scored by KiCad's DRC
+env.step({"action_type": 2})                                                   # net_end: close the net
+```
+
+The action set — the seven action names, their index order, and each one's
+parameter signature — is defined in one place:
+[`pcb_world/core/action_schema.py`](pcb_world/core/action_schema.py)
+(`ACTION_REGISTRY`). The full observation/reward specification is in the paper
+([PCBWorld.pdf](PCBWorld.pdf)). General entrypoints:
+`scripts/train.py` · `scripts/eval.py` · `scripts/profile.py` (all take `--help`).
+
+### 2. Generate synthetic 2-layer boards
+
+```bash
+TRAIN_N=200 TEST_N=20 bash tools/datagen/synthetic_generator/generate_2layer_v2.sh
+```
+
+(No overrides = the paper-scale 10K train + 1K test set. The generator family in
+`tools/datagen/synthetic_generator/` also covers D1 grids and the D2 geometry
+variants.)
+
+The default output directories (`var/datasets/synthetic/pcb_dataset_synthetic_2layer_v2*`)
+are the generator's own; the training/eval configs read a different layout —
+`experiments/kdd/configs/datasets/d2a.json` looks for `${PCBWORLD_DATA_ROOT}/synthetic/synth_2L_v2/{train,val,test}`.
+Point the generator straight at that layout with the `*_DIR` overrides:
+
+```bash
+export PCBWORLD_DATA_ROOT=$PWD/var/datasets
+D2A=$PCBWORLD_DATA_ROOT/synthetic/synth_2L_v2
+TRAIN_N=200 VAL_N=20 TEST_N=20 \
+  TRAIN_DIR=$D2A/train VAL_DIR=$D2A/val TEST_DIR=$D2A/test \
+  bash tools/datagen/synthetic_generator/generate_2layer_v2.sh
+```
+
+Everything downstream (`scripts/train.py`, `eval/pipeline.py`) then resolves the
+set through `PCBWORLD_DATA_ROOT` — see §5. The generator's final step derives
+each board's `.kicad_pro` design rules through the engine, so run it with the
+Installation section's `conda activate pcbworld` and
+`export PYTHONPATH=build_rl/pcbnew/python/rl:.` in effect.
+
+Training (§4) reads a **split file** — which board ids are train/val and which
+directory holds them — not a directory. The shipped
+[experiments/kdd/configs/datasets/d2a.json](experiments/kdd/configs/datasets/d2a.json) lists the 10 000 paper
+boards, so a trial set of your own needs its own split file (boards a split lists
+but that are absent on disk are warned about and skipped, so the stock `d2a.json`
+would train on the handful that overlap):
+
+```bash
+python - <<'PY'
+import json, pathlib
+root = pathlib.Path("var/datasets/synthetic/synth_2L_v2").resolve()
+ids = lambda s: sorted(p.stem for p in (root / s).glob("board_*.kicad_pcb"))
+json.dump({"easy": {s: ids(s) for s in ("train", "val", "test")},
+           "dataset_dirs": {s: str(root / s) for s in ("train", "val", "test")}},
+          open("var/datasets/synth_2L_v2_trial.json", "w"))
+PY
+```
+
+### 3. Get the real boards (D3)
+
+The real-board benchmark derives from the open
+[PCBench](https://github.com/PCBench/PCBench) collection (MIT). Board content is
+not bundled with this repo: the D3 set is rebuilt from a PCBench clone by the
+four-step chain in [tools/datagen/pcbench_prep/](tools/datagen/pcbench_prep/README.md)
+— KiCad 5→9 conversion, DRC repair/filter, guide generation, difficulty sort. The chain
+runs `kicad-cli` and the `pcbnew` Python module as child processes; build both from the
+engine's pinned source once (`BUILD_CLI=1 BUILD_PCBNEW=1`, about 4.5 minutes on 64
+cores) — the same KiCad the environment routes with, so the data does not depend on
+which 9.0.x a distribution ships:
+
+```bash
+BUILD_CLI=1 BUILD_PCBNEW=1 bash engine/build_rl_router.sh   # adds kicad-cli + pcbnew to build_rl/
+
+[ -d var/datasets/PCBench ] || git clone --depth 1 https://github.com/PCBench/PCBench.git var/datasets/PCBench
+export PCBWORLD_DATA_ROOT=$PWD/var/datasets                  # as in §2
+export PCBENCH_PCBS_ROOT=$PWD/var/datasets/PCBench/PCBs
+export PCBENCH_V9_ROOT=$PWD/var/datasets/pcbench_work/v9
+export PCBENCH_NEWDRC_OUT=$PWD/var/datasets/pcbench_work/newdrc
+export PCBENCH_SORTED_OUT=$PCBWORLD_DATA_ROOT/pcbench/exacad_sorted
+PP=tools/datagen/pcbench_prep
+python $PP/convert_v9.py --limit 30 --workers 8    # trial: the first 30 boards; drop --limit for all 1 182
+python $PP/drc_fix_v9.py --workers 8
+python $PP/make_guide.py --base-dir $PCBENCH_NEWDRC_OUT --stem processed_v9 --suffix _guide_v3 --workers 8
+python $PP/sort_prefix.py
+```
+
+Each step prints the `kicad-cli` / `pcbnew` it resolved (the engine build; `KICAD_CLI` /
+`PCBNEW_PYTHON` override). The full run — the same commands without `--limit`, with
+`--workers 16` — turns the 1 182 PCBench boards into the paper's **679** DRC-clean D3
+boards under `$PCBWORLD_DATA_ROOT/pcbench/exacad_sorted/<NNNN>_<name>/` in about three
+minutes on 16 workers (same set and order; per-step results in that README), replacing
+the trial's entries; [configs/datasets/d3.json](configs/datasets/d3.json) already lists
+them. D3 is evaluation-only: the RL policies are trained on synthetic boards (§2, §4) and
+every D3 result in the paper is zero-shot — no real board is used for training. Datasets
+resolve through `PCBWORLD_DATA_ROOT` (layout: the `sub` paths in
+[configs/paths.yaml](configs/paths.yaml)); anything that needs a missing dataset fails
+with an error naming the variable.
+
+### 4. Train — reproduce the paper's main RL policy (synthetic 2-layer)
+
+```bash
+python experiments/train.py table1 --method ppo_per_step --seed 42
+
+# on the trial set from §2 (add --smoke for a one-iteration end-to-end check):
+python experiments/train.py table1 --method ppo_per_step --seed 42 \
+  --split-json var/datasets/synth_2L_v2_trial.json
+```
+
+(`table1` is the recipe's internal name; the resulting policy produces the main
+benchmark results — Table 3 in the paper.)
+
+The paper's numbers were measured with the configuration kept under
+[experiments/kdd/configs/](experiments/kdd/configs/) (its reward, masking and DRC rules and
+dataset splits), which the recipes name explicitly; the repository's shipped defaults
+(`configs/pcbworld.yaml` and the `pcbworld_*` rules) are newer and differ from them.
+
+### 5. Evaluate — the uniform 3-stage pipeline
+
+Every routing method (RL transformer · rule-based · LLM agent) is scored by the
+same rollout → post-hoc DRC → aggregation pipeline. One invocation runs all
+three stages — here with the §4 policy on the §2 test boards — and writes
+`per_boards_{ckpts,overall,summary}.csv` into the output cell:
+
+```bash
+python -u eval/pipeline.py \
+  --ckpt var/outputs/training_logs/table1_synth2l_t3a/ppo_per_step/checkpoints/policy_best.pt \
+  --boards-dir var/datasets/synthetic/synth_2L_v2/test \
+  --seed 5600 --n-rollouts 5 --n-envs 8 --rollout-mode parallel \
+  --output-dir var/results/kdd/d2a/transformer_pcbworld \
+  --selection-method posthoc_drc_aware --check-angle 45
+
+python experiments/draw_figure.py --figure all   # paper figures/tables
+```
+
+The full reproduction flow — dataset staging, rollout, DRC, aggregation, figure
+extraction — is in [docs/QUICKSTART.md](docs/QUICKSTART.md).
+
+Pre-generated datasets are not distributed with the repo. Everything that reads
+them resolves paths under a single root: export `PCBWORLD_DATA_ROOT` pointing at
+your copy, laid out with the `sub` paths listed in
+[configs/paths.yaml](configs/paths.yaml) (e.g. `synthetic/synth_2L_v2`,
+`pcbench/exacad_sorted`). Anything that needs a dataset without it fails with an
+error naming the variable; the corresponding tests skip when it is unset.
+
+### 6. Route a board with an LLM
+
+The same environment drives an LLM agent: one API call per step, with the board
+state, the legal actions and the reward fed back each turn — the seven actions of
+§1, no separate interface. The first command needs **no API key** and prints the
+exact prompt the agent receives, then executes one action and shows the resulting
+state:
+
+```bash
+python methods/llm_agent/rollout/pcbworld.py --mode fixed \
+  --board_path tests/fixtures/simple_routing_board.kicad_pcb --env_num 1
+
+# Route the board end to end with a hosted model — needs a key in the environment
+# (any of these; free tiers work):
+if   [ -n "${GEMINI_API_KEY:-}${GOOGLE_API_KEY:-}" ]; then LLM_PROVIDER=google
+elif [ -n "${TOGETHER_API_KEY:-}" ];                  then LLM_PROVIDER=together
+elif [ -n "${ANTHROPIC_API_KEY:-}" ];                 then LLM_PROVIDER=anthropic
+elif [ -n "${OPENAI_API_KEY:-}" ];                    then LLM_PROVIDER=openai
+fi
+if [ -n "${LLM_PROVIDER:-}" ]; then
+  python methods/llm_agent/rollout/pcbworld.py --mode api --api_provider "$LLM_PROVIDER" \
+    --board_path tests/fixtures/simple_routing_board.kicad_pcb \
+    --env_num 1 --max_steps 40 --rollout_episodes 1 --silent
+else
+  echo "no LLM API key in the environment — skipping the API rollout"
+fi
+```
+
+Each provider uses its own default model unless `--api_model` names one. Because
+the OpenAI provider is the SDK's own client, `OPENAI_BASE_URL` points it at **any
+OpenAI-compatible endpoint** — a hosted free tier, a gateway, or a local vLLM
+server — without changing the command. `--prompt_version` selects the prompt
+bundle, `--verbose` prints every prompt and response, and `--dump_dir` saves the
+per-step transcript. A local vLLM rollout is `--mode llm --model_path <hf-id>`.
+
+## Licensing — two programs, two repositories
+
+**PCBWorld is two separate programs, distributed separately.**
+
+| | Program | Where | License |
+|---|---|---|---|
+| 1 | **PCBWorld** — the environment, agents, training and evaluation code | this repository | [BSD-3-Clause](LICENSE) |
+| 2 | **PCBWorld Engine** — our KiCad modifications, the RL router, the engine server | [LGAI-Research/PCBWorld-Engine](https://github.com/LGAI-Research/PCBWorld-Engine), pinned here as the `engine/` submodule | GPLv3 |
+
+This repository contains no engine or KiCad code — `engine/` is only a submodule
+pointer. The environment runs the engine as a child process and talks to it over a
+unix socket; they never link into one process, and **no combined artifact (wheel,
+image, installer) is built or distributed — do not create one.**
+`python tools/check_separation.py` machine-checks all of this (`--runtime` verifies
+the process separation via `/proc/<pid>/maps`). Third-party notices for this
+repository's Python dependencies: [Notice.md](Notice.md).
+
+> This repository — the environment, the benchmark definitions, the training and
+> evaluation code and the released checkpoints — is BSD-3-Clause. The engine
+> repository is GPLv3 because it is derived from KiCad. The real-board benchmark
+> boards are open-hardware designs that are **not** part of this repository; they
+> stay under their original licenses (see the dataset notes under
+> [configs/datasets/](configs/datasets/README.md)).
+
+## Versioning
+
+Per-release notes: [CHANGELOG.md](CHANGELOG.md) (this repository) and
+`engine/CHANGELOG.md` (the engine).
+
+The two repositories are versioned independently, each as `MAJOR.MINOR.PATCH`, and a
+number moves only when that repository's own content changes:
+
+- **MAJOR** — results are no longer comparable with the previous release (a change to
+  the observation, the reward, DRC scoring or the benchmark splits), or a breaking
+  interface change.
+- **MINOR** — new functionality. For the engine, also any change to the C++ sources,
+  the CMake files or the pinned KiCad revision (rebuild required), and a change of the
+  wire `PROTOCOL_VERSION` — that one bumps both repositories.
+- **PATCH** — everything else: fixes, documentation, and an environment release whose
+  only change is a moved engine pin.
+
+**An environment tag pins exactly one engine commit** — the `engine` submodule gitlink
+of that tag — and that pair is the only supported combination: check out `vX.Y.Z` of
+this repository, run `git submodule update --init`, and you have the engine the
+release was tested with. An engine tag on its own is not a supported combination
+until an environment release pins it. `engine/kicad-patches/ENGINE_VERSION` (copied
+next to the built module, and compared with it by the test suite) is a build
+identifier, not a release number; at run time the environment and the engine agree
+on the wire protocol through the `PROTOCOL_VERSION` handshake, never by matching
+version numbers.
+
+## Architecture
+
+```
+Decoder-only PPO / GRPO agent ──────┐   methods/rl_agent/
+LLM tool-calling agent ─────────────┤   methods/llm_agent/
+                                    ↓   gym.step(action)
+PCBWorld ──────────────────────────── pcb_world/core/env.py
+                                        6 routing actions (+ idle), JSON observations
+    ↓
+Engine access layer ────────────────── pcb_world/engine/
+                                        KiCadEngine — an RPC client. No engine
+                                        library is loaded in this process.
+    ↓   unix socket, primitives-only protocol
+┌──────────────────────── process boundary ────────────────────────┐
+    ↓
+Engine server ──────────────────────── engine/engine_server/
+                                        the only process that imports the binding
+    ↓   kicad_rl_router.RLRouter (pybind11)
+RL router (C++) ────────────────────── engine/kicad-patches/rl/
+    ↓
+KiCad PNS::ROUTER + BOARD ──────────── engine/kicad-python/ (submodule, 9.0.8)
+└──────────────────────────────────────────────────────────────────┘
+```
+
+## Repository layout
+
+```
+pcbworld/
+├── pcb_world/         the environment — engine (RPC client) · core (PCBWorld) · diag · vec · rendering · trajectory
+├── methods/           routing methods — rl_agent · llm_agent · baselines · _shared
+├── eval/              the uniform 3-stage evaluation (rollout -> post-hoc DRC -> aggregate)
+├── experiments/       paper reproduction recipes and figure/table extraction
+├── scripts/           thin entrypoints — train.py · eval.py · profile.py
+├── configs/           path resolver · schema/CLI · drc/masking/reward · dataset splits
+├── tools/             manual utilities — setup · datagen · diagnostics · docs
+├── tests/             the test suite (pytest, xdist-parallel)
+├── docs/              QUICKSTART.md · design/
+├── engine/            the GPL engine (submodule — a separate program, GPLv3)
+├── external/          RAGEN · verl-agent · OrthoRoute (third-party submodules)
+├── var/               generated data (gitignored): results · datasets · checkpoints · crashlogs
+└── build_rl/          C++ build output (gitignored)
+```
+
+## Notes
+
+- **One live engine per process.** Parallel rollouts use multi-process vector
+  environments, one engine each.
+- **Routing has long tails.** A single shove can take tens of seconds on a
+  congested board; per-action budgets are a caller-side concern.
+- If a worker dies on a fatal C++ signal, look under `var/crashlogs/` — the crash
+  handler writes the native backtrace and the Python stack there; clean exits
+  remove their own logs. One caveat: the test suite crashes workers on purpose
+  and normally isolates those artifacts in a throwaway directory, but with
+  `KICAD_CRASH_LOG_DIR` exported (e.g. by a sourced `experiments/_lib/env.sh`)
+  they land in that directory instead — files left there by a green `pytest`
+  run are from those tests and are safe to delete.
+
+## Paper & citation
+
+The benchmark and results are described in [PCBWorld.pdf](PCBWorld.pdf)
+([arXiv:2607.05915](https://arxiv.org/abs/2607.05915)), accepted to the KDD 2026
+Workshop on Evaluation and Trustworthiness of Agentic AI. Reproduction index:
+[experiments/kdd/README.md](experiments/kdd/README.md).
+
+```bibtex
+@inproceedings{song2026pcbworld,
+  title     = {PCBWorld: A Benchmark Environment for Engine-Grounded
+               PCB Design Automation},
+  author    = {Song, Hyungseok and Park, Junseok and Choi, Won-Seok and
+               Bae, Seohui and Jeong, Han-Seul and Park, Youngjoon and
+               Lee, Soonyoung},
+  booktitle = {KDD 2026 Workshop on Evaluation and Trustworthiness of
+               Agentic AI},
+  year      = {2026},
+  note      = {arXiv:2607.05915},
+}
+```
+
+## Project status
+
+This release is ahead of the KDD 2026 submission — faster, with a number of bugs
+fixed — and we will keep developing the environment rather than freeze it here.
+Feedback, issues and pull requests are welcome.
+
+## Contact
+
+Questions, bug reports and requests to use the benchmark beyond the license terms:
+open an issue, or write to hyungseok.song@lgresearch.ai.

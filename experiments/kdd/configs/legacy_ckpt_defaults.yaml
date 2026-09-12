@@ -1,0 +1,22 @@
+# Paper-era checkpoint defaults — the values every knob below had when the KDD checkpoints
+# (and any checkpoint saved before the knob existed) were trained. A checkpoint's stored
+# `args` lacks a key only when the knob postdates it; the loader fills such keys from here
+# (configs.loader.schema.with_legacy_ckpt_defaults) and `tools/ckpt_migrate.py` writes them
+# into the file. New checkpoints store every knob, so this file never applies to them.
+# Rule: when you add a knob, add here the value that reproduces the pre-knob behaviour.
+# The CURRENT defaults live in configs/pcbworld.yaml — these are deliberately different.
+
+env:
+  outline_obs: tess              # tessellated Edge.Cuts (the only representation before `arc` existed)
+  simplify_outline: false        # outline simplification did not exist; EDGE token counts were the raw ones
+  net_constraint_obs: false      # NET-token constraint channels were constant 0
+  directional_candidates: null   # pad / existing-copper candidates only (no directional ring)
+  offboard_mask: false           # every directional candidate selectable
+  connectivity_filter: false     # every existing-copper candidate selectable (the filter changes the pointer index space)
+  pad_graze_margin_mm: 0.0       # no graze guard
+  action_history_len: 1          # single previous-action window
+
+rl_policy:
+  time_feature: step_ratio       # step / max_steps HEAD-token time scalar
+  obstacle_obs: false            # no OBSTACLE tokens (shape_obs is presence-detected from the weights)
+  n_max_slots: 64                # slot cap of the paper checkpoints

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "krt-runner"
+version = "0.1.0"
+description = "Thin pip-installable wrapper that subprocess-invokes KiCadRoutingTools/route.py"
+requires-python = ">=3.10"
+authors = [{name = "PCBWorld authors"}]
+license = {text = "Internal"}
+dependencies = []
+
+[project.scripts]
+# Single CLI entry point. The wrapper forwards all argv straight to
+# ``python route.py`` in the KRT install dir (KRT_ROOT env var, or the
+# default external/KiCadRoutingTools checkout). Adds NO routing logic of its own.
+krt-route = "krt_runner.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+krt_runner = ["py.typed"]

@@ -1,0 +1,19 @@
+# Terminal-mode (episode-end) twin of drc_only_dense.
+# Same potential options, but the potential is only resolved at episode end
+# (Φ(s_final) - Φ(s_0) credited as a single terminal reward).
+#   Φ_drc(s) = -drc_log_agg_scale · ln(1 + x / drc_log_offset)
+#              -Σ_i drc_log_scale · ln(1 + x_i / drc_log_offset)
+
+name: drc_only_sparse
+mode: terminal
+
+potential:
+  completion_bonus_log_scale: 1.0
+  unconnected_penalty: 1.0
+  wirelength_penalty: 0.0
+  drc_shape: log_per_net
+  drc_log_scale: 1.0
+  drc_log_agg_scale: 3.0
+  drc_log_offset: 2.0
+  step_penalty: 0.0
+  truncation_mode: none
