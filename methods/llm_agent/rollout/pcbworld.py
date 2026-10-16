@@ -155,7 +155,7 @@ def _resolve_eval_boards(args) -> list[tuple[str, str]]:
     paths = list(sched.paths)
     # board_id: file stem when those are unique (flat synth layout,
     # ``<dir>/board_00003.kicad_pcb``). For per-board-dir layouts where every
-    # board shares one filename (e.g. d3's ``<dir>/processed_v9_guide_v3.kicad_pcb``)
+    # board shares one filename (e.g. d3's ``<dir>/processed_v10_guide_v3.kicad_pcb``)
     # the stems all collide and would overwrite each other under per_board/,
     # so fall back to the parent directory name. Mirrors
     # eval_rollouts.select_real_boards.
@@ -1080,3 +1080,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+[You have received this identical output 3 times. Re-reading 'ssh://llm/root/gnn/third_party/PCBWorld/methods/llm_agent/rollout/pcbworld.py:raw' will not change it — use a narrower selector (path:A-B), or proceed with the edit.]

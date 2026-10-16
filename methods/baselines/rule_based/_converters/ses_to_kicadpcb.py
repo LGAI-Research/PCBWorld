@@ -103,21 +103,32 @@ def find_children(node, name):
 
 def unquote(s: str) -> str:
     if isinstance(s, str) and len(s) >= 2 and s[0] == '"' and s[-1] == '"':
-        return bytes(s[1:-1], 'utf-8').decode('unicode_escape')
+        return json.loads(s)
     return s
 
 
 # ---------- conversion ----------
 
 def parse_net_map(pcb_text: str):
-    nets = {}
-    for m in re.finditer(r'\(net\s+(\d+)\s+"([^"]*)"\)', pcb_text):
-        nid = int(m.group(1))
-        name = m.group(2)
-        if name and name not in nets:
-            nets[name] = nid
-    return nets
+    """Map net names to the base PCB reference: numeric ID or quoted name."""
+    numeric_refs = {}
+    has_numeric_table = False
+    for m in re.finditer(r'\(net\s+(\d+)\s+("(?:[^"\\]|\\.)*")\)', pcb_text):
+        name = json.loads(m.group(2))
+        if not name:
+            continue
+        has_numeric_table = True
+        if name not in numeric_refs:
+            numeric_refs[name] = int(m.group(1))
+    if has_numeric_table:
+        return numeric_refs
 
+    named_refs = {}
+    for m in re.finditer(r'\(net\s+("(?:[^"\\]|\\.)*")\)', pcb_text):
+        name = json.loads(m.group(1))
+        if name and name not in named_refs:
+            named_refs[name] = json.dumps(name, ensure_ascii=False)
+    return named_refs
 
 def parse_resolution(node):
     """(resolution <unit> <value>) -> ses_unit_in_mm."""

@@ -377,7 +377,7 @@ def build_fewshot_pool(
         if max_chars is not None and len(stripped) > max_chars:
             continue
         # Disambiguate by parent dir — many real-board pools have identical
-        # filenames (processed_v9_guide_v3.kicad_pcb) across hundreds of
+        # filenames (processed_v10_guide_v3_v3.kicad_pcb) across hundreds of
         # subdirs.
         bid = f"{f.parent.name}/{f.stem}"
         out.append(FewShotExample(
@@ -892,7 +892,7 @@ def run_one_board(
     # If the relative path is just the filename (e.g. when callers pass each
     # file explicitly so src_root == src.parent), disambiguate via parent
     # dir. Real-board collections often share the same filename across
-    # hundreds of subdirs (processed_v9_guide_v3.kicad_pcb).
+    # hundreds of subdirs (processed_v10_guide_v3_v3.kicad_pcb).
     if "/" not in rel.as_posix() and src.parent.name:
         board_id = f"{src.parent.name}__{board_id}"
     board_dir = out_root / "per_board" / board_id
@@ -1255,7 +1255,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--fewshot-name-contains", type=str, default=None,
         help="Only consider example files whose filename contains this "
-             "substring (e.g. 'processed_v9_guide').",
+             "substring (e.g. 'processed_v10_guide_v3').",
     )
     p.add_argument(
         "--num-samples", "-k", type=int, default=5,

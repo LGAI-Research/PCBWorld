@@ -13,7 +13,7 @@ methods/baselines/rule_based/
 ├── run_rule_based_routers.py    UNIFIED RUNNER — all three baselines, eval included
 ├── run_orthoroute_pipeline.py   OrthoRoute-only chain (kicad_pcb → .orp → .ORS → routed)
 ├── _lib/datasets.py             dataset / path resolution (env var, then configs/paths.yaml)
-├── _converters/                 SES/ORS → kicad_pcb (verbatim text, never imports pcbnew)
+├── _converters/                 SES/ORS → kicad_pcb (preserves base-board net refs; no pcbnew)
 ├── krt/                         pip-installable thin wrapper around KRT (CLI `krt-route`)
 ├── scripts/setup_env.sh         one-shot env bootstrap
 ├── eval/                        paper RQ2 snapshot + aggregator (per-board logs gitignored)
@@ -104,10 +104,13 @@ python methods/baselines/rule_based/run_rule_based_routers.py \
   boards that hit it appear as `status="timeout"` rows in `manifest.json`.
 
 [`run_orthoroute_pipeline.py`](run_orthoroute_pipeline.py) is the alternative
-entry point for OrthoRoute alone: it takes a directory of board folders instead
-of a registered dataset and generates the `.orp` files itself as Stage 1, so it
-is the one to reach for when investigating OrthoRoute on boards that have no
-pre-made siblings. It produces routed boards, not eval logs.
+entry point for OrthoRoute alone: it takes a directory of v10 PCBench board
+folders instead of a registered dataset and uses the canonical
+`make_dsn_orp_v3.py` converter for Stage 1 when siblings are missing. It writes
+`processed_v10_guide_v3_unrouted.dsn` and `processed_v10_guide_v3.orp` under the
+output root; `<out-root>/_orp_stage1_report.json` records each input board, reused
+ORPs, and converter outcomes. A failed conversion or missing/empty ORP stops the
+pipeline before routing.
 
 ## Choosing a baseline
 
@@ -123,9 +126,11 @@ Tool stdout always lands in `raw/<board>.routing.log`, whichever baseline ran.
 
 ### Input layout per dataset
 
+The PCBench aliases `pcbench_exacad` and `pcbench_exacad_dsn` resolve to the v10 sorted PCB and DSN/ORP roots in `configs/paths.yaml`.
+
 | dataset | raw `.kicad_pcb` | `.kicad_pro` | `.dsn` (unrouted) | `.orp` |
 |---|---|---|---|---|
-| `pcbench` | `${PCBENCH_PCB_ROOT}/<folder>/processed_v9_guide_v3_unrouted.kicad_pcb` | sibling | `${PCBENCH_DSN_ROOT}/<folder>/processed_v9_guide_v3_unrouted.dsn` | sibling |
+| `pcbench` | `${PCBENCH_PCB_ROOT}/<folder>/processed_v10_guide_v3_unrouted.kicad_pcb` | sibling | `${PCBENCH_DSN_ROOT}/<folder>/processed_v10_guide_v3_unrouted.dsn` | `${PCBENCH_DSN_ROOT}/<folder>/processed_v10_guide_v3.orp` |
 | `synthetic_2l` | `${SYNTH2L_PCB_ROOT}/<split>/board_NNNNN.kicad_pcb` | sibling | `${SYNTH2L_DSN_ROOT}/<split>/board_NNNNN_unrouted.dsn` | sibling |
 | `synthetic_1l` (grid `<G>`) | `${SYNTH1L_PCB_ROOT_<G>}/<split>/board_NNNNN.kicad_pcb` | sibling | `${SYNTH1L_DSN_ROOT_<G>}/<split>/board_NNNNN_unrouted.dsn` | sibling |
 

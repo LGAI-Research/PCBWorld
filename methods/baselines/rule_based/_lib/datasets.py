@@ -57,7 +57,7 @@ for _g in (10, 50, 100, 200, 500):
     _DATASET_NAMES[f"SYNTH1L_PCB_ROOT_{_g}"] = f"synth_1L_grid{_g}_5net_v02"
     _DATASET_NAMES[f"SYNTH1L_DSN_ROOT_{_g}"] = f"synth_1L_grid{_g}_5net_v02_dsn"
 
-PCBENCH_STEM = "processed_v9_guide_v3"
+PCBENCH_STEM = "processed_v10_guide_v3"
 SUPPORTED_GRIDS = (10, 50, 100, 200, 500)
 SUPPORTED_SPLITS = ("test", "train", "val")
 
@@ -285,3 +285,6 @@ def dataset_tag(dataset: str, *, grid: int | None = None) -> str:
     if dataset == "pcbench":
         return "PCBench"
     raise ValueError(f"Unknown dataset: {dataset!r}")
+
+
+[You have received this identical output 3 times. Re-reading 'ssh://llm/root/gnn/third_party/PCBWorld/methods/baselines/rule_based/_lib/datasets.py:raw' will not change it — use a narrower selector (path:A-B), or proceed with the edit.]

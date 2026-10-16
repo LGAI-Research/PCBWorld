@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Per-net uniform-width guide generator for KiCad boards (v9 and legacy).
+Per-net uniform-width guide generator for KiCad boards.
 
 For each board folder:
   - Read  {folder}/{stem}.kicad_pcb + {folder}/{stem}.kicad_pro
@@ -8,7 +8,7 @@ For each board folder:
            {folder}/{stem}{suffix}_unrouted.kicad_pcb (routing removed)
 
 Algorithm:
-  1. Parse net classes from .kicad_pro (v9) or .kicad_pcb net_class blocks (legacy)
+  1. Parse net classes from .kicad_pro or .kicad_pcb net_class blocks
   2. Preserve original DRC rules/severities from .kicad_pro verbatim.
      (only fill fields that don't exist with a 0 default.)
   3. Extract per-net segment width (min, max) from segments.
@@ -86,9 +86,21 @@ board.Save(dst)
 def _balanced_block_end(content, start):
     """Exclusive end index of the block from '(' to its matching ')'."""
     depth = 0
+    in_string = False
+    escaped = False
     for j in range(start, len(content)):
         c = content[j]
-        if c == '(':
+        if in_string:
+            if escaped:
+                escaped = False
+            elif c == '\\':
+                escaped = True
+            elif c == '"':
+                in_string = False
+            continue
+        if c == '"':
+            in_string = True
+        elif c == '(':
             depth += 1
         elif c == ')':
             depth -= 1
@@ -97,47 +109,100 @@ def _balanced_block_end(content, start):
     return len(content)
 
 
+def _find_tag_outside_strings(content, tag, start):
+    """Find a complete S-expression tag outside quoted strings."""
+    in_string = False
+    escaped = False
+    i = start
+    while i <= len(content) - len(tag):
+        c = content[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif c == '\\':
+                escaped = True
+            elif c == '"':
+                in_string = False
+            i += 1
+            continue
+        if c == '"':
+            in_string = True
+            i += 1
+            continue
+        if content.startswith(tag, i):
+            end = i + len(tag)
+            before_boundary = (i == 0 or content[i - 1].isspace()
+                               or content[i - 1] in '()')
+            after_boundary = (end == len(content)
+                              or content[end].isspace()
+                              or content[end] == ')')
+            if before_boundary and after_boundary:
+                return i
+        i += 1
+    return -1
+
 def extract_net_id_to_name(content):
-    """Top-level (net id name) declarations of a kicad_pcb → {id: name}."""
+    """Map numeric net ids to names, or named-only refs to namespaced ids."""
     result = {}
+    has_meaningful_numeric_net = False
     for m in re.finditer(
             r'^\s*\(net\s+(\d+)\s+("(?:[^"\\]|\\.)*"|[^)"]+)\)',
             content, re.MULTILINE):
         nid = m.group(1)
         raw = m.group(2).strip('"').strip()
         result[nid] = raw
+        if nid != '0' and raw:
+            has_meaningful_numeric_net = True
+    if has_meaningful_numeric_net:
+        return result
+
+    result = {}
+    for m in re.finditer(r'\(net\s+"((?:[^"\\]|\\.)*)"\s*\)', content):
+        name = m.group(1).strip()
+        if name:
+            result[f'named:{name}'] = name
     return result
 
+def _net_name_to_id(net_id_to_name):
+    return {name: nid for nid, name in (net_id_to_name or {}).items()}
 
-def extract_net_width_range(content):
-    """Per-net (min, max) width over the (segment ...) and (arc ...) blocks
-    (multi-line blocks included)."""
+
+def _extract_net_id(block, net_name_to_id):
+    match = re.search(r'\(net\s+(\d+|"(?:[^"\\]|\\.)*")\s*\)', block)
+    if not match:
+        return None
+    reference = match.group(1)
+    if reference.startswith('"'):
+        return net_name_to_id.get(reference[1:-1].strip())
+    return reference
+
+def extract_net_width_range(content, net_id_to_name=None):
+    """Per-net (min, max) widths from segment and arc blocks."""
+    net_name_to_id = _net_name_to_id(net_id_to_name)
     per_net = defaultdict(list)
     for tag in ('(segment', '(arc'):
         idx = 0
         while True:
-            start = content.find(tag, idx)
+            start = _find_tag_outside_strings(content, tag, idx)
             if start == -1:
                 break
             end = _balanced_block_end(content, start)
             block = content[start:end]
             wm = re.search(r'\(width\s+([0-9.]+)\)', block)
-            nm = re.search(r'\(net\s+(\d+)\)', block)
-            if wm and nm:
-                nid = nm.group(1)
-                if nid != '0':
-                    per_net[nid].append(float(wm.group(1)))
+            nid = _extract_net_id(block, net_name_to_id)
+            if wm and nid is not None and nid != '0':
+                per_net[nid].append(float(wm.group(1)))
             idx = end
     return {nid: (min(ws), max(ws)) for nid, ws in per_net.items()}
 
-
-def extract_uuid_to_net(content):
-    """Track item (segment/arc/via) UUID → net id."""
+def extract_uuid_to_net(content, net_id_to_name=None):
+    """Track item (segment/arc/via) UUID → numeric net id."""
+    net_name_to_id = _net_name_to_id(net_id_to_name)
     out = {}
     for tag in ('(segment', '(arc', '(via'):
         idx = 0
         while True:
-            start = content.find(tag, idx)
+            start = _find_tag_outside_strings(content, tag, idx)
             if start == -1:
                 break
             end = _balanced_block_end(content, start)
@@ -145,12 +210,11 @@ def extract_uuid_to_net(content):
             um = re.search(r'\(uuid\s+"([^"]+)"\s*\)', block)
             if not um:
                 um = re.search(r'\(uuid\s+([0-9a-fA-F\-]+)\s*\)', block)
-            nm = re.search(r'\(net\s+(\d+)\)', block)
-            if um and nm:
-                out[um.group(1)] = nm.group(1)
+            nid = _extract_net_id(block, net_name_to_id)
+            if um and nid is not None:
+                out[um.group(1)] = nid
             idx = end
     return out
-
 
 def extract_offending_net_ids(violations, uuid_to_net, net_name_to_id):
     """Set of net ids referenced by the DRC violation items.
@@ -228,7 +292,7 @@ def extract_pcb_net_class_blocks(content):
 
 
 def extract_pro_net_classes(pro_data):
-    """Parse net_settings.classes + netclass_patterns of a v9 .kicad_pro.
+    """Parse net_settings.classes + netclass_patterns of a .kicad_pro.
     Returns (class_params, explicit_net_to_class, patterns) with internal keys.
     patterns = [(pattern_str, classname), ...] in original order.
     """
@@ -304,23 +368,24 @@ def derive_net_to_class(net_id_to_name, explicit, patterns, class_params):
 # Segment width rewrite (multi-line & single-line)
 # ─────────────────────────────────────────────
 
-def apply_net_widths_to_tracks(content, net_id_to_width):
-    """Replace the width of every (segment ...) and (arc ...) block with the
-    per-net value."""
+def apply_net_widths_to_tracks(content, net_id_to_width, net_id_to_name=None):
+    """Rewrite segment and arc widths using numeric or named net references."""
+    net_name_to_id = _net_name_to_id(net_id_to_name)
+
     def _rewrite(src, tag):
         out = []
         idx = 0
         while idx < len(src):
-            start = src.find(tag, idx)
+            start = _find_tag_outside_strings(src, tag, idx)
             if start == -1:
                 out.append(src[idx:])
                 break
             out.append(src[idx:start])
             end = _balanced_block_end(src, start)
             block = src[start:end]
-            nm = re.search(r'\(net\s+(\d+)\)', block)
-            if nm and nm.group(1) in net_id_to_width:
-                new_w = net_id_to_width[nm.group(1)]
+            nid = _extract_net_id(block, net_name_to_id)
+            if nid in net_id_to_width:
+                new_w = net_id_to_width[nid]
                 w_str = f'{new_w:.5f}'.rstrip('0').rstrip('.')
                 block = re.sub(r'\(width\s+[0-9.]+\)',
                                f'(width {w_str})', block, count=1)
@@ -332,14 +397,13 @@ def apply_net_widths_to_tracks(content, net_id_to_width):
     content = _rewrite(content, '(arc')
     return content
 
-
-def remove_routing_v9(content):
+def remove_routing(content):
     """Drop the segment, arc and via blocks (multi-line included)."""
     for tag in ('(segment', '(arc', '(via'):
         out = []
         idx = 0
         while idx < len(content):
-            start = content.find(tag, idx)
+            start = _find_tag_outside_strings(content, tag, idx)
             if start == -1:
                 out.append(content[idx:])
                 break
@@ -548,68 +612,72 @@ def _write_refill_helper():
 
 
 def _refill_zones(pcb_src, pro_src, dst_pcb, dst_pro, helper):
-    """Zone refill through the pcbnew API; the pro needs the same stem."""
+    """Refill zones and report failure unless pcbnew saves the result."""
     try:
         shutil.copy(pro_src, dst_pro)
-    except Exception:
-        pass
-    try:
-        subprocess.run(
+        if dst_pcb.exists():
+            dst_pcb.unlink()
+        result = subprocess.run(
             [kicad_tools.pcbnew_python(), str(helper), str(pcb_src), str(dst_pcb)],
             capture_output=True, timeout=180, check=False)
-    except subprocess.TimeoutExpired:
-        return False
     except Exception:
         return False
-    return dst_pcb.exists()
-
+    return result.returncode == 0 and dst_pcb.is_file()
 
 def run_drc(pcb_content, pro_data, tmpdir, tag='drc'):
-    """
-    Write pcb/pro into tmpdir, refill zones, then run kicad-cli drc.
-    Returns dict {'counts': {type: count}, 'violations': [...]}
-    or None on failure.
-    """
-    tmp = Path(tmpdir)
-    pcb_src = tmp / f'{tag}.kicad_pcb'
-    pro_src = tmp / f'{tag}.kicad_pro'
-    pcb_src.write_text(pcb_content, encoding='utf-8')
-    pro_src.write_text(json.dumps(pro_data), encoding='utf-8')
-
-    helper = _write_refill_helper()
-    refilled_pcb = tmp / f'{tag}_refilled.kicad_pcb'
-    refilled_pro = tmp / f'{tag}_refilled.kicad_pro'
-    if _refill_zones(pcb_src, pro_src, refilled_pcb, refilled_pro, helper):
-        target = refilled_pcb
-    else:
-        target = pcb_src
-
-    out = tmp / f'{tag}.json'
+    """Run zone refill and DRC; return counts or an explicit stage error."""
     try:
-        subprocess.run(
-            # --all-track-errors: by default kicad-cli reports only the first
-            # clearance violation per track, and the copper-clearance test runs
-            # on a thread pool, so WHICH one is first is a race between runs.
-            # The offender nets are derived from this list, so the full list is
-            # required for the guide search to be deterministic.
-            [kicad_tools.kicad_cli(), 'pcb', 'drc', '--format', 'json',
-             '--severity-error', '--all-track-errors',
-             '--output', str(out), str(target)],
-            capture_output=True, timeout=180, check=False)
-    except Exception:
-        return None
-    if not out.exists():
-        return None
-    try:
-        data = json.loads(out.read_text())
-    except Exception:
-        return None
-    violations = data.get('violations', []) or []
-    counts = defaultdict(int)
-    for v in violations:
-        counts[v.get('type', 'unknown')] += 1
-    return {'counts': dict(counts), 'violations': violations}
+        tmp = Path(tmpdir)
+        pcb_src = tmp / f'{tag}.kicad_pcb'
+        pro_src = tmp / f'{tag}.kicad_pro'
+        pcb_src.write_text(pcb_content, encoding='utf-8')
+        pro_src.write_text(json.dumps(pro_data), encoding='utf-8')
 
+        helper = _write_refill_helper()
+        refilled_pcb = tmp / f'{tag}_refilled.kicad_pcb'
+        refilled_pro = tmp / f'{tag}_refilled.kicad_pro'
+        if not _refill_zones(pcb_src, pro_src, refilled_pcb, refilled_pro, helper):
+            return {'error': f'pcbnew zone refill failed for {tag}'}
+
+        out = tmp / f'{tag}.json'
+        if out.exists():
+            out.unlink()
+        try:
+            result = subprocess.run(
+                # --all-track-errors: by default kicad-cli reports only the first
+                # clearance violation per track, and the copper-clearance test runs
+                # on a thread pool, so WHICH one is first is a race between runs.
+                # The offender nets are derived from this list, so the full list is
+                # required for the guide search to be deterministic.
+                [kicad_tools.kicad_cli(), 'pcb', 'drc', '--format', 'json',
+                 '--severity-error', '--all-track-errors',
+                 '--output', str(out), str(refilled_pcb)],
+                capture_output=True, timeout=180, check=False)
+        except subprocess.TimeoutExpired:
+            return {'error': f'kicad-cli DRC timed out for {tag}'}
+        except Exception as e:
+            return {'error': f'kicad-cli DRC failed for {tag}: {type(e).__name__}: {e}'}
+        if result.returncode != 0:
+            return {'error': f'kicad-cli DRC exited with status {result.returncode} for {tag}'}
+        if not out.is_file():
+            return {'error': f'kicad-cli DRC produced no report for {tag}'}
+        try:
+            data = json.loads(out.read_text(encoding='utf-8'))
+        except json.JSONDecodeError as e:
+            return {'error': f'malformed DRC JSON for {tag}: {e}'}
+        except Exception as e:
+            return {'error': f'could not read DRC report for {tag}: {type(e).__name__}: {e}'}
+        if (not isinstance(data, dict)
+                or not isinstance(data.get('violations'), list)
+                or any(not isinstance(v, dict) for v in data['violations'])):
+            return {'error': f'invalid DRC JSON structure for {tag}'}
+        violations = data['violations']
+        counts = defaultdict(int)
+        for v in violations:
+            counts[v.get('type', 'unknown')] += 1
+        return {'counts': dict(counts), 'violations': violations}
+    except Exception as e:
+        return {'error': f'DRC stage failed for {tag}: {type(e).__name__}: {e}'}
 
 def drc_passes(counts):
     """Pass when there are zero violations. The inputs already pass DRC, so no
@@ -665,39 +733,26 @@ def _compute_widths_per_t(t_per_net, net_wrange, default_w, min_track_w=0.0,
     """Width per net from its t (0 = max, 1 = min).
 
     A net with no segments is pinned to default_w regardless of t.
-    min_track_w: the min_track_width rule value — acts as the lower floor.
+    min_track_w and its original class trace_width are lower floors.
+    net_to_class is keyed by numeric/synthetic net id.
     """
     widths = {}
     for nid, t in t_per_net.items():
         if nid in net_wrange:
             mn, mx = net_wrange[nid]
-            # Enforce floor: observed min, global min_track_w, and
-            # the original class trace_width (if available).
-            cls_name = None
             cls_min = 0.0
             if net_to_class and class_params:
-                # net_to_class maps net name -> class name; but keys in
-                # net_wrange are net ids (strings). The caller may pass
-                # net_to_class as a mapping from net id->class or name->class.
-                # Our process_board passes net_to_class as name mapping, so
-                # try both lookups.
-                # First try to find by net id (string) in net_to_class.
-                if nid in net_to_class:
-                    cls_name = net_to_class.get(nid)
-                else:
-                    # try reverse: net id -> net name resolution is handled
-                    # by caller if needed; fall back to None.
-                    cls_name = None
-                if cls_name and cls_name in class_params:
-                    cls_min = class_params.get(cls_name, {}).get('trace_width', 0.0) or 0.0
+                cls_name = net_to_class.get(nid)
+                if cls_name:
+                    cls_min = class_params.get(cls_name, {}).get(
+                        'trace_width', 0.0) or 0.0
             mn_floor = max(mn, min_track_w, cls_min)
             widths[nid] = mx * (1 - t) + mn_floor * t
         else:
             widths[nid] = default_w
     return widths
 
-
-def process_board(folder, input_stem='processed_v9', guide_suffix='_guide',
+def process_board(folder, input_stem='processed_v10', guide_suffix='_guide_v3',
                   verbose=False):
     """
     Returns dict:
@@ -733,9 +788,9 @@ def process_board(folder, input_stem='processed_v9', guide_suffix='_guide',
         pcb_classes, pcb_n2c = extract_pcb_net_class_blocks(content)
         pro_classes, pro_n2c, pro_patterns = extract_pro_net_classes(pro_data)
 
-        # v9: no pcb net_class → prefer pro / legacy: prefer pcb
-        is_v9 = (len(pcb_classes) == 0 and len(pro_classes) > 0)
-        if is_v9:
+        # Prefer .kicad_pro classes when no pcb net_class blocks are present.
+        uses_pro_netclasses = (len(pcb_classes) == 0 and len(pro_classes) > 0)
+        if uses_pro_netclasses:
             class_params = pro_classes
             explicit_n2c = pro_n2c
             patterns = pro_patterns
@@ -753,7 +808,12 @@ def process_board(folder, input_stem='processed_v9', guide_suffix='_guide',
 
         net_to_class = derive_net_to_class(
             net_id_to_name, explicit_n2c, patterns, class_params)
-        net_wrange = extract_net_width_range(content)
+        net_id_to_class = {
+            nid: net_to_class[name]
+            for nid, name in net_id_to_name.items()
+            if name in net_to_class
+        }
+        net_wrange = extract_net_width_range(content, net_id_to_name)
 
         if not net_wrange:
             res['status'] = 'skip'
@@ -780,7 +840,7 @@ def process_board(folder, input_stem='processed_v9', guide_suffix='_guide',
                           if any(k in v for v in class_params.values())]
 
         # helper maps used to identify the offending nets
-        uuid_to_net = extract_uuid_to_net(content)
+        uuid_to_net = extract_uuid_to_net(content, net_id_to_name)
         net_name_to_id = {n: i for i, n in net_id_to_name.items()
                           if n and i != '0'}
 
@@ -799,9 +859,9 @@ def process_board(folder, input_stem='processed_v9', guide_suffix='_guide',
             for trial in range(N_TRIAL):
                 net_widths = _compute_widths_per_t(
                     t_per_net, net_wrange, default_w, min_track_w,
-                    net_to_class=net_to_class, class_params=class_params)
+                    net_to_class=net_id_to_class, class_params=class_params)
                 modified_pcb = apply_net_widths_to_tracks(
-                    content, net_widths)
+                    content, net_widths, net_id_to_name)
 
                 groups = build_groups(
                     net_id_to_name, net_widths, net_to_class,
@@ -815,16 +875,17 @@ def process_board(folder, input_stem='processed_v9', guide_suffix='_guide',
                 trial_pro = build_guide_pro(pro_data, groups, class_info)
 
                 # legacy boards need the pcb blocks rewritten too
-                if not is_v9:
+                if not uses_pro_netclasses:
                     modified_pcb = rebuild_pcb_net_class_blocks(
                         modified_pcb, groups, class_info)
 
                 drc_result = run_drc(modified_pcb, trial_pro, tmp,
                                      tag=f'trial{trial}')
-                if drc_result is None:
+                if 'error' in drc_result:
+                    res['msg'] = drc_result['error']
                     if verbose:
-                        print(f'  [{folder.name}] trial {trial+1}: DRC error')
-                    continue
+                        print(f'  [{folder.name}] trial {trial+1}: {drc_result["error"]}')
+                    return res
 
                 trial_counts = drc_result['counts']
                 last = dict(pcb=modified_pcb, pro=trial_pro,
@@ -868,9 +929,9 @@ def process_board(folder, input_stem='processed_v9', guide_suffix='_guide',
                            for nid, t in t_per_net.items()}
                 final_widths = _compute_widths_per_t(
                     final_t, net_wrange, default_w, min_track_w,
-                    net_to_class=net_to_class, class_params=class_params)
+                    net_to_class=net_id_to_class, class_params=class_params)
                 final_pcb = apply_net_widths_to_tracks(
-                    content, final_widths)
+                    content, final_widths, net_id_to_name)
                 final_groups = build_groups(
                     net_id_to_name, final_widths, net_to_class,
                     class_params, default_w, preserved_keys)
@@ -881,11 +942,16 @@ def process_board(folder, input_stem='processed_v9', guide_suffix='_guide',
                     final_groups, final_default_w)
                 final_pro = build_guide_pro(
                     pro_data, final_groups, final_class_info)
-                if not is_v9:
+                if not uses_pro_netclasses:
                     final_pcb = rebuild_pcb_net_class_blocks(
                         final_pcb, final_groups, final_class_info)
                 final_drc = run_drc(final_pcb, final_pro, tmp,
                                     tag='final_min')
+                if 'error' in final_drc:
+                    res['msg'] = final_drc['error']
+                    if verbose:
+                        print(f'  [{folder.name}] final-min: {final_drc["error"]}')
+                    return res
                 final_accepted = None
                 if final_drc is not None:
                     final_counts = final_drc['counts']
@@ -926,7 +992,7 @@ def process_board(folder, input_stem='processed_v9', guide_suffix='_guide',
             guide_pcb.write_text(accepted['pcb'], encoding='utf-8')
             guide_pro.write_text(json.dumps(accepted['pro'], indent=2),
                                  encoding='utf-8')
-            unrouted = remove_routing_v9(accepted['pcb'])
+            unrouted = remove_routing(accepted['pcb'])
             guide_unrouted_pcb.write_text(unrouted, encoding='utf-8')
 
             # stats: nets left at max (t=0) / nets narrowed
@@ -965,10 +1031,10 @@ def _process_wrapper(args):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--base-dir', required=True,
-                   help='board-folder root to process (e.g. the drc_fix_v9.py '
+                   help='board-folder root to process (e.g. the drc_fix_v10.py '
                         'output directory)')
-    p.add_argument('--stem', default='processed_v9')
-    p.add_argument('--suffix', default='_guide')
+    p.add_argument('--stem', default='processed_v10')
+    p.add_argument('--suffix', default='_guide_v3')
     p.add_argument('--workers', type=int, default=8)
     p.add_argument('--limit', type=int, default=0,
                    help='0=all, N=only first N boards')
@@ -986,7 +1052,7 @@ def main():
     if args.limit:
         folders = folders[:args.limit]
 
-    kicad_tools.announce()
+    kicad_tools.assert_all()
     print(f'Processing {len(folders)} boards under {base}')
     print(f'  stem={args.stem}  suffix={args.suffix}  workers={args.workers}')
     print(f'  log={args.log}')
@@ -1032,7 +1098,8 @@ def main():
     for k, v in sorted(counts.items()):
         print(f'  {k:6s}: {v}')
     print(f'\nDetailed log: {args.log}')
+    return 1 if counts['error'] or counts['skip'] else 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

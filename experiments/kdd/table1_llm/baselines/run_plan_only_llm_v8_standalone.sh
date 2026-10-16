@@ -56,7 +56,7 @@ _ds() { python -m configs.loader.paths resolve "$1"; }
 SYNTH_2L_TEST_DIR="${SYNTH_2L_TEST_DIR:-$(_ds synth_2L_v2)/test}"
 SYNTH_2L_VAL_DIR="${SYNTH_2L_VAL_DIR:-$(_ds synth_2L_v2)/val}"
 REAL_BOARD_DIR="${REAL_BOARD_DIR:-$(_ds pcbench_exacad)}"
-REAL_BOARD_NAME_FILTER="${REAL_BOARD_NAME_FILTER:-processed_v9_guide_v3.kicad_pcb}"
+REAL_BOARD_NAME_FILTER="${REAL_BOARD_NAME_FILTER:-processed_v10_guide_v3.kicad_pcb}"
 
 # ── Few-shot example pools ────────────────────────────────────────
 # API-Seq pools live under their own cache dirs (board_static + action
@@ -173,7 +173,7 @@ run_scenario() {
         # PCBWORLD (methods/llm_agent/rollout/pcbworld.py) uses — so a given
         # (alias, difficulty, split) yields a byte-identical board list on
         # both eval paths. The per-board-dir layout used by d3
-        # (<root>/<bid>/processed_v9_guide_v3.kicad_pcb) is picked up from
+        # (<root>/<bid>/processed_v10_guide_v3.kicad_pcb) is picked up from
         # the boards_json's top-level "board_filename" metadata.
         mapfile -t real_files < <(
             BOARDS_JSON="$BOARDS_JSON" \
@@ -208,9 +208,9 @@ PY
         fi
         limit=0
     elif [[ "$set_name" == "real" ]]; then
-        # Resolve real boards 0001..0100 under exacad_sorted/. Each board
+        # Resolve real boards 0001..0100 under pcbench_exacad (the v10 alias). Each board
         # lives in a directory named "<bid>_<slug>"; we pick its
-        # processed_v9_guide_v3.kicad_pcb. LIMIT_REAL caps the count
+        # processed_v10_guide_v3.kicad_pcb. LIMIT_REAL caps the count
         # (default 0 = all 100).
         mapfile -t real_files < <(
             python3 - "$REPO_ROOT" "$REAL_BOARD_DIR" "$REAL_BOARD_NAME_FILTER" "$LIMIT_REAL" <<'PY'

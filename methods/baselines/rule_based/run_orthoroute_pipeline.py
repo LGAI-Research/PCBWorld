@@ -13,18 +13,20 @@ Layout assumed per board folder ``<data-root>/<board_id>/``:
     <stem>.kicad_pro              (optional; for netclass DRC in the .orp)
 
 Outputs under ``<out-root>/<board_id>/``:
-    <board_id>.orp
+    <stem>.orp
     <board_id>.ORS
     <board_id>_orthoroute_<gpu|cpu>.kicad_pcb
     <board_id>.routing.log
 
-Stage 1 needs KiCad's ``pcbnew`` and runs in the child interpreter ``kicad_tools``
-resolves — the engine's ``BUILD_PCBNEW=1`` build on ``PYTHONPATH``, else
-``/usr/bin/python3`` (an apt KiCad); ``PCBNEW_PYTHON`` overrides. If that
-interpreter cannot import ``pcbnew``, Stage 1 STOPS and says so, so a broken
-setup cannot masquerade as a working one. Alternatively point ``--orp-root`` at
-pre-made ``.orp`` files (the pre-converted DSN/ORP mirror registered as
-``pcbench_exacad_dsn`` in ``configs/paths.yaml``) to skip Stage 1 entirely.
+Stage 1 calls ``kicad_tools.assert_all()`` before work, requiring the pinned
+KiCad 10.0.7 Engine and independent stock CLI/Python pair. It then invokes
+``make_dsn_orp_v3.py`` with the Engine ``pcbnew`` interpreter. Every input board,
+including reused ORPs, is recorded in ``<out-root>/_orp_stage1_report.json``; a
+nonzero converter exit, invalid report, or missing/empty ORP aborts Stage 1.
+Alternatively point ``--orp-root`` at pre-made ``.orp`` files (the
+pre-converted DSN/ORP mirror registered as ``pcbench_exacad_dsn`` in
+``configs/paths.yaml``) to skip conversion; preflight and the outcome report
+still run.
 
 Stages 2-3 run in the current Python env (needs ``orthoroute`` importable, and
 ``cupy`` + a GPU for ``--gpu``).
@@ -48,6 +50,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -58,9 +61,9 @@ _PROJECT_ROOT = _BASELINES_DIR.parents[2]   # rule_based -> baselines -> methods
 _EXTERNAL = _PROJECT_ROOT / "external"      # vendored rule-based libs (OrthoRoute, freerouting)
 sys.path.insert(0, str(_BASELINES_DIR / "_converters"))
 
-DEFAULT_STEM = "processed_v9_guide_v3"
+DEFAULT_STEM = "processed_v10_guide_v3"
 MAIN_SCRIPT = _EXTERNAL / "OrthoRoute" / "main.py"
-BATCH_ORP = _PROJECT_ROOT / "engine" / "pcbnew_prep" / "batch_kicad_to_orp.py"
+MAKE_DSN_ORP = _PROJECT_ROOT / "engine" / "pcbnew_prep" / "make_dsn_orp_v3.py"
 
 # Which child interpreter imports pcbnew: the engine's BUILD_PCBNEW=1 build first,
 # then /usr/bin/python3 (an apt KiCad); KICAD_CLI / PCBNEW_PYTHON override.
@@ -86,42 +89,167 @@ def discover_boards(data_root: Path, stem: str, only: list[str] | None):
     return boards
 
 
-def stage1_orp(boards, out_root: Path, orp_root: Path | None):
-    """Produce <out>/<board_id>.orp for every board. Returns {board_id: orp_path}."""
+def stage1_orp(boards, out_root: Path, orp_root: Path | None, stem: str):
+    """Create or reuse every ORP, recording and validating all outcomes."""
+    out_root.mkdir(parents=True, exist_ok=True)
+    outcome_path = out_root / "_orp_stage1_report.json"
+    converter_report_path = None
+    converter_status = "not_run"
+    converter_returncode = None
+    converter_error = None
+    converter_results = []
+    outcomes = {
+        board_id: {
+            "board_id": board_id, "input_pcb": str(pcb),
+            "orp_path": None, "status": "pending",
+            "source": None, "converter_status": "not_run", "converter_msg": None,
+            "error": None,
+        }
+        for board_id, pcb, _pro in boards
+    }
+
+    def write_report():
+        outcome_path.write_text(json.dumps({
+            "stem": stem,
+            "converter": {
+                "script": str(MAKE_DSN_ORP), "status": converter_status,
+                "returncode": converter_returncode,
+                "report_path": str(converter_report_path) if converter_report_path else None,
+                "error": converter_error, "results": converter_results,
+            },
+            "boards": list(outcomes.values()),
+        }, indent=2), encoding="utf-8")
+
+    try:
+        kicad_tools.assert_all()
+    except SystemExit as exc:
+        converter_status = "blocked_by_preflight"
+        converter_error = str(exc) or "kicad_tools.assert_all() failed"
+        for outcome in outcomes.values():
+            outcome.update(status="preflight_failed", error=converter_error)
+        write_report()
+        raise
+
     orp_paths = {}
     todo = []
-    for board_id, pcb, pro in boards:
+    for board_id, pcb, _pro in boards:
         out_dir = out_root / board_id
         out_dir.mkdir(parents=True, exist_ok=True)
-        orp = out_dir / f"{board_id}.orp"
+        orp = out_dir / f"{stem}.orp"
+        candidates = []
         if orp_root is not None:
-            # use a pre-made ORP if present
-            cand = orp_root / board_id / f"{pcb.name.replace('_unrouted.kicad_pcb', '')}.orp"
-            if cand.is_file():
-                orp_paths[board_id] = cand
-                continue
-        if orp.is_file() and orp.stat().st_size > 0:
-            orp_paths[board_id] = orp
-            continue
-        todo.append({"board_id": board_id, "pcb": str(pcb),
-                     "orp": str(orp), "pro": str(pro) if pro else None})
-        orp_paths[board_id] = orp
+            candidates.append((orp_root / board_id / f"{stem}.orp", "orp_root"))
+        candidates.append((orp, "out_root"))
+        reused = next(
+            ((candidate, source) for candidate, source in candidates
+             if candidate.is_file() and candidate.stat().st_size > 0),
+            None,
+        )
+        outcome = outcomes[board_id]
+        if reused is not None:
+            path, source = reused
+            outcome.update(status="reused", orp_path=str(path), source=source)
+            orp_paths[board_id] = path
+        else:
+            outcome["orp_path"] = str(orp)
+            todo.append(board_id)
 
     if not todo:
+        write_report()
         print(f"[stage1] all {len(orp_paths)} ORPs already present — nothing to convert")
         return orp_paths
 
-    manifest = out_root / "_orp_manifest.json"
-    manifest.write_text(json.dumps(todo, indent=2), encoding="utf-8")
-    print(f"[stage1] converting {len(todo)} boards -> ORP "
-          f"(pcbnew: {kicad_tools.pcbnew_python()})")
+    if stem != DEFAULT_STEM:
+        converter_status = "blocked"
+        converter_error = (
+            f"Stage 1 uses make_dsn_orp_v3.py and requires --stem {DEFAULT_STEM!r}; "
+            "pass --orp-root to reuse other stems"
+        )
+        for board_id in todo:
+            outcomes[board_id].update(status="failed", source="converter", error=converter_error)
+        write_report()
+        raise SystemExit(f"{converter_error}; see {outcome_path}")
 
-    cmd = [kicad_tools.pcbnew_python(), str(BATCH_ORP), str(manifest)]
-    rc = subprocess.run(cmd).returncode
-    if rc != 0:
-        print(f"[stage1] WARNING batch converter exited rc={rc}")
+    pcb_root = boards[0][1].parent.parent
+    py = kicad_tools.pcbnew_python()
+    print(f"[stage1] converting {len(todo)} boards to v10 DSN/ORP siblings "
+          f"(pcbnew: {py})")
+    env = os.environ.copy()
+    env["PCBENCH_PCB_ROOT"] = str(pcb_root)
+    env["PCBENCH_DSN_ROOT"] = str(out_root)
+    converter_report_path = out_root / "_orp_converter_report.json"
+    converter_report_path.write_text("[]", encoding="utf-8")
+    cmd = [
+        py, str(MAKE_DSN_ORP), "--src", str(pcb_root), "--dst", str(out_root),
+        "--report", str(converter_report_path), "--targets", *todo,
+    ]
+    try:
+        converter_returncode = subprocess.run(cmd, env=env).returncode
+    except OSError as exc:
+        converter_error = f"{type(exc).__name__}: {exc}"
+
+    try:
+        converter_results = json.loads(converter_report_path.read_text(encoding="utf-8"))
+        if not isinstance(converter_results, list):
+            raise ValueError("report root is not a list")
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        converter_error = converter_error or f"invalid converter report: {exc}"
+        converter_results = []
+
+    report_by_id = {}
+    report_error = None
+    for result in converter_results:
+        if not isinstance(result, dict) or not isinstance(result.get("folder"), str):
+            report_error = "converter report contains a malformed board record"
+            break
+        board_id = result["folder"]
+        if board_id in report_by_id:
+            report_error = f"converter report repeats board {board_id!r}"
+            break
+        report_by_id[board_id] = result
+    if report_error is None and set(report_by_id) != set(todo):
+        missing = sorted(set(todo) - set(report_by_id))
+        unexpected = sorted(set(report_by_id) - set(todo))
+        report_error = f"converter report board mismatch (missing={missing}, unexpected={unexpected})"
+
+    failed = []
+    for board_id in todo:
+        outcome = outcomes[board_id]
+        result = report_by_id.get(board_id)
+        outcome["source"] = "converter"
+        outcome["converter_status"] = result.get("status") if result else "missing_record"
+        outcome["converter_msg"] = result.get("msg") if result else None
+        orp = Path(outcome["orp_path"])
+        errors = []
+        if converter_returncode is None:
+            errors.append(converter_error or "converter did not return a status")
+        elif converter_returncode != 0:
+            errors.append(f"converter exited with rc={converter_returncode}")
+        if converter_error and converter_returncode is not None:
+            errors.append(converter_error)
+        if report_error:
+            errors.append(report_error)
+        if result is None:
+            errors.append("missing converter report record")
+        elif result.get("status") != "ok":
+            errors.append(f"converter status {result.get('status')!r}: {result.get('msg', '')}")
+        if not orp.is_file() or orp.stat().st_size == 0:
+            errors.append("expected ORP is missing or empty")
+        if errors:
+            outcome.update(status="failed", error="; ".join(errors))
+            failed.append(board_id)
+        else:
+            outcome.update(status="generated", error=None)
+            orp_paths[board_id] = orp
+
+    converter_status = "failed" if failed else "ok"
+    write_report()
+    if failed:
+        shown = ", ".join(failed[:10])
+        if len(failed) > 10:
+            shown += f", ... ({len(failed) - 10} more)"
+        raise SystemExit(f"Stage 1 failed to produce valid ORPs for {shown}; see {outcome_path}")
     return orp_paths
-
 
 def stage2_route(board_id, orp, out_dir, use_gpu, max_iterations, timeout_s):
     """Run orthoroute headless: .orp -> .ORS. Returns (ors_path|None, log_path)."""
@@ -226,18 +354,10 @@ def main():
     # Stage 1
     orp_paths = {}
     if args.stage in ("all", "orp"):
-        # An interpreter that cannot import pcbnew is reported, not worked around.
-        py = kicad_tools.pcbnew_python()
-        if kicad_tools.pcbnew_version(py) is None:
-            raise SystemExit(
-                f"Stage 1 needs pcbnew: {py} cannot import it. Build it "
-                "(BUILD_CLI=1 BUILD_PCBNEW=1 bash engine/build_rl_router.sh), point "
-                "PCBNEW_PYTHON at an interpreter that can, or pass --orp-root to reuse "
-                "pre-made .orp files.")
-        orp_paths = stage1_orp(boards, out_root, args.orp_root)
+        orp_paths = stage1_orp(boards, out_root, args.orp_root, args.stem)
     else:
         for board_id, pcb, _pro in boards:
-            cand = out_root / board_id / f"{board_id}.orp"
+            cand = out_root / board_id / f"{args.stem}.orp"
             if args.orp_root is not None:
                 pre = args.orp_root / board_id / f"{args.stem}.orp"
                 if pre.is_file():

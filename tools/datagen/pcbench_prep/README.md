@@ -1,76 +1,184 @@
-# `tools/datagen/pcbench_prep/` — PCBench → `exacad_sorted` (D3) reconstruction
+# PCBench → KiCad 10.0.7 D3 preparation
 
-Rebuilds the D3 real-board benchmark set from a clone of the public
-[PCBench](https://github.com/PCBench/PCBench) collection. Board content is never
-redistributed by this repository — users clone PCBench and run this chain.
+Rebuilds the live D3 corpus from the public [PCBench](https://github.com/PCBench/PCBench)
+collection. Board files are user data and are not redistributed by this repository.
 
-## Prerequisites
+## Toolchains
 
-- **KiCad 9 `kicad-cli` and the `pcbnew` Python module** — the steps shell out to
-  `kicad-cli pcb drc` and run `pcbnew` in a child interpreter (nothing GPL in-process),
-  resolving both through [kicad_tools.py](kicad_tools.py) (`KICAD_CLI` / `PCBNEW_PYTHON`
-  override) and printing the pair they chose as their first line. Prefer the engine's own
-  build (`BUILD_CLI=1 BUILD_PCBNEW=1 bash engine/build_rl_router.sh`, ~4.5 min on 64 cores;
-  [engine/README.md](../../../engine/README.md)): it is the KiCad the environment routes
-  with, and its DRC reports are uncapped where a stock KiCad 9's are not (see below).
-- ~4 GB of disk: the clone is 1.2 GB, the intermediate trees add about as much.
+The prep chain requires both matched toolchains before processing:
 
-## Pipeline
+- The **Engine KiCad 10.0.7 build**, including its uncapped `kicad-cli` and `pcbnew` module.
+  On Linux the CLI is `build_rl/kicad/kicad-cli`; on macOS it is
+  `build_rl/kicad/KiCad.app/Contents/MacOS/kicad-cli`. The module is under `build_rl/pcbnew`.
+  Build with `BUILD_CLI=1 BUILD_PCBNEW=1 bash engine/build_rl_router.sh` when absent.
+- The **independent stock KiCad 10.0.7 CLI and Python binding**, used by Step10 save/refill/
+  reopen validation. On Arc these resolve to `/usr/bin/kicad-cli` and `/usr/bin/python3`;
+  on macOS they resolve to `~/Applications/KiCad-10.0.7/KiCad.app/Contents/MacOS/kicad-cli`
+  and its bundled `Python.framework/Versions/Current/bin/python3` (Python 3.9.13).
+
+`prepare_pcbench.sh` checks all four versions before conversion. There is no KiCad 9, 10.0.6,
+PATH, or stock-CLI fallback for the Engine DRC path. Overrides, when needed, are explicit:
+`PCBENCH_KICAD_CLI` (Engine CLI), `PCBNEW_PYTHON` (interpreter for the Engine `pcbnew` build),
+`KICAD_STOCK_CLI`, and `KICAD_STOCK_PYTHON` (or `KICAD_PYTHON`). The selected Engine CLI must
+carry the Engine `ENGINE_VERSION` build stamp; all reported KiCad versions must be 10.0.7.
+
+## Source pin and safety
+
+The public clone is pinned to commit
+`dec3be75cbdef74787625f9043c7391cd473bb64`. A new clone is checked out at that exact commit.
+An existing clone is accepted only if it is already at that commit and clean; the quickstart
+never resets, checks out, fetches into, or overwrites an existing clone with unexpected state.
+
+All generated data lives under `PCBWORLD_DATA_ROOT` (default in the repo launcher:
+`third_party/PCBWorld/var/datasets`). The v10 roots are siblings of the historical v9 roots:
+
+- `pcbench_work/v10`
+- `pcbench_work/newdrc_v10`
+- `pcbench/exacad_sorted_v10`
+- `pcbench/exacad_sorted_dsn_v10`
+
+The quickstart requires distinct v10 output roots below `PCBWORLD_DATA_ROOT` and refuses any
+output override that overlaps the raw PCBench clone or these preserved paths:
+`pcbench_work/v9`, `pcbench_work/newdrc`, `pcbench/exacad_sorted`, and
+`pcbench/exacad_sorted_dsn`.
+
+## Pipeline and artifact names
 
 ```
-PCBench/PCBs/<name>/processed.kicad_pcb   (public clone: KiCad 5 file format, no project file)
-   │  0. convert_v9.py     PCBENCH_PCBS_ROOT → PCBENCH_V9_ROOT
-   │     pcbnew load + save: KiCad 9 board + the .kicad_pro KiCad 9 derives from the legacy
-   │     (setup …) block; metadata.json / final.json copied along
-   │  1. drc_fix_v9.py     PCBENCH_V9_ROOT → PCBENCH_NEWDRC_OUT
-   │     patch the minimum .kicad_pro entries (severities → ignore, a few rule floors → 0,
-   │     hole-to-hole = min(0.25 mm, Default net-class clearance)); the boards that then
-   │     pass DRC are the D3 pool, as <name>/processed_v9.kicad_pcb + .kicad_pro
-   │  2. make_guide.py     per-net uniform-width guide board + .kicad_pro + *_unrouted
-   │     strip; the guide board is what the benchmark loads (algorithm: make_guide.md)
-   │  3. sort_prefix.py    PCBENCH_NEWDRC_OUT → PCBENCH_SORTED_OUT
-   │     order = (pins, nets, components) ascending from final.json + the footprint count;
-   │     folders copied as <NNNN>_<name>/ next to pcb_characteristics_exacad_sorted.csv
-   ▼
-exacad_sorted/   (consumed via configs/paths.yaml `pcbench_exacad`;
-                  split JSON: experiments/kdd/d3_dataset/build.py)
+PCBench/PCBs/<source-folder>/processed.kicad_pcb
+  │  0. convert_v10.py: source folder → pcbench_work/v10/<source-folder>/
+  │     Engine pcbnew load/save → processed_v10.kicad_pcb + .kicad_pro
+  │  1. drc_fix_v10.py: pcbench_work/v10 → pcbench_work/newdrc_v10
+  │     preserves the historical D3 severity overrides, rule floors, and
+  │     min(0.25 mm, Default net-class clearance) hole-to-hole floor
+  │  2. make_guide.py: processed_v10 → processed_v10_guide_v3 (+ unrouted guide)
+  │  3. sort_prefix.py: successful guide boards → exacad_sorted_v10/<NNNN>_<source-folder>/
+  │     CSV includes raw source ID (`sample`) and rank-based folder (`sorted_id`)
+  │  4. engine/pcbnew_prep/make_dsn_orp_v3.py: sorted guides → exacad_sorted_dsn_v10/
+  ▼
+processed_v10_guide_v3.kicad_pcb
+processed_v10_guide_v3_unrouted.kicad_pcb
+processed_v10_guide_v3_unrouted.dsn
+processed_v10_guide_v3.orp
 ```
+
+Stage reports stay beside their corresponding v10 data:
+
+- `pcbench_work/v10/_results.json` — conversion outcome for every selected raw source folder.
+- `pcbench_work/newdrc_v10/_results.json` — DRC pass, legitimate `drc_rejected`, or explicit
+  stage error for every converted input; `_failures.json` contains conversion and stage errors.
+- `pcbench_work/newdrc_v10/_guide_results.json` — guide `pass`, DRC `fail` rejection, `skip`,
+  or `error` for every DRC-passing board.
+- `pcbench_work/newdrc_v10/_sort_results.json` — sorted, guide-rejected, or stage-error outcome.
+- `pcbench/exacad_sorted_dsn_v10/_run-report.json` — DSN/ORP outcome for every sorted folder.
+
+A DRC rejection is not a tool failure. Timeout, nonzero CLI exit, missing DRC output, and
+malformed JSON are explicit stage errors and never count as zero violations. The DRC repair
+policy remains historical: `solder_mask_bridge`, `drill_out_of_range`, `malformed_courtyard`,
+`courtyards_overlap`, `annular_width`, `copper_edge_clearance`, and `hole_clearance` retain their
+existing ignore severities; the same rule floors remain zero; the hole-to-hole floor remains
+`min(0.25 mm, Default net-class clearance)`. Do not change those settings without KiCad 10
+behavioral evidence.
+
+`make_guide.py` keeps its best-attempt files for a valid DRC rejection (`status: fail`), but the
+sorter excludes them. The quickstart validates each report against its stage inputs and continues
+through later stages when a command exits nonzero but has produced a complete per-board ledger.
+DRC `drc_rejected` and guide `fail`/`guide_rejected` outcomes are normal filters. Conversion
+failures, other board/stage errors, unexplained nonzero exits, or missing, malformed, duplicate,
+or incomplete ledgers make the quickstart return nonzero; an incomplete ledger stops the run.
+Every emitted sorted board must have a successful guide result before DSN/ORP generation. The
+historical 679 v9 pass count is not a forced v10 target.
 
 ## Run
 
+The quickstart resolves the PCBWorld root from its own location. From the `/root/gnn` monorepo,
+prefer `scripts/pcbw`; it activates the `pcbworld` environment and exposes Engine `pcbnew`:
+
 ```bash
-export PCBWORLD_DATA_ROOT=/data/pcbworld     # your dataset root — everything lands under it
-bash tools/quickstart/prepare_pcbench.sh     # clone + all four steps, one command
+export PCBWORLD_DATA_ROOT=/data/pcbworld
+scripts/pcbw bash third_party/PCBWorld/tools/quickstart/prepare_pcbench.sh
 ```
 
-[`prepare_pcbench.sh`](../../quickstart/prepare_pcbench.sh) clones PCBench (`main` @
-`dec3be75`), builds the KiCad tools when the engine build lacks them, and runs the chain with
-the stem and suffix the split json expects; `--limit N` makes a trial run. Driving one step
-by hand needs the diagram's `PCBENCH_*` roots exported (the wrapper's defaults show the
-layout; flags are in each script's `--help`). `sort_prefix.py` owns the `<NNNN>_<name>/`
-entries of its output directory — a re-run replaces them and drops what an earlier run left,
-so a full run after a trial leaves exactly the full set.
+From a standalone PCBWorld checkout, activate the matching `pcbworld` environment (with `python`
+available) and run from the repository root. When the monorepo wrapper is absent, the script uses
+the active environment's `python`; it still sets the Engine CLI/PYTHONPATH and its preflight
+checks both Engine and stock KiCad versions before processing:
 
-## Determinism
+```bash
+conda activate pcbworld
+export PCBWORLD_DATA_ROOT=/data/pcbworld
+bash tools/quickstart/prepare_pcbench.sh
+```
 
-With the engine's own 9.0.8 build, 1 182 board folders convert and **679** pass the DRC
-filter — the paper's set exactly. KiCad mints fresh UUIDs on the step-0 round trip, so two
-runs are not byte-identical; geometry, nets, design rules and DRC verdicts are, and steps
-1–3 reproduce every file byte for byte.
+For a trial, give each stage its own new v10 root so trial output cannot mix with a full run.
+From the monorepo root:
 
-Step 2 would otherwise pick its offender nets by race, since `kicad-cli pcb drc` runs the
-copper-clearance test on a thread pool: it passes `--all-track-errors`, and, because a stock
-KiCad stops reporting a violation type after 199 hits (clearance: 499) with no way to raise
-that cap, treats a count at those values as unusable and narrows every reducible net instead
-of the offenders ([make_guide.md](make_guide.md)). The engine's uncapped `kicad-cli` gets
-the full list and narrows only the offenders on the 15 boards that reach those values; the
-shipped `d3` is that output, identical to the paper's set (UUIDs aside) but for the per-net
-widths of 40 of the 679 guide boards, which predate these guards.
+```bash
+DATA=/data/pcbworld
+PCBWORLD_DATA_ROOT="$DATA" \
+PCBENCH_V10_ROOT="$DATA/pcbench_work/v10_trial" \
+PCBENCH_NEWDRC_OUT="$DATA/pcbench_work/newdrc_v10_trial" \
+PCBENCH_SORTED_OUT="$DATA/pcbench/exacad_sorted_v10_trial" \
+PCBENCH_DSN_OUT="$DATA/pcbench/exacad_sorted_dsn_v10_trial" \
+  scripts/pcbw bash third_party/PCBWorld/tools/quickstart/prepare_pcbench.sh --limit 20 --workers 2
+```
 
-`bash experiments/kdd/d3_dataset/run.sh --out /tmp/d3.json` rebuilds the split json from the
-CSV + layout, reproducing [d3.json](../../../configs/datasets/d3.json) up to two recorded
-manual edits: a zero-clearance autosave remnant dropped from `medium.train`, and the
-`medium.test` swap under the json's `_test_overrides` key.
+From a standalone checkout, activate `pcbworld` first and use the same roots with the local path:
 
-Related: `engine/pcbnew_prep/` converts prepared boards to DSN/ORP for the rule-based
-baselines (it imports `pcbnew` directly, hence lives in the engine bundle).
+```bash
+conda activate pcbworld
+DATA=/data/pcbworld
+PCBWORLD_DATA_ROOT="$DATA" \
+PCBENCH_V10_ROOT="$DATA/pcbench_work/v10_trial" \
+PCBENCH_NEWDRC_OUT="$DATA/pcbench_work/newdrc_v10_trial" \
+PCBENCH_SORTED_OUT="$DATA/pcbench/exacad_sorted_v10_trial" \
+PCBENCH_DSN_OUT="$DATA/pcbench/exacad_sorted_dsn_v10_trial" \
+  bash tools/quickstart/prepare_pcbench.sh --limit 20 --workers 2
+```
+
+After the **full** prep run completes, inspect all stage ledgers and status counts. The runner
+can return nonzero for isolated per-board failures after completing downstream stages; reported
+failures may still leave a usable sorted corpus. If the corpus is usable, build the live v10 D3
+manifest separately. The builder verifies its required source IDs and refuses to overwrite frozen
+`d3.json`; the default output is `configs/datasets/d3_v2.json`. From `/root/gnn`:
+
+```bash
+scripts/pcbw bash third_party/PCBWorld/experiments/kdd/d3_dataset/run.sh
+```
+
+From the standalone checkout root, with the matching environment active:
+
+```bash
+bash experiments/kdd/d3_dataset/run.sh
+```
+
+For a trial corpus, point both the sorter and the manifest output at trial paths instead of
+changing the live alias target. From `/root/gnn`:
+
+```bash
+DATA=/data/pcbworld
+PCBWORLD_DATA_ROOT="$DATA" scripts/pcbw bash \
+  third_party/PCBWorld/experiments/kdd/d3_dataset/run.sh \
+  --sorted-dir "$DATA/pcbench/exacad_sorted_v10_trial" \
+  --out "$DATA/pcbench_work/d3_v2_trial.json"
+```
+
+From the standalone checkout root, with the matching environment active:
+
+```bash
+DATA=/data/pcbworld
+PCBWORLD_DATA_ROOT="$DATA" bash experiments/kdd/d3_dataset/run.sh \
+  --sorted-dir "$DATA/pcbench/exacad_sorted_v10_trial" \
+  --out "$DATA/pcbench_work/d3_v2_trial.json"
+```
+
+The output roots can be overridden independently with `PCBENCH_V10_ROOT`,
+`PCBENCH_NEWDRC_OUT`, `PCBENCH_SORTED_OUT`, and `PCBENCH_DSN_OUT`. The raw input can be
+pointed at the exact pinned clone with `PCBENCH_PCBS_ROOT`; its Git checkout root may be
+set explicitly with `PCBENCH_CLONE_ROOT`. `PCBENCH_PCB_ROOT` and `PCBENCH_DSN_ROOT` are set
+by the quickstart for the existing Engine DSN/ORP converter.
+
+The live aliases `d3a`, `d3b`, and `d3c` point to `configs/datasets/d3_v2.json` after it has
+been generated. `configs/datasets/d3.json` remains the frozen v1 manifest. Both easy train-only
+and medium test override identities are resolved from bare PCBench source folder IDs, not
+current sort ranks.

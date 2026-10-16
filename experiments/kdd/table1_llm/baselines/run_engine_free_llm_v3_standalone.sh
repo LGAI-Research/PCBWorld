@@ -52,11 +52,11 @@ _ds() { python -m configs.loader.paths resolve "$1"; }
 SYNTH_2L_TEST_DIR="${SYNTH_2L_TEST_DIR:-$(_ds synth_2L_v2)/test}"
 SYNTH_2L_VAL_DIR="${SYNTH_2L_VAL_DIR:-$(_ds synth_2L_v2)/val}"
 REAL_BOARD_DIR="${REAL_BOARD_DIR:-$(_ds pcbench_exacad)}"
-REAL_BOARD_NAME_FILTER="${REAL_BOARD_NAME_FILTER:-processed_v9_guide_v3.kicad_pcb}"
+REAL_BOARD_NAME_FILTER="${REAL_BOARD_NAME_FILTER:-processed_v10_guide_v3.kicad_pcb}"
 
 # ── Few-shot example pools ────────────────────────────────────────
 REAL_FEWSHOT_POOL="${REAL_FEWSHOT_POOL:-$(_ds pcbench_exacad)}"
-REAL_FEWSHOT_NAME_FILTER="${REAL_FEWSHOT_NAME_FILTER:-processed_v9_guide_v3.kicad_pcb}"
+REAL_FEWSHOT_NAME_FILTER="${REAL_FEWSHOT_NAME_FILTER:-processed_v10_guide_v3.kicad_pcb}"
 SYNTH_FEWSHOT_CACHE="${SYNTH_FEWSHOT_CACHE:-${REPO_ROOT}/cache/synth_2L_fewshot}"
 SYNTH_FEWSHOT_PREP_LIMIT="${SYNTH_FEWSHOT_PREP_LIMIT:-8}"
 
@@ -114,9 +114,9 @@ run_scenario() {
     local limit
     local real_files=()
     if [[ "$set_name" == "real" ]]; then
-        # Resolve real boards 0001..0100 under exacad_sorted/. Each board
+        # Resolve real boards 0001..0100 under pcbench_exacad (the v10 alias). Each board
         # lives in a directory named "<bid>_<slug>"; we pick its
-        # processed_v9_guide_v3.kicad_pcb. LIMIT_REAL caps the count
+        # processed_v10_guide_v3.kicad_pcb. LIMIT_REAL caps the count
         # (default 0 = all 100).
         mapfile -t real_files < <(
             python3 - "$REPO_ROOT" "$REAL_BOARD_DIR" "$REAL_BOARD_NAME_FILTER" "$LIMIT_REAL" <<'PY'
