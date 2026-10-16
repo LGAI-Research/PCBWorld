@@ -1,34 +1,32 @@
 #!/usr/bin/env bash
-# Build configs/datasets/d3.json — the D3 (real-board) split used
-# by the LLM quickstart aliases d3a / d3b / d3c.
+# Build configs/datasets/d3_v2.json — the live v10 D3 split used by the LLM
+# quickstart aliases d3a / d3b / d3c. The historical v1 d3.json is frozen.
 #
-# Defaults rebuild the file in-place against the canonical PCB-bench
-# source (pcb_characteristics_exacad_sorted.csv + the exacad_sorted folder
-# of NNNN_<name>/ board dirs). Override --csv / --sorted-dir / --out to
-# point at a fork.
+# Defaults rebuild the v10 file against the canonical PCB-bench source
+# (pcb_characteristics_exacad_sorted.csv + the exacad_sorted_v10 folder of
+# NNNN_<source-id>/ board dirs). Override --csv / --sorted-dir / --out to point at a fork.
 #
 # Usage:
-#   bash experiments/kdd/d3_dataset/run.sh                          # rebuild in place
-#   bash experiments/kdd/d3_dataset/run.sh --out /tmp/d3.json       # dry copy
+#   bash experiments/kdd/d3_dataset/run.sh                          # rebuild d3_v2.json
+#   bash experiments/kdd/d3_dataset/run.sh --out /tmp/d3_v2.json
 #   bash experiments/kdd/d3_dataset/run.sh -- --medium-n 20         # forward extra flags
 #
 # Flags (anything after `--` is forwarded verbatim to build.py):
-#   --csv <path>        CSV with sample,nets,components,pins,layers
+#   --csv <path>        CSV with sample,sorted_id,nets,components,pins,layers
 #                       (default: <sorted-dir>/pcb_characteristics_exacad_sorted.csv)
-#   --sorted-dir <dir>  Directory containing NNNN_<name>/ board folders
-#                       (default: $T3_SORTED_DIR or the PCB-bench mount)
-#   --out <path>        Output boards-json
-#                       (default: $PCBWORLD_REPO_ROOT/configs/datasets/d3.json)
+#   --sorted-dir <dir>  Directory containing NNNN_<source-id>/ board folders
+#                       (default: $PCBENCH_SORTED_OUT or the v10 PCB-bench mount)
+#   --out <path>        Output boards-json (default: configs/datasets/d3_v2.json)
 
 set -euo pipefail
 source "$(dirname "$0")/../../_lib/env.sh"
 cd "$PCBWORLD_REPO_ROOT"
 
-# Real-PCB corpus: T3_SORTED_DIR wins, else the pcbench_exacad dataset from
-# configs/paths.yaml (PCBWORLD_DATA_ROOT overrides the root; empty root fails loudly).
-SORTED_DIR="${T3_SORTED_DIR:-$("$PYTHON_BIN" -m configs.loader.paths resolve pcbench_exacad)}"
+# Real-PCB corpus: PCBENCH_SORTED_OUT wins, else the v10 pcbench_exacad dataset
+# from configs/paths.yaml (PCBWORLD_DATA_ROOT overrides the root; empty root fails loudly).
+SORTED_DIR="${PCBENCH_SORTED_OUT:-$("$PYTHON_BIN" -m configs.loader.paths resolve pcbench_exacad)}"
 CSV=""
-OUT="${OUT:-configs/datasets/d3.json}"
+OUT="${OUT:-configs/datasets/d3_v2.json}"
 EXTRA=()
 
 while [ $# -gt 0 ]; do

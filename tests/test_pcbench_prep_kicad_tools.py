@@ -1,12 +1,4 @@
-"""Tool resolution of the PCBench -> D3 chain (tools/datagen/pcbench_prep/kicad_tools.py).
-
-Pins the order the chain picks its child-process KiCad tools in, on synthetic
-layouts (no engine build, no KiCad install needed):
-  kicad-cli   $KICAD_CLI -> <build_rl>/kicad/kicad-cli -> PATH; a build-tree binary
-              (../pcbnew/_pcbnew.kiface beside it) exports KICAD_RUN_FROM_BUILD_DIR=1
-  pcbnew      $PCBNEW_PYTHON -> this interpreter with <build_rl>/pcbnew on PYTHONPATH
-              when the import probe passes -> /usr/bin/python3
-"""
+"""KiCad 10.0.7 tool resolution for the PCBench -> D3 chain."""
 from __future__ import annotations
 
 import os
@@ -19,124 +11,226 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "datagen" / "pcbench_prep"))
 import kicad_tools  # noqa: E402
 
-_ENV = ("KICAD_CLI", "PCBNEW_PYTHON", "PYTHONPATH", "KICAD_RUN_FROM_BUILD_DIR", "KICAD_CLI_UNCAPPED")
+_ENV = (
+    "KICAD_CLI", "PCBNEW_PYTHON", "PYTHONPATH", "KICAD_RUN_FROM_BUILD_DIR",
+    "KICAD_CLI_UNCAPPED", "KICAD_STOCK_CLI", "KICAD_STOCK_PYTHON", "KICAD_PYTHON",
+    "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH", "LD_LIBRARY_PATH",
+)
 
 
 @pytest.fixture
 def clean_env(monkeypatch, tmp_path):
-    for k in _ENV:
-        monkeypatch.delenv(k, raising=False)
+    for key in _ENV:
+        monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(kicad_tools, "BUILD_DIR", tmp_path / "build_rl")
-    # the stock fallback must not resolve on a host that happens to have apt KiCad
-    monkeypatch.setattr(kicad_tools, "STOCK_PYTHON", str(tmp_path / "no-python3"))
+    monkeypatch.setattr(
+        kicad_tools, "_default_stock_paths",
+        lambda: (str(tmp_path / "stock" / "kicad-cli"), str(tmp_path / "stock" / "python3")),
+    )
     monkeypatch.setenv("PATH", str(tmp_path / "nowhere"))
     return tmp_path
 
 
-def _executable(p: Path) -> Path:
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text("#!/bin/sh\necho 9.0.8\n")
-    p.chmod(p.stat().st_mode | stat.S_IXUSR)
-    return p
+def _executable(path: Path, output: str = "10.0.7") -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"#!/bin/sh\necho {output}\n")
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return path
+
+
+def _engine_tree(root: Path, *, pcbnew_version: str = "10.0.7") -> tuple[Path, Path]:
+    cli = _executable(root / "kicad" / "kicad-cli")
+    module = root / "pcbnew"
+    module.mkdir(parents=True)
+    (module / "pcbnew.py").write_text(
+        f"def GetBuildVersion(): return '{pcbnew_version}'\n")
+    (module / "_pcbnew.so").write_bytes(b"")
+    (module / "_pcbnew.kiface").write_bytes(b"")
+    stamp = module / "python" / "rl" / "ENGINE_VERSION"
+    stamp.parent.mkdir(parents=True)
+    stamp.write_text("1.5\n")
+    return cli, module
 
 
 def test_kicad_cli_env_override_wins(clean_env, monkeypatch):
-    _executable(clean_env / "build_rl" / "kicad" / "kicad-cli")
-    monkeypatch.setenv("KICAD_CLI", "/opt/somewhere/kicad-cli")
-    assert kicad_tools.kicad_cli() == "/opt/somewhere/kicad-cli"
+    override = _executable(clean_env / "override" / "kicad-cli")
+    _engine_tree(clean_env / "build_rl")
+    monkeypatch.setenv("KICAD_CLI", str(override))
+    assert kicad_tools.kicad_cli() == str(override)
 
 
 def test_kicad_cli_prefers_engine_build_and_marks_build_tree(clean_env):
-    built = _executable(clean_env / "build_rl" / "kicad" / "kicad-cli")
-    (clean_env / "build_rl" / "pcbnew").mkdir()
-    (clean_env / "build_rl" / "pcbnew" / "_pcbnew.kiface").write_bytes(b"")
+    built, module = _engine_tree(clean_env / "build_rl")
     assert kicad_tools.kicad_cli() == str(built)
-    assert os.environ["KICAD_RUN_FROM_BUILD_DIR"] == "1"   # inherited by the DRC children
-    assert os.environ["KICAD_CLI"] == str(built)            # inherited by the worker processes
+    assert os.environ["KICAD_RUN_FROM_BUILD_DIR"] == "1"
+    assert os.environ["KICAD_CLI"] == str(built)
+    assert kicad_tools.kicad_cli_uncapped() is True
 
 
-def test_kicad_cli_falls_back_to_path(clean_env, monkeypatch):
+def test_macos_engine_app_bundle_resolves_build_root(clean_env, monkeypatch):
+    root = clean_env / "build_rl"
+    cli = _executable(root / "kicad" / "KiCad.app" / "Contents" / "MacOS" / "kicad-cli")
+    module = root / "pcbnew"
+    module.mkdir(parents=True)
+    (module / "_pcbnew.kiface").write_bytes(b"")
+    monkeypatch.setenv("KICAD_CLI", str(cli))
+    assert kicad_tools._engine_build_root() == root
+    assert os.environ["KICAD_RUN_FROM_BUILD_DIR"] == "1"
+
+
+def test_kicad_cli_never_falls_back_to_path(clean_env, monkeypatch):
     on_path = _executable(clean_env / "bin" / "kicad-cli")
     monkeypatch.setenv("PATH", str(on_path.parent))
-    assert kicad_tools.kicad_cli() == str(on_path)
-    assert "KICAD_RUN_FROM_BUILD_DIR" not in os.environ
-
-
-def test_kicad_cli_missing_exits(clean_env):
-    with pytest.raises(SystemExit, match="kicad-cli not found"):
+    with pytest.raises(SystemExit, match="Engine kicad-cli not found"):
         kicad_tools.kicad_cli()
 
 
-def test_pcbnew_python_env_override_wins(clean_env, monkeypatch):
-    monkeypatch.setenv("PCBNEW_PYTHON", "/opt/kicad/python3")
-    assert kicad_tools.pcbnew_python() == "/opt/kicad/python3"
+def test_kicad_cli_missing_exits(clean_env):
+    with pytest.raises(SystemExit, match="Engine kicad-cli not found"):
+        kicad_tools.kicad_cli()
 
 
-def test_pcbnew_python_uses_engine_build_when_import_works(clean_env, monkeypatch):
-    mod = clean_env / "build_rl" / "pcbnew"
-    mod.mkdir(parents=True)
-    (mod / "pcbnew.py").write_text("def GetBuildVersion(): return '9.0.8-test'\n")
-    (mod / "_pcbnew.so").write_bytes(b"")
+def test_pcbnew_python_uses_engine_build_and_version(clean_env, monkeypatch):
+    built, module = _engine_tree(clean_env / "build_rl")
     monkeypatch.setenv("PYTHONPATH", "/existing")
-    assert kicad_tools.pcbnew_python() == sys.executable      # the real import probe ran
-    assert os.environ["PYTHONPATH"].split(os.pathsep) == [str(mod), "/existing"]
-    assert os.environ["PCBNEW_PYTHON"] == sys.executable
-    assert kicad_tools.pcbnew_version(sys.executable) == "9.0.8-test"
+    assert kicad_tools.pcbnew_python() == sys.executable
+    assert os.environ["PYTHONPATH"].split(os.pathsep) == [str(module), "/existing"]
+    info = kicad_tools.pcbnew_info(sys.executable)
+    assert info["version"] == "10.0.7"
+    assert Path(info["module"]).resolve().parent == module.resolve()
 
 
-def test_pcbnew_python_stock_fallback_restores_pythonpath(clean_env, monkeypatch):
-    mod = clean_env / "build_rl" / "pcbnew"
-    mod.mkdir(parents=True)
-    (mod / "pcbnew.py").write_text("raise ImportError('broken build')\n")
-    (mod / "_pcbnew.so").write_bytes(b"")
-    assert kicad_tools.pcbnew_python() == kicad_tools.STOCK_PYTHON
-    assert "PYTHONPATH" not in os.environ
+def test_pcbnew_python_override_still_loads_engine_module(clean_env, monkeypatch):
+    _engine_tree(clean_env / "build_rl")
+    monkeypatch.setenv("PCBNEW_PYTHON", "/opt/engine-python")
+    assert kicad_tools.pcbnew_python() == "/opt/engine-python"
+    assert str(clean_env / "build_rl" / "pcbnew") in os.environ["PYTHONPATH"]
 
 
-def test_announce_prints_one_line_and_exits_without_pcbnew(clean_env, capsys):
+def test_pcbnew_requires_engine_build(clean_env):
     _executable(clean_env / "build_rl" / "kicad" / "kicad-cli")
-    kicad_tools.announce(need_pcbnew=False)
-    out = capsys.readouterr().out.strip().splitlines()
-    assert len(out) == 1 and out[0].startswith("tools: kicad-cli=") and "(9.0.8)" in out[0]
-    with pytest.raises(SystemExit, match="cannot import pcbnew"):
-        kicad_tools.announce()   # /usr/bin/python3 fallback has no pcbnew here
+    with pytest.raises(SystemExit, match="Engine pcbnew build missing"):
+        kicad_tools.pcbnew_python()
 
 
-def test_uncapped_detection_and_override(clean_env, monkeypatch):
-    built = _executable(clean_env / "build_rl" / "kicad" / "kicad-cli")
-    (clean_env / "build_rl" / "pcbnew" / "python" / "rl").mkdir(parents=True)
-    (clean_env / "build_rl" / "pcbnew" / "_pcbnew.kiface").write_bytes(b"")
-    (clean_env / "build_rl" / "pcbnew" / "python" / "rl" / "ENGINE_VERSION").write_text("1.3\n")
-    assert kicad_tools.kicad_cli_uncapped() is True        # engine build (stamped)
-    assert os.environ["KICAD_CLI_UNCAPPED"] == "1"          # inherited by workers
-    monkeypatch.setenv("KICAD_CLI_UNCAPPED", "0")           # explicit override wins
-    assert kicad_tools.kicad_cli_uncapped() is False
+def test_announce_requires_versioned_uncapped_engine_pair(clean_env, capsys):
+    _engine_tree(clean_env / "build_rl")
+    kicad_tools.announce()
+    assert "10.0.7" in capsys.readouterr().out
 
 
-def test_vanilla_kicad_build_tree_is_capped(clean_env, monkeypatch):
-    # same layout as any KiCad source build, but no ENGINE_VERSION stamp:
-    # run-from-build-dir applies, the uncapped guard does not
-    built = _executable(clean_env / "build_rl" / "kicad" / "kicad-cli")
-    (clean_env / "build_rl" / "pcbnew").mkdir()
-    (clean_env / "build_rl" / "pcbnew" / "_pcbnew.kiface").write_bytes(b"")
-    monkeypatch.setenv("KICAD_CLI", str(built))
-    assert kicad_tools.kicad_cli() == str(built)
+def test_announce_rejects_engine_cli_version_mismatch(clean_env):
+    cli, _ = _engine_tree(clean_env / "build_rl")
+    _executable(cli, output="10.0.6")
+    with pytest.raises(SystemExit, match="Engine CLI must be KiCad 10.0.7"):
+        kicad_tools.announce()
+
+
+def test_announce_rejects_engine_pcbnew_version_mismatch(clean_env):
+    _engine_tree(clean_env / "build_rl", pcbnew_version="10.0.6")
+    with pytest.raises(SystemExit, match="Engine pcbnew must be KiCad 10.0.7"):
+        kicad_tools.announce()
+
+
+def test_announce_rejects_stock_cli_as_engine(clean_env, monkeypatch):
+    stock = _executable(clean_env / "stock" / "kicad-cli")
+    _engine_tree(clean_env / "build_rl")
+    monkeypatch.setenv("KICAD_CLI", str(stock))
+    with pytest.raises(SystemExit, match="not the uncapped Engine build"):
+        kicad_tools.announce()
+
+
+def test_stock_preflight_checks_cli_and_pcbnew_versions(clean_env, monkeypatch, capsys):
+    _engine_tree(clean_env / "build_rl")
+    stock_cli = _executable(clean_env / "stock" / "kicad-cli")
+    stock_python = str(clean_env / "stock" / "python3")
+    monkeypatch.setenv("KICAD_STOCK_CLI", str(stock_cli))
+    monkeypatch.setenv("KICAD_STOCK_PYTHON", stock_python)
+    monkeypatch.setattr(kicad_tools.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(kicad_tools, "pcbnew_info", lambda py: {
+        "version": "10.0.7", "module": "/usr/lib/python3/dist-packages/pcbnew.py",
+        "python": [3, 12, 4],
+    })
+    assert kicad_tools.assert_stock_tools() == (str(stock_cli), stock_python)
+    assert "stock tools:" in capsys.readouterr().out
+
+
+def test_stock_probes_ignore_and_restore_engine_runtime_paths(clean_env, monkeypatch):
+    _engine_tree(clean_env / "build_rl")
+    stock_cli = _executable(clean_env / "stock" / "kicad-cli")
+    monkeypatch.setenv("KICAD_STOCK_CLI", str(stock_cli))
+    monkeypatch.setenv("KICAD_STOCK_PYTHON", "/stock/python3")
+    monkeypatch.setenv("PYTHONPATH", "/engine/pcbnew")
+    monkeypatch.setenv("DYLD_LIBRARY_PATH", "/engine/frameworks")
+    monkeypatch.setattr(kicad_tools.platform, "system", lambda: "Linux")
+
+    def cli_version(path):
+        assert "PYTHONPATH" not in os.environ
+        assert "DYLD_LIBRARY_PATH" not in os.environ
+        return "10.0.7"
+
+    def pcbnew_info(path):
+        assert "PYTHONPATH" not in os.environ
+        assert "DYLD_LIBRARY_PATH" not in os.environ
+        return {"version": "10.0.7", "module": "/usr/lib/python3/dist-packages/pcbnew.py",
+                "python": [3, 12, 4]}
+
+    monkeypatch.setattr(kicad_tools, "kicad_cli_version", cli_version)
+    monkeypatch.setattr(kicad_tools, "pcbnew_info", pcbnew_info)
+    kicad_tools.assert_stock_tools()
+    assert os.environ["PYTHONPATH"] == "/engine/pcbnew"
+    assert os.environ["DYLD_LIBRARY_PATH"] == "/engine/frameworks"
+
+
+def test_macos_stock_probes_use_stock_bundle_frameworks(clean_env, monkeypatch):
+    _engine_tree(clean_env / "build_rl")
+    app = clean_env / "stock" / "KiCad-10.0.7.app"
+    frameworks = app / "Contents" / "Frameworks"
+    cli = _executable(app / "Contents" / "MacOS" / "kicad-cli")
+    py = _executable(frameworks / "Python.framework" / "Versions" / "Current" / "bin" / "python3")
+    monkeypatch.setenv("KICAD_STOCK_CLI", str(cli))
+    monkeypatch.setenv("KICAD_STOCK_PYTHON", str(py))
+    monkeypatch.setenv("PYTHONPATH", "/engine/pcbnew")
+    monkeypatch.setenv("DYLD_LIBRARY_PATH", "/engine/frameworks")
+    monkeypatch.setenv("KICAD_RUN_FROM_BUILD_DIR", "1")
+    monkeypatch.setattr(kicad_tools.platform, "system", lambda: "Darwin")
+
+    def cli_version(path):
+        assert os.environ["DYLD_LIBRARY_PATH"] == str(frameworks)
+        assert os.environ["DYLD_FRAMEWORK_PATH"] == str(frameworks)
+        assert "PYTHONPATH" not in os.environ
+        assert "KICAD_RUN_FROM_BUILD_DIR" not in os.environ
+        return "10.0.7"
+
+    def pcbnew_info(path):
+        assert os.environ["DYLD_LIBRARY_PATH"] == str(frameworks)
+        return {"version": "10.0.7", "module": str(frameworks / "pcbnew.py"),
+                "python": [3, 9, 13]}
+
+    monkeypatch.setattr(kicad_tools, "kicad_cli_version", cli_version)
+    monkeypatch.setattr(kicad_tools, "pcbnew_info", pcbnew_info)
+    kicad_tools.assert_stock_tools()
+    assert os.environ["DYLD_LIBRARY_PATH"] == "/engine/frameworks"
     assert os.environ["KICAD_RUN_FROM_BUILD_DIR"] == "1"
-    assert kicad_tools.kicad_cli_uncapped() is False
-    assert os.environ["KICAD_CLI_UNCAPPED"] == "0"
 
 
-def test_path_cli_is_treated_as_capped(clean_env, monkeypatch):
-    on_path = _executable(clean_env / "bin" / "kicad-cli")
-    monkeypatch.setenv("PATH", str(on_path.parent))
-    assert kicad_tools.kicad_cli_uncapped() is False
-    assert os.environ["KICAD_CLI_UNCAPPED"] == "0"
+def test_stock_preflight_requires_macos_python_3913(clean_env, monkeypatch):
+    _engine_tree(clean_env / "build_rl")
+    cli = _executable(clean_env / "stock" / "kicad-cli")
+    monkeypatch.setenv("KICAD_STOCK_CLI", str(cli))
+    monkeypatch.setenv("KICAD_STOCK_PYTHON", "/Applications/KiCad/Python3")
+    monkeypatch.setattr(kicad_tools.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(kicad_tools, "pcbnew_info", lambda py: {
+        "version": "10.0.7", "module": "/Applications/KiCad/pcbnew.py", "python": [3, 11, 0],
+    })
+    with pytest.raises(SystemExit, match="must be 3.9.13"):
+        kicad_tools.assert_stock_tools()
 
 
-def test_make_guide_truncation_gate_follows_cli(clean_env, monkeypatch):
-    import make_guide
-    counts = {"clearance": 700, "unconnected_items": 12}
-    monkeypatch.setenv("KICAD_CLI_UNCAPPED", "0")
-    assert make_guide.drc_truncated(counts) is True         # stock CLI: capped list
-    monkeypatch.setenv("KICAD_CLI_UNCAPPED", "1")
-    assert make_guide.drc_truncated(counts) is False        # engine CLI: counts are real
+def test_stock_preflight_rejects_wrong_cli_version(clean_env, monkeypatch):
+    _engine_tree(clean_env / "build_rl")
+    cli = _executable(clean_env / "stock" / "kicad-cli", output="9.0.9")
+    monkeypatch.setenv("KICAD_STOCK_CLI", str(cli))
+    monkeypatch.setenv("KICAD_STOCK_PYTHON", "/stock/python3")
+    with pytest.raises(SystemExit, match="stock CLI must be KiCad 10.0.7"):
+        kicad_tools.assert_stock_tools()

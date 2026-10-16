@@ -62,10 +62,10 @@ _ds() { python -m configs.loader.paths resolve "$1"; }
 SYNTH_2L_TEST_DIR="${SYNTH_2L_TEST_DIR:-$(_ds synth_2L_v2)/test}"
 SYNTH_2L_VAL_DIR="${SYNTH_2L_VAL_DIR:-$(_ds synth_2L_v2)/val}"
 REAL_BOARD_DIR="${REAL_BOARD_DIR:-$(_ds pcbench_exacad)}"
-REAL_BOARD_NAME_FILTER="${REAL_BOARD_NAME_FILTER:-processed_v9_guide_v3.kicad_pcb}"
+REAL_BOARD_NAME_FILTER="${REAL_BOARD_NAME_FILTER:-processed_v10_guide_v3.kicad_pcb}"
 
 REAL_FEWSHOT_POOL="${REAL_FEWSHOT_POOL:-$(_ds pcbench_exacad)}"
-REAL_FEWSHOT_NAME_FILTER="${REAL_FEWSHOT_NAME_FILTER:-processed_v9_guide_v3.kicad_pcb}"
+REAL_FEWSHOT_NAME_FILTER="${REAL_FEWSHOT_NAME_FILTER:-processed_v10_guide_v3.kicad_pcb}"
 SYNTH_FEWSHOT_CACHE="${SYNTH_FEWSHOT_CACHE:-${REPO_ROOT}/cache/synth_2L_fewshot}"
 SYNTH_FEWSHOT_PREP_LIMIT="${SYNTH_FEWSHOT_PREP_LIMIT:-8}"
 APISEQ_FEWSHOT_CACHE="${APISEQ_FEWSHOT_CACHE:-${REPO_ROOT}/cache/apiseq_fewshot}"

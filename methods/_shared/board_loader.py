@@ -42,7 +42,7 @@ def load_boards_from_dir_or_list(
 
     The directory variant accepts two layouts:
       * flat:   ``<dir>/*.kicad_pcb``
-      * nested: ``<dir>/<board>/processed_v9_guide_v3.kicad_pcb`` (real PCBs)
+      * nested: ``<dir>/<board>/processed_v10_guide_v3.kicad_pcb`` (real PCBs)
 
     The manifest variant reads one path per non-comment line; entries may name
     their location as ``${PCBWORLD_DATA_ROOT}/...`` (resolved through
@@ -52,14 +52,14 @@ def load_boards_from_dir_or_list(
     paths: list[Path] = []
     if boards_dir is not None:
         flat = sorted(Path(boards_dir).glob("*.kicad_pcb"))
-        nested = sorted(Path(boards_dir).glob("*/processed_v9_guide_v3.kicad_pcb"))
+        nested = sorted(Path(boards_dir).glob("*/processed_v10_guide_v3.kicad_pcb"))
         if flat:
             paths = flat
         elif nested:
             paths = nested
         else:
             raise FileNotFoundError(
-                f"No *.kicad_pcb or */processed_v9_guide_v3.kicad_pcb in {boards_dir}"
+                f"No *.kicad_pcb or */processed_v10_guide_v3.kicad_pcb in {boards_dir}"
             )
     elif boards_list is not None:
         from configs.loader.paths import expand_data_path
@@ -77,7 +77,7 @@ def load_boards_from_dir_or_list(
 
     boards: list[BoardSpec] = []
     for i, p in enumerate(paths):
-        if p.name == "processed_v9_guide_v3.kicad_pcb":
+        if p.name == "processed_v10_guide_v3.kicad_pcb":
             board_id = p.parent.name
         else:
             board_id = p.stem

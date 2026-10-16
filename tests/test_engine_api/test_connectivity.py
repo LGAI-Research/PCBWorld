@@ -204,9 +204,9 @@ class TestRatsnestPadGroupInvariant:
     """
 
     BOARDS = [
-        "0218_kitspace_GPSMux",
-        "0225_mac-pro-conversion_front-panel-power-adapter",
-        "0367_pcb-usb-ft245r-parallel-adapter_pcb-usb-ft245r-parallel-adapter",
+        "kitspace_GPSMux",
+        "mac-pro-conversion_front-panel-power-adapter",
+        "pcb-usb-ft245r-parallel-adapter_pcb-usb-ft245r-parallel-adapter",
     ]
 
     @staticmethod
@@ -228,13 +228,23 @@ class TestRatsnestPadGroupInvariant:
     @pytest.mark.parametrize("board", BOARDS)
     def test_unrouted_counts_agree(self, board: str) -> None:
         corpus = self._corpus()
-        path = corpus / board / "processed_v9_guide_v3_unrouted.kicad_pcb"
+        matches = [
+            p for p in corpus.iterdir()
+            if p.is_dir() and p.name.partition("_")[2] == board
+        ]
+        if len(matches) != 1:
+            pytest.skip(
+                f"d3b corpus board identity {board!r} resolves to "
+                f"{len(matches)} folders under {corpus}"
+            )
+        board_dir = matches[0]
+        path = board_dir / "processed_v10_guide_v3_unrouted.kicad_pcb"
         if not path.exists():
             pytest.skip(f"d3b corpus not available: {path}")
         # The _unrouted variant carries no .kicad_pro of its own (and the
         # corpus is read-only) — pass the routed sibling's project explicitly:
         # same project, same rules.
-        pro = corpus / board / "processed_v9_guide_v3.kicad_pro"
+        pro = board_dir / "processed_v10_guide_v3.kicad_pro"
         from collections import Counter
 
         from pcb_world.engine.kicad_engine import KiCadEngine

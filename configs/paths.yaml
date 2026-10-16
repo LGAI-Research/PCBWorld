@@ -29,9 +29,9 @@ datasets:
   D2-A-100k: {sub: synthetic/D2-A-100k}
   # DSN mirror of synth_2L_v2 (SPECCTRA exports consumed by the rule-based runners).
   synth_2L_v2_dsn:  {sub: synthetic/synth_2L_v2_dsn}
-  pcbench_exacad:   {sub: pcbench/exacad_sorted}
-  # DSN/ORP mirror of pcbench_exacad consumed by the rule-based runners.
-  pcbench_exacad_dsn: {sub: pcbench/exacad_sorted_dsn}
+  pcbench_exacad:   {sub: pcbench/exacad_sorted_v10}
+  # DSN/ORP mirror of the v10 pcbench_exacad data consumed by the rule-based runners.
+  pcbench_exacad_dsn: {sub: pcbench/exacad_sorted_dsn_v10}
   # methods/llm_agent/rollout/plan_only.py (LLM response summaries replayed by the
   # plan-only driver; the dirs inside keep their legacy apiseq_* names)
   plan_only_responses: {sub: pcbworld_baseline_summaries}
