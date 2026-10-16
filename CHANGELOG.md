@@ -14,6 +14,10 @@ with its own version line — its notes are in the
   and the existing v9 data trees remain unchanged.
 - PCBench DRC failures are reported separately from legitimate DRC rejection; invalid or missing
   DRC results cannot pass silently. The clone is pinned to its recorded source commit.
+- The v10 D3 DRC shim ignores `pth_inside_courtyard` and `npth_inside_courtyard` to preserve the
+  v9 effective policy. Before this compatibility override, KiCad 10 defaults rejected 54 v9-pass
+  boards; 53 failed only these new checks, including two frozen benchmark boards. `tracks_crossing`
+  and `invalid_outline` remain errors.
 
 ## v1.0.1 — 2026-09-16
 

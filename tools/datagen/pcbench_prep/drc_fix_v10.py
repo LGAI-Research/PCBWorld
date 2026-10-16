@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """DRC compatibility filter for KiCad 10.0.7-converted PCBench boards.
 
-The KiCad 9-era D3 repair policy is retained unchanged: its severity overrides,
-rule floors, and hole-to-hole floor ``min(0.25 mm, Default net-class clearance)``
-remain the historical contract. The stage copies only boards with a valid,
-zero-violation KiCad 10.0.7 DRC report to ``PCBENCH_NEWDRC_OUT``.
+The D3 repair policy keeps the historical v9 effective severities, rule floors,
+and hole-to-hole floor ``min(0.25 mm, Default net-class clearance)``. KiCad 10
+makes the PTH/NPTH-inside-courtyard checks errors by default although the same
+v9 project settings treated them as ignore; only those two proven severity
+changes are overridden here. Other rules, including ``tracks_crossing`` and
+``invalid_outline``, are not suppressed.
 
-A valid nonempty DRC report is a legitimate ``drc_rejected`` board outcome.
-Tool failures (timeout, nonzero exit, missing output, malformed JSON) are
-``drc_error`` and never become a zero-violation pass.
+The stage copies only boards with a valid, zero-violation KiCad 10.0.7 DRC
+report to ``PCBENCH_NEWDRC_OUT``. A valid nonempty report is a legitimate
+``drc_rejected`` outcome. Tool failures (timeout, nonzero exit, missing output,
+malformed JSON) are ``drc_error`` and never become a zero-violation pass.
 """
 from __future__ import annotations
 
@@ -31,6 +34,8 @@ SEVERITY_PATCH = {
     "annular_width": "ignore",
     "copper_edge_clearance": "ignore",
     "hole_clearance": "ignore",
+    "pth_inside_courtyard": "ignore",
+    "npth_inside_courtyard": "ignore",
 }
 
 RULES_PATCH = {
@@ -65,7 +70,7 @@ def hole_to_hole_min(pro: dict) -> float | None:
 
 
 def patch_pro(src_pro: Path, dst_pro: Path) -> None:
-    """Patch only the historical D3 severity and rule-floor settings."""
+    """Patch the historical D3 severities and rule-floor settings."""
     with open(src_pro, encoding="utf-8") as f:
         pro = json.load(f)
 

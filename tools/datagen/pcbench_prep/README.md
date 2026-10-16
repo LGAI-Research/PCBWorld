@@ -73,12 +73,15 @@ Stage reports stay beside their corresponding v10 data:
 - `pcbench/exacad_sorted_dsn_v10/_run-report.json` — DSN/ORP outcome for every sorted folder.
 
 A DRC rejection is not a tool failure. Timeout, nonzero CLI exit, missing DRC output, and
-malformed JSON are explicit stage errors and never count as zero violations. The DRC repair
-policy remains historical: `solder_mask_bridge`, `drill_out_of_range`, `malformed_courtyard`,
-`courtyards_overlap`, `annular_width`, `copper_edge_clearance`, and `hole_clearance` retain their
-existing ignore severities; the same rule floors remain zero; the hole-to-hole floor remains
-`min(0.25 mm, Default net-class clearance)`. Do not change those settings without KiCad 10
-behavioral evidence.
+malformed JSON are explicit stage errors and never count as zero violations. Keep the existing D3
+ignore overrides for `solder_mask_bridge`, `drill_out_of_range`, `malformed_courtyard`,
+`courtyards_overlap`, `annular_width`, `copper_edge_clearance`, and `hole_clearance`; add
+`pth_inside_courtyard` and `npth_inside_courtyard` as `ignore` to match v10 defaults that changed
+from v9. Under the **unpatched KiCad 10 defaults**, 53 of 54 boards that passed v9 but failed v10
+failed only these two checks; two frozen benchmark boards were affected solely by them. The
+compatibility overrides above apply to current v10 runs, and the full patched run reported 679
+DRC passes. Do not blanket-ignore `tracks_crossing` or `invalid_outline`. The same rule floors
+remain zero, and the hole-to-hole floor remains `min(0.25 mm, Default net-class clearance)`.
 
 `make_guide.py` keeps its best-attempt files for a valid DRC rejection (`status: fail`), but the
 sorter excludes them. The quickstart validates each report against its stage inputs and continues

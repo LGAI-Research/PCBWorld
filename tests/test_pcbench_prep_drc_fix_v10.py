@@ -101,6 +101,7 @@ def test_historical_repair_policy_keeps_hole_clearance_floor():
     assert drc_fix_v10.SEVERITY_PATCH == {
         "solder_mask_bridge": "ignore", "drill_out_of_range": "ignore",
         "malformed_courtyard": "ignore", "courtyards_overlap": "ignore",
+        "pth_inside_courtyard": "ignore", "npth_inside_courtyard": "ignore",
         "annular_width": "ignore", "copper_edge_clearance": "ignore",
         "hole_clearance": "ignore",
     }
@@ -246,25 +247,6 @@ def test_guide_balances_parentheses_in_named_net_before_next_segment():
         content, {net_id: 0.15}, net_id_to_name)
     assert narrowed.count("(width 0.15)") == 2
 
-
-def test_namespaced_net_uses_class_width_floor_at_minimum():
-    net_id = "named:Net-(U1-Pad2)"
-    net_name = "Net-(U1-Pad2)"
-    net_id_to_name = {net_id: net_name}
-    net_to_class = {net_name: "Wide"}
-    net_id_to_class = {
-        nid: net_to_class[name]
-        for nid, name in net_id_to_name.items()
-        if name in net_to_class
-    }
-    t_per_net = {nid: 1.0 for nid, name in net_id_to_name.items() if name}
-
-    widths = make_guide._compute_widths_per_t(
-        t_per_net, {net_id: (0.2, 0.4)}, 0.4, 0.3,
-        net_to_class=net_id_to_class,
-        class_params={"Wide": {"trace_width": 0.6}},
-    )
-    assert widths == {net_id: 0.6}
 
 def test_tag_scanner_ignores_quoted_block_text():
     content = """

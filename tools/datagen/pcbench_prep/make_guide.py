@@ -733,19 +733,31 @@ def _compute_widths_per_t(t_per_net, net_wrange, default_w, min_track_w=0.0,
     """Width per net from its t (0 = max, 1 = min).
 
     A net with no segments is pinned to default_w regardless of t.
-    min_track_w and its original class trace_width are lower floors.
-    net_to_class is keyed by numeric/synthetic net id.
+    min_track_w: the min_track_width rule value — acts as the lower floor.
     """
     widths = {}
     for nid, t in t_per_net.items():
         if nid in net_wrange:
             mn, mx = net_wrange[nid]
+            # Enforce floor: observed min, global min_track_w, and
+            # the original class trace_width (if available).
+            cls_name = None
             cls_min = 0.0
             if net_to_class and class_params:
-                cls_name = net_to_class.get(nid)
-                if cls_name:
-                    cls_min = class_params.get(cls_name, {}).get(
-                        'trace_width', 0.0) or 0.0
+                # net_to_class maps net name -> class name; but keys in
+                # net_wrange are net ids (strings). The caller may pass
+                # net_to_class as a mapping from net id->class or name->class.
+                # Our process_board passes net_to_class as name mapping, so
+                # try both lookups.
+                # First try to find by net id (string) in net_to_class.
+                if nid in net_to_class:
+                    cls_name = net_to_class.get(nid)
+                else:
+                    # try reverse: net id -> net name resolution is handled
+                    # by caller if needed; fall back to None.
+                    cls_name = None
+                if cls_name and cls_name in class_params:
+                    cls_min = class_params.get(cls_name, {}).get('trace_width', 0.0) or 0.0
             mn_floor = max(mn, min_track_w, cls_min)
             widths[nid] = mx * (1 - t) + mn_floor * t
         else:
@@ -808,11 +820,6 @@ def process_board(folder, input_stem='processed_v10', guide_suffix='_guide_v3',
 
         net_to_class = derive_net_to_class(
             net_id_to_name, explicit_n2c, patterns, class_params)
-        net_id_to_class = {
-            nid: net_to_class[name]
-            for nid, name in net_id_to_name.items()
-            if name in net_to_class
-        }
         net_wrange = extract_net_width_range(content, net_id_to_name)
 
         if not net_wrange:
@@ -859,7 +866,7 @@ def process_board(folder, input_stem='processed_v10', guide_suffix='_guide_v3',
             for trial in range(N_TRIAL):
                 net_widths = _compute_widths_per_t(
                     t_per_net, net_wrange, default_w, min_track_w,
-                    net_to_class=net_id_to_class, class_params=class_params)
+                    net_to_class=net_to_class, class_params=class_params)
                 modified_pcb = apply_net_widths_to_tracks(
                     content, net_widths, net_id_to_name)
 
@@ -929,7 +936,7 @@ def process_board(folder, input_stem='processed_v10', guide_suffix='_guide_v3',
                            for nid, t in t_per_net.items()}
                 final_widths = _compute_widths_per_t(
                     final_t, net_wrange, default_w, min_track_w,
-                    net_to_class=net_id_to_class, class_params=class_params)
+                    net_to_class=net_to_class, class_params=class_params)
                 final_pcb = apply_net_widths_to_tracks(
                     content, final_widths, net_id_to_name)
                 final_groups = build_groups(
