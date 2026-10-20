@@ -30,6 +30,7 @@ import textwrap
 
 import pytest
 
+from configs.loader.schema import EnvConfig
 from pcb_world.engine import engine_available
 
 ACT_NET_SELECT = 0
@@ -111,10 +112,8 @@ def env(tmp_path):
     # step's reward is exactly -invalid_action_penalty.
     from pcb_world.engine.drc_config import DEFAULT_DRC_CONFIG_PATH
     e = PCBWorld(
-        board_path=str(board),
-        reward_rule="drc_dense_promoted",
-        use_yaml_drc_fallback=True,
-        drc_config_path=str(DEFAULT_DRC_CONFIG_PATH),
+        str(board),
+        EnvConfig.with_overrides(reward_rule="drc_dense_promoted", rules_source="board_or_yaml", drc_config_path=str(DEFAULT_DRC_CONFIG_PATH)),
     )
     e.reset(seed=0)
     yield e
@@ -130,10 +129,8 @@ def tht_env(tmp_path):
     board = tmp_path / "tht_pad_net1.kicad_pcb"
     board.write_text(THT_BOARD_TEMPLATE)
     e = PCBWorld(
-        board_path=str(board),
-        reward_rule="drc_dense_promoted",
-        use_yaml_drc_fallback=True,
-        drc_config_path=str(DEFAULT_DRC_CONFIG_PATH),
+        str(board),
+        EnvConfig.with_overrides(reward_rule="drc_dense_promoted", rules_source="board_or_yaml", drc_config_path=str(DEFAULT_DRC_CONFIG_PATH)),
     )
     e.reset(seed=0)
     yield e

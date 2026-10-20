@@ -12,19 +12,11 @@ Contract:
   the top of every iteration and advances it (``obs_by_slot[slot] = obs_next``)
   *before* yielding, so an adapter may overwrite reset slots between
   iterations (PPO reset-obs re-injection protocol).
-* **Masks are gathered lazily** at the top of each iteration (i.e. after any
-  adapter resets) and **yielded** — §3.4 invariant (rollout==update): the
-  exact act-time mask set is what PPO/GRPO store in their buffers; masks are
-  never regenerated from board state at update time. Eval ignores them.
-* **``mode_mask`` None-vs-all-True is semantics**, not style
-  (``models/v1/net.py`` changes the log-prob composition whenever mode_mask
-  is a *tensor*, all-True included): ``want_value=True`` (training) passes
-  ``None`` when the gathered mode mask is all-True (``collect.py``
-  convention, mirrored by ``algorithms/_common.py`` at update time);
-  ``want_value=False`` (eval) always passes a tensor
-  (``KiCadRLAgent.act_from_pool`` convention — harmless there because eval
-  discards log-probs). Do NOT unify the two — it silently changes the
-  stored log_probs and poisons the PPO/GRPO rollout==update ratio.
+* **The distribution inputs are gathered lazily** at the top of each
+  iteration (i.e. after any adapter resets) as one :class:`DistInputs` and
+  **yielded** — §3.4 invariant (rollout==update): the exact act-time bundle is
+  what PPO/GRPO store in their buffers and hand back to the update forward;
+  it is never regenerated from board state. Eval ignores it.
 * **``board_static`` dedup** — each ``obs_next`` inherits the acting obs's
   ``board_static`` reference (static within an episode; keeps PPO memory
   O(N) instead of O(T*N)). Adapters refresh the reference chain simply by
@@ -39,6 +31,8 @@ import numpy as np
 import torch
 
 from pcb_world.vec.backends.base import VecBackend
+
+from methods.rl_agent.models.v1.spec import DistInputs
 
 if TYPE_CHECKING:
     from methods.rl_agent.models.v1.net import KiCadRLModel
@@ -55,8 +49,7 @@ class StepBatch:
 
     All per-slot arrays/lists are aligned with ``live`` (length ``B``).
     ``log_probs``/``values`` are ``None`` on the eval path
-    (``want_value=False``); ``net_valid_masks`` is ``None`` unless the
-    policy was trained with policy-driven net selection.
+    (``want_value=False``).
     """
     live: list[int]
     obs: list[dict]                      # act-time obs (what the forward saw)
@@ -68,13 +61,9 @@ class StepBatch:
     terminateds: np.ndarray              # (B,) bool
     truncateds: np.ndarray               # (B,) bool
     infos: list[dict]
-    # Act-time masks (§3.4 rollout==update invariant: store these, never
-    # regenerate). ``mode_masks`` is the raw gathered array — the None-if-
-    # all-True convention is applied to the *forward call*, not to this field.
-    action_masks: np.ndarray             # (B, NUM_ACTIONS) bool
-    pointer_masks: np.ndarray            # (B, K) int64, -1 padded
-    mode_masks: np.ndarray               # (B, 3) bool
-    net_valid_masks: np.ndarray | None   # (B, M) bool
+    # Act-time distribution inputs, numpy (§3.4 rollout==update invariant:
+    # store these, never regenerate).
+    dist: DistInputs
     # Batched CPU walk over ``live`` (the tokenize pass the forward already
     # ran). Set on the collect path (``want_value=True``) so the collector can
     # cache it flat (merged once at collect end → ``walk_flat``) and let the
@@ -85,10 +74,7 @@ class StepBatch:
 def budgeted_forward(
     actor: "KiCadRLAgent | KiCadRLModel",
     obs_list: list[dict],
-    mask_t: torch.Tensor,
-    ptr_t: torch.Tensor,
-    mode_t: "torch.Tensor | None",
-    nvm_kwargs: dict[str, Any],
+    dist: DistInputs,
     mem_budget: "MemBudgetModel",
     *,
     want_value: bool,
@@ -106,8 +92,7 @@ def budgeted_forward(
     actual split pays a second, per-chunk walk. (Per-sample B=1 walks here —
     64x Python passes + merge, every rollout step — measured 3~7x the
     batched walk and +5~12% ITER in the 260713 A/B; do not revert.)
-    The mode-mask None-vs-tensor convention is the *caller's* batch-level
-    decision; chunks only slice it, never re-derive it.
+    ``dist`` is the batch's torch bundle; each chunk takes ``dist.select``.
 
     OOM backstop mirrors the update path: halve the budget (this call only),
     replan, retry; a single-row chunk that still OOMs re-raises.
@@ -133,10 +118,7 @@ def budgeted_forward(
             if len(chunks) == 1:
                 # Whole batch fits: keep the original row order (identical
                 # sampling stream to the unsplit path), just skip the re-walk.
-                kw = dict(
-                    action_masks=mask_t, pointer_masks=ptr_t, mode_mask=mode_t,
-                    walked=walk, **nvm_kwargs,
-                )
+                kw = dict(dist=dist, walked=walk)
                 if want_value:
                     return actor.act_and_value(
                         obs_list, deterministic=deterministic, **kw,
@@ -145,22 +127,11 @@ def budgeted_forward(
                 return acts, lps, None
             parts: list[tuple[list[int], tuple]] = []
             for chunk in chunks:
-                sel = torch.as_tensor(chunk, dtype=torch.long, device=mask_t.device)
                 kw = dict(
-                    action_masks=mask_t[sel],
-                    pointer_masks=ptr_t[sel],
-                    mode_mask=mode_t[sel] if mode_t is not None else None,
+                    dist=dist.select(chunk),
                     # split path only: one extra batched walk per chunk
                     walked=tokenizer.walk_timed([obs_list[p] for p in chunk]),
                 )
-                # Every ARRAY in nvm_kwargs must be resliced for this chunk;
-                # a scalar flag is passed through. Missing one here silently
-                # feeds the chunk another sub-batch's mask.
-                if "net_valid_mask" in nvm_kwargs:
-                    kw["net_valid_mask"] = nvm_kwargs["net_valid_mask"][sel]
-                    kw["allow_net_select_lp"] = nvm_kwargs["allow_net_select_lp"]
-                if "offlayer_masks" in nvm_kwargs:
-                    kw["offlayer_masks"] = nvm_kwargs["offlayer_masks"][sel]
                 obs_chunk = [obs_list[p] for p in chunk]
                 if measure:
                     base = _mb_mod.begin_measured_region()
@@ -223,18 +194,13 @@ def iter_rollout(
     Yields a :class:`StepBatch` per step for up to ``max_steps`` iterations,
     stopping early when no slot is live. ``want_value=True`` uses the
     training-collection forward (``act_and_value``: grad mode untouched,
-    stochastic, mode_mask None-if-all-True); ``want_value=False`` uses the
-    eval forward (``KiCadRLAgent.act``: no-grad, honours ``deterministic``,
-    mode_mask always a tensor). A calibrated ``mem_budget`` routes the
+    stochastic); ``want_value=False`` uses the eval forward
+    (``KiCadRLAgent.act``: no-grad, honours ``deterministic``). A calibrated ``mem_budget`` routes the
     forward through :func:`budgeted_forward` (peak-VRAM-planned splitting;
     exact). See the module docstring for the full caller contract (done
     ownership / obs re-injection / mask storage).
     """
-    from methods.rl_agent.policy.agent import (
-        KiCadRLAgent,
-        gather_mask_arrays,
-        mask_arrays_to_tensors,
-    )
+    from methods.rl_agent.policy.agent import KiCadRLAgent, gather_dist
 
     use_vec = isinstance(envs, VecBackend)
     policy_ns = bool(getattr(policy, "policy_net_select", False))
@@ -257,16 +223,12 @@ def iter_rollout(
         obs_live = [obs_by_slot[slot] for slot in live]
 
         # --- Act-time masks (lazy: gathered after any adapter resets) ---
-        # Shared agent-glue helpers; mode-mask None convention switches on
-        # want_value (training vs eval — see module docstring). obs_live is
-        # passed so the wrapper-embedded "_masks" payload skips the IPC.
-        masks, ptr_masks, mode_masks, nvm, off_masks = gather_mask_arrays(
+        # obs_live is passed so the wrapper-embedded "_masks" payload skips
+        # the IPC.
+        dist = gather_dist(
             envs, live, policy_net_select=policy_ns, obs_list=obs_live,
         )
-        mask_t, ptr_t, mode_t, nvm_kwargs = mask_arrays_to_tensors(
-            masks, ptr_masks, mode_masks, nvm, device, off_masks=off_masks,
-            mode_none_if_all_true=want_value,
-        )
+        dist_t = dist.to(device)
 
         # --- Forward ---
         # Collect only: hoist the batched walk (the CPU tokenize pass the
@@ -282,8 +244,7 @@ def iter_rollout(
             # Budget-split forward (exact; see budgeted_forward). Uses the
             # same actor per path as the branches below.
             acts_t, logp_t, vals_t = budgeted_forward(
-                policy if want_value else agent, obs_live,
-                mask_t, ptr_t, mode_t, nvm_kwargs, mem_budget,
+                policy if want_value else agent, obs_live, dist_t, mem_budget,
                 want_value=want_value, deterministic=deterministic,
                 walk=step_walk,
             )
@@ -295,24 +256,14 @@ def iter_rollout(
             # (no tokenizer → step_walk None) don't accept ``walked=``.
             walk_kw = {"walked": step_walk} if step_walk is not None else {}
             actions, log_probs, values = policy.act_and_value(
-                obs_live,
-                action_masks=mask_t,
-                pointer_masks=ptr_t,
-                mode_mask=mode_t,
-                **walk_kw,
-                **nvm_kwargs,
+                obs_live, dist=dist_t, **walk_kw,
             )
             actions_np = actions.cpu().numpy()
             log_probs_np = log_probs.cpu().numpy()
             values_np = values.cpu().numpy()
         else:
             acts_t, _logp = agent.act(
-                obs_live,
-                action_masks=mask_t,
-                pointer_masks=ptr_t,
-                mode_mask=mode_t,
-                deterministic=deterministic,
-                **nvm_kwargs,
+                obs_live, dist=dist_t, deterministic=deterministic,
             )
             actions_np = acts_t.cpu().numpy()
             log_probs_np = None
@@ -353,9 +304,6 @@ def iter_rollout(
             terminateds=terms,
             truncateds=truncs,
             infos=infos,
-            action_masks=masks,
-            pointer_masks=ptr_masks,
-            mode_masks=mode_masks,
-            net_valid_masks=nvm,
+            dist=dist,
             walk=step_walk,
         )

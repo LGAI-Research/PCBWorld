@@ -789,7 +789,8 @@ def validate_counts(points: pd.DataFrame, source_runs: list[dict[str, object]], 
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    from configs.loader.cli import StrictArgumentParser
+    parser = StrictArgumentParser(description=__doc__)
     parser.add_argument("--overleaf-root", type=Path, default=Path(os.environ.get("OVERLEAF_ROOT", "var/results/kdd/paper_outputs")))
     # Default: the wandb_curve_audit dataset from configs/paths.yaml
     # (PCBWORLD_DATA_ROOT overrides its root; "" when the root is empty, so an

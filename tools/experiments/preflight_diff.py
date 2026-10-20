@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""Batch preflight: diff resolved-config dumps across cases before launch.
+"""Batch preflight: diff resolved configs across cases before launch.
 
-Compares N ``config_resolved.yaml`` dumps (written by
-``train_ppo --dump-config-only``; see
-``methods/_shared/config_dump.py``). Keys identical across every
+Compares the resolved values of N run records (``run_record.yaml``, written by
+``train_ppo --dump-config-only`` or at the start of any run; see
+``configs/loader/record.py``). Keys identical across every
 case are folded to a count; keys whose values differ are printed as a
 key x case matrix. ``--expect`` declares the keys *intended* to differ (the
 experiment axes) — a difference in any OTHER key aborts with exit 1 so the
 human stops the batch launch (e.g. the 260704 batch where --time-feature was
-bundled into only one gamma case, confounding the axis). Meta keys
-(``_version`` / ``_git_rev`` / ``_created``) are excluded from the diff.
+bundled into only one gamma case, confounding the axis). Only the config values
+are compared — where they came from is in each record (``python -m configs.loader.explain``).
 
 Usage (dump one config per case first, then diff)::
 
     for c in $(bash -c 'source sandbox/d2b_midboard/260706_cases.sh; d2b_all_cases'); do
       DRY_RUN=0 bash .../train_one.sh --case $c ... --dump-config-only  # concept example
     done
-    python tools/experiments/preflight_diff.py 'var/.../*/config_resolved.yaml' \
+    python tools/experiments/preflight_diff.py 'var/.../*/run_record.yaml' \
         --expect gamma,masking_rule,truncation_bootstrap
 
 Exit codes: 0 = all differences are declared axes; 1 = unexpected difference
@@ -28,10 +28,9 @@ import argparse
 import glob
 import os
 import sys
+from pathlib import Path
 
-import yaml
 
-META_KEYS = {"_version", "_git_rev", "_created"}
 _ABSENT = "<absent>"
 
 
@@ -53,7 +52,7 @@ def expand_paths(patterns: list[str]) -> list[str]:
 
 def case_labels(paths: list[str]) -> list[str]:
     """Shortest distinguishing labels: paths relative to their common prefix;
-    when all basenames are identical (the usual config_resolved.yaml), the
+    when all basenames are identical (the usual run_record.yaml), the
     per-case directory alone."""
     common = os.path.commonpath(paths)
     labels = [os.path.relpath(p, common) for p in paths]
@@ -68,7 +67,7 @@ def diff_configs(cases: list[tuple[str, dict]]) -> tuple[list[str], dict[str, li
     A key missing from some case counts as a difference (value ``<absent>``) —
     that is exactly a code-version/flag-set mismatch worth stopping for.
     """
-    keys = sorted({k for _, cfg in cases for k in cfg} - META_KEYS)
+    keys = sorted({k for _, cfg in cases for k in cfg})
     same: list[str] = []
     diff: dict[str, list] = {}
     for k in keys:
@@ -98,12 +97,16 @@ def format_matrix(labels: list[str], diff: dict[str, list]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(
+    repo_dir = str(Path(__file__).resolve().parents[2])  # configs.loader when run as a script
+    if repo_dir not in sys.path:
+        sys.path.insert(0, repo_dir)
+    from configs.loader.cli import StrictArgumentParser
+    ap = StrictArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("configs", nargs="+",
-                    help="resolved-config yaml paths (globs allowed)")
+                    help="run_record.yaml paths (globs allowed)")
     ap.add_argument("--expect", action="append", default=[], metavar="KEY[,KEY...]",
                     help="comma-separated keys intended to differ across cases "
                          "(the experiment axes); repeatable")
@@ -112,13 +115,14 @@ def main(argv: list[str] | None = None) -> int:
     paths = expand_paths(args.configs)
     if len(paths) < 2:
         sys.exit("error: need >= 2 config files to diff")
+    from configs.loader.explain import load_provenance
     cases = []
     for label, path in zip(case_labels(paths), paths):
-        with open(path) as f:
-            cfg = yaml.safe_load(f)
-        if not isinstance(cfg, dict):
-            sys.exit(f"error: {path} is not a yaml mapping")
-        cases.append((label, cfg))
+        try:
+            provenance = load_provenance(path)
+        except ValueError as e:
+            sys.exit(f"error: {e}")
+        cases.append((label, {k: e["value"] for k, e in provenance.items()}))
 
     same, diff = diff_configs(cases)
     expected = {

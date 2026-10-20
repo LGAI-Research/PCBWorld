@@ -15,7 +15,7 @@ import os
 
 import pytest
 
-from pcb_world.engine.kicad_engine import KiCadEngine
+from tests.helpers.engine import open_engine
 
 BOARD = os.path.join(
     os.path.dirname(__file__), "..", "fixtures", "two_net_multiterm_board.kicad_pcb"
@@ -54,7 +54,7 @@ def test_locked_net_is_not_shoved():
     untouched (walked around); unlocked, the same route shoves NET1 aside.
     The differential isolates the lock effect."""
     # Control: unlocked → NET1 is shoved (geometry changes).
-    eng = KiCadEngine(BOARD)
+    eng = open_engine(BOARD)
     _route_net1_straight(eng)
     before = _net1_geom(eng)
     _route_net2_across(eng)
@@ -63,7 +63,7 @@ def test_locked_net_is_not_shoved():
     assert after_unlocked != before, "precondition: unlocked NET1 should be shoved"
 
     # Locked → NET1 stays exactly the straight track.
-    eng = KiCadEngine(BOARD)
+    eng = open_engine(BOARD)
     _route_net1_straight(eng)
     before = _net1_geom(eng)
     n = eng.lock_net(NET1)
@@ -79,7 +79,7 @@ def test_locked_net_is_not_shoved():
 def test_lock_net_count_and_unlock():
     """lock_net returns the #items flagged; unlock returns the same; a net with
     no copper returns 0."""
-    eng = KiCadEngine(BOARD)
+    eng = open_engine(BOARD)
     _route_net1_straight(eng)
     n_tracks = len(_net1_geom(eng))
 

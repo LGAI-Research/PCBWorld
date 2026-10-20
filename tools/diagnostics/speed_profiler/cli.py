@@ -29,7 +29,8 @@ from tools.diagnostics.speed_profiler.driver import ProfileConfig, run
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="profile", description=__doc__)
+    from configs.loader.cli import StrictArgumentParser
+    p = StrictArgumentParser(prog="profile", description=__doc__)
     p.add_argument("--mode", choices=["full", "light", "barrier"], default="full",
                    help="full=complete detailed breakdown (default) · light=lightweight "
                         "A/B: Collect/Update phases only (all instrumentation hooks off "

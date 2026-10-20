@@ -10,6 +10,7 @@ import os
 import numpy as np
 import pytest
 
+from configs.loader.schema import EnvConfig
 from pcb_world.engine import engine_available
 
 from pcb_world.core.masking import ACT_IDLE, NUM_ACTIONS
@@ -43,7 +44,7 @@ def env():
     _skip_if_no_board()
     _skip_if_no_kicad()
     from pcb_world.core.env import PCBWorld
-    e = PCBWorld(board_path=BOARD_PATH, max_steps=50, masking_rule="default")  # the paper rule: finish available
+    e = PCBWorld(BOARD_PATH, EnvConfig.with_overrides(max_steps=50, masking_rule="default"))  # the paper rule: finish available
     yield e
     e.close()
 
@@ -257,7 +258,10 @@ class TestHLEnvMaskingConfig:
         _skip_if_no_board()
         _skip_if_no_kicad()
         from pcb_world.core.env import PCBWorld
-        e = PCBWorld(board_path=BOARD_PATH, max_steps=10, masking_rule="relaxed_phase")
+        e = PCBWorld(
+            BOARD_PATH,
+            EnvConfig.with_overrides(max_steps=10, masking_rule="relaxed_phase"),
+        )
         try:
             obs, _ = e.reset()
             # Select a net first
@@ -338,7 +342,7 @@ class TestHLEnvIdle:
         _skip_if_no_board()
         _skip_if_no_kicad()
         from pcb_world.core.env import PCBWorld
-        e = PCBWorld(board_path=BOARD_PATH, max_steps=3)
+        e = PCBWorld(BOARD_PATH, EnvConfig.with_overrides(max_steps=3))
         try:
             e.reset()
             for i in range(2):
@@ -363,7 +367,7 @@ class TestHLEnvIdle:
         _skip_if_no_board()
         _skip_if_no_kicad()
         from pcb_world.core.env import PCBWorld
-        e = PCBWorld(board_path=BOARD_PATH, max_steps=2)
+        e = PCBWorld(BOARD_PATH, EnvConfig.with_overrides(max_steps=2))
         try:
             e.reset()
             e.step({"action_type": ACT_IDLE})
@@ -385,7 +389,7 @@ class TestHLEnvIdle:
         _skip_if_no_board()
         _skip_if_no_kicad()
         from pcb_world.core.env import PCBWorld
-        e = PCBWorld(board_path=BOARD_PATH, max_steps=1)
+        e = PCBWorld(BOARD_PATH, EnvConfig.with_overrides(max_steps=1))
         try:
             e.reset()
             net_codes = list(e._board_info.nets.keys())

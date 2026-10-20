@@ -24,3 +24,6 @@ potential:
   step_penalty: 0.0
   truncation_mode: none
   drc_severity_mode: errors_and_promoted
+  invalid_action_penalty: 0.01
+  parse_fail_penalty: 0.2
+  mask_reject_penalty: 0.09

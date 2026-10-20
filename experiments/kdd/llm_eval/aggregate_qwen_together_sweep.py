@@ -15,7 +15,6 @@ Usage:
 """
 from __future__ import annotations
 
-import argparse
 import csv
 import json
 import sys
@@ -24,6 +23,7 @@ from pathlib import Path
 
 
 _METRIC_KEYS = (
+    "boards_total",
     "boards_evaluated",
     "boards_failed",
     "pass_at_k",
@@ -177,7 +177,11 @@ def write_markdown(rows: list[dict], path: Path) -> None:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
+    repo_dir = str(Path(__file__).resolve().parents[3])  # configs.loader when run as a script
+    if repo_dir not in sys.path:
+        sys.path.insert(0, repo_dir)
+    from configs.loader.cli import StrictArgumentParser
+    p = StrictArgumentParser(description=__doc__.split("\n", 1)[0])
     p.add_argument("sweep_root", type=Path,
                    help="Path like eval_out/qwen_together_sweep/<DATE_TAG>/")
     p.add_argument("--ks", default="",

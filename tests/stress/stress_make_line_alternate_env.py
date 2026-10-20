@@ -47,6 +47,7 @@ OUTPUT_DIR = PROJECT_ROOT / "var" / "tests" / "output" / "stress_make_line_alter
 sys.path.insert(0, str(RL_MODULE_DIR))
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from configs.loader.schema import EnvConfig
 from pcb_world.core.env import PCBWorld  # noqa: E402
 from pcb_world.engine.drc_config import DEFAULT_DRC_CONFIG_PATH  # noqa: E402
 from pcb_world.core.masking import (  # noqa: E402
@@ -212,18 +213,13 @@ def main() -> int:
     print(f"board    : {board_path}")
     for nc, n in NETS.items():
         print(f"  {n['name']} (net_code={nc})  pads {n['p1']}  <->  {n['p2']}")
-    print(f"corner   : MITERED_90  (env corner_mode=2)")
+    print(f"corner   : MITERED_90  (env corner_mode=90)")
     print(f"rounds   : {N_ROUNDS}  (alternates NET1, NET2, NET1, ...)")
     print()
 
     env = PCBWorld(
-        board_path=str(board_path),
-        max_steps=N_ROUNDS * 2 + 8,
-        masking_rule="default",
-        corner_mode=2,
-        use_yaml_drc_fallback=True,
-        drc_config_path=str(DEFAULT_DRC_CONFIG_PATH),
-        reward_rule="drc_only_dense",
+        str(board_path),
+        EnvConfig.with_overrides(max_steps=N_ROUNDS * 2 + 8, masking_rule="default", corner_mode=90, rules_source="board_or_yaml", drc_config_path=str(DEFAULT_DRC_CONFIG_PATH), reward_rule="drc_only_dense"),
     )
     env.reset()
     print(f"after reset: is_routing={env._engine.is_routing()} "

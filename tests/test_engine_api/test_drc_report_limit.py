@@ -19,12 +19,12 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
+from tests.helpers.engine import open_engine
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from pcb_world.engine.kicad_engine import KiCadEngine  # noqa: E402
 
 FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "sample_drc_violation.kicad_pcb"
 N_OPEN = 600    # > EXTENDED_ERROR_LIMIT (499)
@@ -82,7 +82,7 @@ def big_board(tmp_path: Path) -> str:
 
 
 def test_drc_reports_beyond_upstream_caps(big_board: str) -> None:
-    eng = KiCadEngine(big_board, allow_default_rules=True)
+    eng = open_engine(big_board, allow_default_rules=True)
     try:
         counts = Counter(v.error_type for v in eng.run_drc())
     finally:

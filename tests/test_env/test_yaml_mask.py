@@ -22,6 +22,7 @@ from pcb_world.core.masking import (
     ActionDef,
     NUM_ACTIONS,
     MaskContext,
+    MaskingRuleSchema,
     YamlConditionMask,
     build_action_mask,
     get_masking_rule,
@@ -59,11 +60,15 @@ RELAXED_CONFIG = {
 }
 
 
+def _mask(config):
+    return YamlConditionMask(MaskingRuleSchema.from_dict(config, "<inline>"))
+
+
 class TestYamlConditionMask:
     """Test YamlConditionMask with in-memory config dicts."""
 
     def test_strict_net_select(self):
-        rule = YamlConditionMask(STRICT_CONFIG)
+        rule = _mask(STRICT_CONFIG)
         ctx = MaskContext(has_net=False, is_routing=False)
         mask = rule.build_mask(ctx)
         assert mask.shape == (NUM_ACTIONS,)
@@ -71,7 +76,7 @@ class TestYamlConditionMask:
         assert mask.sum() == 1
 
     def test_strict_start_route_not_connected(self):
-        rule = YamlConditionMask(STRICT_CONFIG)
+        rule = _mask(STRICT_CONFIG)
         ctx = MaskContext(has_net=True, is_routing=False, net_fully_connected=False)
         mask = rule.build_mask(ctx)
         assert mask[ACT_START_ROUTE] is np.True_
@@ -82,7 +87,7 @@ class TestYamlConditionMask:
         # A fully-connected net can only be ended (net_end), NOT re-routed:
         # start_route is masked (net_fully_connected: false condition) so the
         # agent cannot lay redundant copper on a completed net.
-        rule = YamlConditionMask(STRICT_CONFIG)
+        rule = _mask(STRICT_CONFIG)
         ctx = MaskContext(has_net=True, is_routing=False, net_fully_connected=True)
         mask = rule.build_mask(ctx)
         assert mask[ACT_START_ROUTE] is np.False_
@@ -90,7 +95,7 @@ class TestYamlConditionMask:
         assert mask.sum() == 1
 
     def test_strict_routing(self):
-        rule = YamlConditionMask(STRICT_CONFIG)
+        rule = _mask(STRICT_CONFIG)
         ctx = MaskContext(has_net=True, is_routing=True)
         mask = rule.build_mask(ctx)
         assert mask[ACT_MAKE_LINE] is np.True_
@@ -99,13 +104,13 @@ class TestYamlConditionMask:
         assert mask.sum() == 3
 
     def test_relaxed_allows_net_end_always(self):
-        rule = YamlConditionMask(RELAXED_CONFIG)
+        rule = _mask(RELAXED_CONFIG)
         ctx = MaskContext(has_net=True, is_routing=False, net_fully_connected=False)
         mask = rule.build_mask(ctx)
         assert mask[ACT_NET_END] is np.True_
 
     def test_mask_dtype_is_bool(self):
-        rule = YamlConditionMask(STRICT_CONFIG)
+        rule = _mask(STRICT_CONFIG)
         ctx = MaskContext(has_net=True, is_routing=True)
         mask = rule.build_mask(ctx)
         assert mask.dtype == bool
@@ -113,7 +118,7 @@ class TestYamlConditionMask:
     def test_empty_actions_empty_mask(self):
         """If no actions are defined, all actions are masked."""
         config = {"name": "empty", "actions": {}}
-        rule = YamlConditionMask(config)
+        rule = _mask(config)
         ctx = MaskContext()
         mask = rule.build_mask(ctx)
         assert mask.sum() == 0
@@ -123,11 +128,11 @@ class TestYamlConditionMask:
             "name": "bad",
             "actions": {"nonexistent_action": {"when": {}}},
         }
-        with pytest.raises(KeyError):
-            YamlConditionMask(config)
+        with pytest.raises(ValueError, match="nonexistent_action"):
+            _mask(config)
 
     def test_name_attribute(self):
-        rule = YamlConditionMask(STRICT_CONFIG)
+        rule = _mask(STRICT_CONFIG)
         assert rule.name == "strict"
 
 

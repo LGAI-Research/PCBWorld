@@ -9,6 +9,7 @@ and the save→reload idempotency loop on a micro-segment fixture
 import pytest
 
 from tests.test_engine_api.conftest import FIXTURES_DIR
+from tests.helpers.engine import open_engine
 
 STAIRCASE = FIXTURES_DIR / "corner_staircase_edge.kicad_pcb"
 
@@ -46,9 +47,11 @@ def test_replace_bad_index_raises(staircase_path):
 
 def test_engine_flag_simplifies_and_roundtrips(staircase_path, tmp_path):
     krl = pytest.importorskip("kicad_rl_router")
-    from pcb_world.engine.kicad_engine import KiCadEngine
 
-    eng = KiCadEngine(staircase_path, simplify_outline=True)
+    eng = open_engine(
+        staircase_path,
+        simplify_outline=True,
+    )
     try:
         rep = eng.outline_simplify_report
         assert rep is not None and rep.changed
@@ -64,7 +67,7 @@ def test_engine_flag_simplifies_and_roundtrips(staircase_path, tmp_path):
         eng.close()
 
     # reload the converted board with the pass enabled → no-op (idempotent)
-    eng2 = KiCadEngine(str(out), simplify_outline=True)
+    eng2 = open_engine(str(out), simplify_outline=True)
     try:
         rep2 = eng2.outline_simplify_report
         assert rep2 is not None and not rep2.changed
@@ -76,9 +79,7 @@ def test_engine_flag_simplifies_and_roundtrips(staircase_path, tmp_path):
 
 
 def test_engine_flag_off_is_untouched(staircase_path):
-    from pcb_world.engine.kicad_engine import KiCadEngine
-
-    eng = KiCadEngine(staircase_path)
+    eng = open_engine(staircase_path, simplify_outline=False)
     try:
         assert eng.outline_simplify_report is None
         assert len(eng.get_board_outline()) == 720

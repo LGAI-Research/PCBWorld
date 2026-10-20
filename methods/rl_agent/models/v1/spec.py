@@ -2,7 +2,10 @@
 
 Single source of truth for the dimensions / enums shared by the codec
 (``encoding``), the network (``net``), and the rollout buffer, so shape drift
-across those three cannot happen silently.
+across those three cannot happen silently — including the row bundles
+:class:`DistInputs` (everything that shapes the action distribution besides
+the obs) and :class:`Transition` (one buffer row), which carry those inputs
+from the act-time gather through the buffer to the update in one piece.
 
 C1-models step 1: these definitions were *relocated* here from
 ``policy/token_vocabulary.py`` (vocab enums + counts) and
@@ -12,8 +15,11 @@ re-export from here, so existing imports keep working unchanged (behavior 0).
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field, fields
 from enum import IntEnum
+from typing import Any
 
+import numpy as np
 import torch
 
 # Single source of truth in pcb_world/vec (shared with the slot_perm augmentation).
@@ -158,3 +164,123 @@ SLOT_USAGE = torch.tensor(
     ],
     dtype=torch.bool,
 )  # (NUM_ACTIONS, 2)
+
+
+# ---------------------------------------------------------------------------
+# Row bundles — distribution inputs and buffer rows
+# ---------------------------------------------------------------------------
+# A field holds a row-aligned array: numpy in the buffer, torch in a forward.
+Array = Any
+
+# Cand-column index lists are stored int32 (half the buffer and DDP pickle of
+# int64); torch's scatter / advanced indexing take int32 indices as they are.
+_CAND_IDX = np.int32
+
+
+def _col(pad: Any = None) -> Any:
+    """A bundle field. ``pad`` is the fill for a ragged trailing axis (rows of
+    different width are right-padded with it on :meth:`_RowBundle.concat`);
+    ``None`` = fixed width or a nested bundle. No default: every field is
+    required at construction."""
+    return field(metadata={"pad": pad})
+
+
+def _pad_rows(rows: list, fill: Any, dtype: Any) -> np.ndarray:
+    """Right-pad 1-D rows into one ``(len(rows), max_len)`` array of ``fill``."""
+    out = np.full((len(rows), max((len(r) for r in rows), default=0)), fill, dtype=dtype)
+    for i, r in enumerate(rows):
+        out[i, :len(r)] = r
+    return out
+
+
+class _RowBundle:
+    """Row ops over a frozen dataclass of row-aligned fields, driven by
+    ``dataclasses.fields()`` — a field added to the dataclass rides every op
+    without another edit. A field may be ``None`` (absent for the whole
+    bundle) or a nested bundle."""
+
+    def select(self, idx: Any) -> Any:
+        """Rows ``idx`` (index list / tensor; keeps the row axis)."""
+        out = {}
+        for f in fields(self):
+            v = getattr(self, f.name)
+            out[f.name] = None if v is None else (
+                v.select(idx) if isinstance(v, _RowBundle) else v[idx])
+        return type(self)(**out)
+
+    def to(self, device: Any) -> Any:
+        """Every array as a torch tensor on ``device`` (dtype kept)."""
+        out = {}
+        for f in fields(self):
+            v = getattr(self, f.name)
+            out[f.name] = None if v is None else (
+                v.to(device) if isinstance(v, _RowBundle) else torch.as_tensor(v, device=device))
+        return type(self)(**out)
+
+    @classmethod
+    def concat(cls, parts: list) -> Any:
+        """Stack numpy bundles row-wise in order; ragged fields are padded with
+        their ``pad`` fill. A field must be ``None`` in all parts or in none."""
+        if not parts:
+            raise ValueError(f"{cls.__name__}.concat needs at least one part")
+        out = {}
+        for f in fields(cls):
+            vals = [getattr(p, f.name) for p in parts]
+            if all(v is None for v in vals):
+                out[f.name] = None
+            elif any(v is None for v in vals):
+                raise ValueError(f"{cls.__name__}.concat: field {f.name!r} is None in some parts only")
+            elif isinstance(vals[0], _RowBundle):
+                out[f.name] = type(vals[0]).concat(vals)
+            elif f.metadata["pad"] is None:
+                out[f.name] = np.concatenate(vals)
+            else:
+                out[f.name] = _pad_rows([r for v in vals for r in v], f.metadata["pad"], vals[0].dtype)
+        return cls(**out)
+
+
+@dataclass(frozen=True, eq=False)
+class DistInputs(_RowBundle):
+    """Everything besides the obs that shapes the action distribution, one row
+    per batch row. The act-time gather builds it, the buffer stores it, and the
+    update hands the stored bundle back to the model — so the rollout and the
+    update score the same distribution by construction."""
+
+    action: Array = _col()              # (B, NUM_ACTIONS) bool, True = legal action type
+    pointer: Array = _col(pad=-1)       # (B, K) int32 cand columns blocked on every row:
+                                        #   same-point ++ off-board, right-padded -1
+    offlayer: Array = _col(pad=-1)      # (B, O) int32 cand columns blocked on the make_line row
+    mode: Array = _col()                # (B, NUM_ROUTING_MODES) bool, True = legal mode
+    net_valid: Array | None = _col(pad=False)   # (B, M) bool; None iff the policy does
+                                                #   not select nets (policy_net_select off)
+
+    @classmethod
+    def from_payloads(cls, payloads: list[dict], *, policy_net_select: bool) -> "DistInputs":
+        """Stack per-env mask payloads (the six-key dict ``KiCadRLWrapper``
+        attaches as ``obs["_masks"]``). A missing key raises ``KeyError``."""
+        return cls(
+            action=np.stack([p["action"] for p in payloads]).astype(bool),
+            pointer=_pad_rows(
+                [np.concatenate([p["pointer"], p["offboard"]]) for p in payloads], -1, _CAND_IDX,
+            ),
+            offlayer=_pad_rows([p["offlayer"] for p in payloads], -1, _CAND_IDX),
+            mode=np.stack([p["mode"] for p in payloads]).astype(bool),
+            net_valid=(
+                _pad_rows([p["net_valid"] for p in payloads], False, bool)
+                if policy_net_select else None
+            ),
+        )
+
+
+@dataclass(frozen=True, eq=False)
+class Transition(_RowBundle):
+    """One flat replay-buffer row set: the distribution inputs plus what the
+    update re-scores against (PPO and GRPO share it; advantages/returns are
+    derived later and live beside it)."""
+
+    dist: DistInputs = _col()
+    actions: Array = _col()             # (B, ACTION_ARITY) int64
+    old_log_probs: Array = _col()       # (B,) float32, act-time joint log-prob
+    old_values: Array = _col()          # (B,) float32, act-time critic value
+    kl_mask: Array | None = _col()      # (B,) float32 reference-KL weight; None unless
+                                        #   fine-tuning masks the KL (loop.py)

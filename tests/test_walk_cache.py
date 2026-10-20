@@ -15,6 +15,8 @@ container type):
 """
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pytest
 import torch
@@ -46,7 +48,7 @@ def _make_obs_list(fmt: str = "dict"):
 
 def _tok(seed: int = 0) -> BatchedStateTokenizer:
     torch.manual_seed(seed)
-    tok = BatchedStateTokenizer()
+    tok = BatchedStateTokenizer(disable_slot_emb=False)
     tok.eval()
     return tok
 
@@ -184,6 +186,9 @@ class TestUpdateWithoutObs:
     def _buffer(self, obs_list, policy):
         from methods.rl_agent.models.v1.net import NUM_ACTION_TYPES
         from methods.rl_agent.models.v1.spec import ACT_NET_SELECT
+        from tests.helpers.dist_inputs import (
+            permissive_buffer, permissive_dist, permissive_dist_np,
+        )
 
         n = len(obs_list)
         # Mirrors the real env's idle masking: rows with no candidate (cand)
@@ -200,18 +205,16 @@ class TestUpdateWithoutObs:
                 masks[i, ACT_NET_SELECT] = True
         with torch.no_grad():
             acts, old_lp, _ = policy.act_and_value(
-                obs_list, action_masks=torch.from_numpy(masks),
+                obs_list,
+                dist=dataclasses.replace(
+                    permissive_dist(policy, obs_list), action=torch.from_numpy(masks),
+                ),
                 deterministic=True,
             )
-        rng = np.random.default_rng(0)
-        return {
-            "obs_list": obs_list,
-            "actions": acts.cpu().numpy(),
-            "old_log_probs": old_lp.cpu().numpy().astype(np.float32),
-            "action_masks": masks,
-            "advantages": rng.standard_normal(n).astype(np.float32),
-            "returns": rng.standard_normal(n).astype(np.float32),
-        }
+        return permissive_buffer(
+            obs_list, acts, old_lp,
+            dist=dataclasses.replace(permissive_dist_np(n), action=masks),
+        )
 
     def _run(self, strip_obs: bool):
         from methods.rl_agent.algorithms._common import policy_update_loop
@@ -220,6 +223,8 @@ class TestUpdateWithoutObs:
 
         torch.manual_seed(0)
         policy = KiCadRLModel(
+            disable_slot_emb=False,
+            policy_net_select=False,
             d_model=32, n_heads=2, n_layers=1, d_ff=64,
             max_seq_len=2000, n_freq=4, use_critic=True,
         )

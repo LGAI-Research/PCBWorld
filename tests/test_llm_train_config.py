@@ -2,7 +2,7 @@
 
 LLMTrainConfig extracts the pcbworld-specific slice of the verl Hydra config
 (the ``env.pcbworld.*`` block + the ``env.*`` knobs pcbworld reads). These
-tests pin from_verl_config / to_env_kwargs behaviour. Imports are
+tests pin from_verl_config behaviour and the EnvConfig it carries. Imports are
 function-local (the repo's eval/* import at collection time can tip a
 native double-init segfault).
 """
@@ -10,15 +10,17 @@ from __future__ import annotations
 
 
 def test_defaults_match_yaml():
-    """LLMTrainConfig() defaults = configs/pcbworld.yaml (llm_train:)."""
-    from configs.loader.schema import LLMTrainConfig
+    """LLMTrainConfig() defaults = configs/llm.yaml (llm_train:)."""
+    from configs.loader.schema import EnvConfig, LLMTrainConfig
 
     d = LLMTrainConfig()
-    assert (d.max_steps, d.masking_rule, d.reward_rule, d.state_format) == (
-        200, "strict", "default", "sexpr")
-    assert (d.corner_mode, d.via_penalty, d.reward_noise_std, d.emit_drc_tokens) == (
-        0, None, 0.0, True)
-    assert (d.prompt_version, d.history_length) == ("v1", 0)
+    assert (d.env.max_steps, d.env.masking_rule, d.env.reward_rule, d.state_format) == (
+        200, "pcbworld_masking", "default", "sexpr")
+    # every other env field is the shared env: default (RL's)
+    rl = EnvConfig().to_env_kwargs()
+    assert {k: v for k, v in d.env.to_env_kwargs().items() if rl[k] != v} == {
+        "max_steps": 200, "reward_rule": "default"}
+    assert (d.prompt_version, d.history_length) == ("latest", 0)
     assert (d.boards_order, d.boards_difficulty, d.boards_split) == (
         "single", "easy", "train")
     assert (d.val_boards_order, d.val_boards_split) == ("single", None)
@@ -33,7 +35,7 @@ def test_defaults_match_yaml():
 
     rl_eval = RLEvalConfig()
     assert d.eval_reward_config == rl_eval.reward_config
-    assert d.eval_check_angle == rl_eval.check_angle
+    assert d.eval_check_angle is None   # the env corner_mode (the manager resolves it)
 
 
 def test_best_metric_key_shared_canonical():
@@ -49,20 +51,26 @@ def test_best_metric_key_shared_canonical():
     assert e.best_metric_mode == "max"
 
 
-def test_to_env_kwargs_surface():
-    """to_env_kwargs is exactly the PCBWorld keyword surface (8 keys)."""
+def test_env_pcbworld_rejects_unknown_keys():
+    """A typo or a key the schema does not know raises instead of being ignored."""
+    import pytest
+
     from configs.loader.schema import LLMTrainConfig
 
-    kw = LLMTrainConfig().to_env_kwargs()
-    assert set(kw) == {
-        "max_steps", "masking_rule", "reward_rule", "state_format",
-        "corner_mode", "via_penalty", "reward_noise_std", "emit_drc_tokens",
-    }
-    # board scheduling / prompt / scoring knobs do NOT leak into env_kwargs.
-    for leaked in ("boards_order", "boards_json", "prompt_version",
-                   "score_train_episodes", "guided_decoding_grammar",
-                   "val_boards_order", "seed", "board_path", "history_length"):
-        assert leaked not in kw
+    with pytest.raises(ValueError, match="unknown keys \\['masking_rul'\\]"):
+        LLMTrainConfig.from_verl_config({"env": {"pcbworld": {"masking_rul": 1}}})
+
+
+def test_env_pcbworld_rejects_the_env_block_keys():
+    """max_steps / history_length / seed are read from env.* only — under env.pcbworld
+    they would be ignored (seed, history_length) or shadowed, so they raise."""
+    import pytest
+
+    from configs.loader.schema import LLMTrainConfig
+
+    for key in ("max_steps", "history_length", "seed"):
+        with pytest.raises(ValueError, match=f"\\['{key}'\\] not allowed .* env\\.{key}"):
+            LLMTrainConfig.from_verl_config({"env": {"pcbworld": {key: 1}}})
 
 
 def test_from_verl_config_reads_env_and_pcbworld():
@@ -74,7 +82,7 @@ def test_from_verl_config_reads_env_and_pcbworld():
         "max_steps": 30, "seed": 7, "history_length": 2,
         "pcbworld": {
             "board_path": "/b.kicad_pcb", "reward_rule": "grpo_final",
-            "masking_rule": "relaxed", "state_format": "xml", "corner_mode": 2,
+            "masking_rule": "relaxed", "state_format": "xml", "corner_mode": 90,
             "via_penalty": 0.5, "reward_noise_std": 0.1, "emit_drc_tokens": False,
             "prompt_version": "v4", "boards_order": "round_robin",
             "boards_json": "/data/split.json", "boards_difficulty": "hard",
@@ -86,22 +94,18 @@ def test_from_verl_config_reads_env_and_pcbworld():
     }}
     lt = LLMTrainConfig.from_verl_config(cfg)
     assert (lt.eval_reward_config, lt.eval_check_angle) == ("drc_sparse", 90)
-    assert (lt.max_steps, lt.seed, lt.history_length) == (30, 7, 2)
-    assert (lt.board_path, lt.reward_rule, lt.masking_rule) == (
+    assert (lt.env.max_steps, lt.seed, lt.history_length) == (30, 7, 2)
+    assert (lt.board_path, lt.env.reward_rule, lt.env.masking_rule) == (
         "/b.kicad_pcb", "grpo_final", "relaxed")
-    assert (lt.state_format, lt.corner_mode, lt.via_penalty) == ("xml", 2, 0.5)
-    assert (lt.emit_drc_tokens, lt.prompt_version) == (False, "v4")
+    assert (lt.state_format, lt.env.corner_mode, lt.env.reward.via_penalty) == ("xml", 90, 0.5)
+    assert (lt.env.emit_drc_tokens, lt.prompt_version) == (False, "v4")
     assert (lt.boards_order, lt.boards_difficulty, lt.boards_split) == (
         "round_robin", "hard", "train_small")
     assert (lt.val_boards_order, lt.resolved_val_boards_split) == (
         "per_env_epoch", "test")
     assert (lt.score_train_episodes, lt.guided_decoding_grammar) == (
         True, "pcbworld_v1")
-    assert lt.to_env_kwargs() == {
-        "max_steps": 30, "masking_rule": "relaxed", "reward_rule": "grpo_final",
-        "state_format": "xml", "corner_mode": 2, "via_penalty": 0.5,
-        "reward_noise_std": 0.1, "emit_drc_tokens": False,
-    }
+    assert lt.env.reward_noise_std == 0.1
 
 
 def test_from_verl_config_defaults_on_missing():
@@ -109,8 +113,7 @@ def test_from_verl_config_defaults_on_missing():
     val_boards_split inherits the (overridden) boards_split."""
     from configs.loader.schema import LLMTrainConfig
 
-    assert LLMTrainConfig.from_verl_config({}).to_env_kwargs() == (
-        LLMTrainConfig().to_env_kwargs())
+    assert LLMTrainConfig.from_verl_config({}) == LLMTrainConfig()
     # boards_split override with val_boards_split unset -> resolved inherits it.
     lt = LLMTrainConfig.from_verl_config(
         {"env": {"pcbworld": {"boards_split": "test"}}})

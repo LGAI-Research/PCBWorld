@@ -305,7 +305,13 @@ class TestNetIdLifecycle:
         engine.fix_route.return_value = True
         engine.finish.return_value = True
         engine.set_routing_mode.return_value = None
-        engine.toggle_via.return_value = None
+        # make_via path: the pad pre-check lets the target through, the action
+        # turns via placement on (set_via_placement(True)) and must find it
+        # off again afterwards (the route committed, so is_routing() is False
+        # and the engine has already dropped the mode).
+        engine.pad_block_reason.return_value = None
+        engine.set_via_placement.return_value = None
+        engine.is_placing_via.return_value = False
         engine.build_connectivity.return_value = None
         # make_via confirms the via landed by the via_count delta: 0 -> 1.
         engine.get_via_count.side_effect = [0, 1] * 16
@@ -350,9 +356,12 @@ class TestNetIdLifecycle:
         dispatcher.dispatch(mock_engine, ACT_START_ROUTE, {
             "x_mm": 10.0, "y_mm": 20.0, "layer": 1,
         })
-        dispatcher.dispatch(mock_engine, ACT_MAKE_VIA, {
+        result = dispatcher.dispatch(mock_engine, ACT_MAKE_VIA, {
             "x_mm": 30.0, "y_mm": 40.0, "routing_mode": 2,
         })
+        # The via path really ran (not the pad pre-check early return).
+        assert result.success
+        mock_engine.set_via_placement.assert_called_once_with(True)
         assert dispatcher.current_net_id == 5
 
     def test_finish_preserves_net_id(self, dispatcher, mock_engine):

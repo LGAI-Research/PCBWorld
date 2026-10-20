@@ -9,7 +9,6 @@ runs or when the machine is offline.
 
 from __future__ import annotations
 
-import argparse
 import csv
 import os
 import re
@@ -577,7 +576,8 @@ def _plot_combined(summary: list[dict[str, object]], output_stem: Path) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
+    from configs.loader.cli import StrictArgumentParser
+    parser = StrictArgumentParser()
     parser.add_argument("--overleaf-root", type=Path, default=Path(os.environ.get("OVERLEAF_ROOT", "var/results/kdd/paper_outputs")))
     parser.add_argument("--target-step", type=int, default=300)
     # No baked-in entity: it identifies the W&B account that owns the runs.

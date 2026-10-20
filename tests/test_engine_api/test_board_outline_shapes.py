@@ -22,6 +22,7 @@ import pytest
 
 krl = pytest.importorskip("kicad_rl_router")
 
+from configs.loader.schema import EnvConfig
 from tests.test_engine_api.conftest import FIXTURES_DIR
 
 BOARD = FIXTURES_DIR / "crossover_board.kicad_pcb"
@@ -157,7 +158,7 @@ class TestOutlineObsModes:
     def _reset(self, **kw):
         from pcb_world.core.env import PCBWorld
 
-        env = PCBWorld(board_path=str(BOARD), **kw)
+        env = PCBWorld(str(BOARD), EnvConfig.with_overrides(**kw))
         try:
             obs, _ = env.reset()
         finally:
@@ -191,22 +192,22 @@ class TestOutlineObsModes:
         em = obs_idx["board_static"]["edge_mid"]
         assert (em >= 0).sum() == 4
 
-        tok = BatchedStateTokenizer()
+        tok = BatchedStateTokenizer(disable_slot_emb=False)
         wd = tok._walk_obs([obs_json])
         wi = tok._walk_obs([obs_idx])
         for f, (a, b) in enumerate(zip(wd["edge"], wi["edge"])):
             assert a.dtype == b.dtype and a.shape == b.shape, f
             np.testing.assert_array_equal(a, b, err_msg=f"edge field {f}")
 
-    def test_default_mode_is_tess(self):
-        obs = self._reset()
+    def test_tess_mode_line_count(self):
+        obs = self._reset(outline_obs="tess")
         assert len(obs["board_static"]["boardlines"]) == 60
 
     def test_invalid_mode_raises(self):
         from pcb_world.core.env import PCBWorld
 
         with pytest.raises(ValueError, match="outline_obs"):
-            PCBWorld(board_path=str(BOARD), outline_obs="bogus")
+            PCBWorld(str(BOARD), EnvConfig.with_overrides(outline_obs="bogus"))
 
 
 class TestBoardBBoxIsOutlineOnly:

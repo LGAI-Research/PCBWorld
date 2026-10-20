@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests.helpers.engine import open_engine
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "build_rl" / "pcbnew" / "python" / "rl"))
@@ -172,10 +173,8 @@ class TestCopperShapeRatsnestCoverage:
     """
 
     def test_isolated_copper_circle_gets_ratsnest_edge(self) -> None:
-        from pcb_world.engine.kicad_engine import KiCadEngine
-
         board = PROJECT_ROOT / "tests" / "fixtures" / "zero_anchor_board.kicad_pcb"
-        eng = KiCadEngine(board_path=str(board))
+        eng = open_engine(board_path=str(board))
         try:
             eng.build_connectivity()
             assert eng.get_unrouted_count() == 1
@@ -237,9 +236,10 @@ class TestRatsnestPadGroupInvariant:
         pro = corpus / board / "processed_v9_guide_v3.kicad_pro"
         from collections import Counter
 
-        from pcb_world.engine.kicad_engine import KiCadEngine
-
-        eng = KiCadEngine(board_path=str(path), project_path=str(pro))
+        eng = open_engine(
+            board_path=str(path),
+            project_path=str(pro),
+        )
         try:
             eng.build_connectivity()
             rats = Counter(int(e.net_code) for e in eng.get_ratsnest())

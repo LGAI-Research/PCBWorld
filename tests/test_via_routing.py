@@ -7,15 +7,15 @@ Verifies that make_via(x, y) correctly:
 """
 
 import pytest
-from pcb_world.engine.kicad_engine import KiCadEngine
 from pcb_world.core.action import make_via
+from tests.helpers.engine import open_engine
 
 BOARD = "tests/fixtures/simple_routing_board.kicad_pcb"
 
 
 @pytest.fixture
 def engine():
-    e = KiCadEngine(BOARD)
+    e = open_engine(BOARD)
     e.build_connectivity()
     yield e
     # Ensure any active routing/dragging session is cancelled before

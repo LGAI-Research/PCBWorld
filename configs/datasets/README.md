@@ -10,7 +10,7 @@ split membership are deliberately not copied here** (drift prevention) — read 
 
 ```
 configs/datasets/
-  d3.json        ← the ONE shipped dataset: the D3 real boards (679 PCBench boards under $PCBWORLD_DATA_ROOT/pcbench/exacad_sorted)
+  d3.json        ← the ONE shipped dataset: the D3 real boards (677 of the 679 PCBench boards under $PCBWORLD_DATA_ROOT/pcbench/exacad_sorted)
   local/         ← personal / not promoted (gitignored; personal dataset_dir OK)
 
 experiments/kdd/configs/datasets/     ← paper-only splits, kept with the paper recipes
@@ -26,7 +26,7 @@ the setup scripts build the board set and its split json in one pass, so a missi
 
 | id | split json | difficulty | what |
 |----|-----------|-----------|------|
-| **d3a** | `d3.json` | `easy` | real boards, small (PCBench). The 679 paper boards; `tools/quickstart/prepare_pcbench.sh` rebuilds them from the public PCBench clone (the chain in [`tools/datagen/pcbench_prep/`](../../tools/datagen/pcbench_prep/README.md)) into `pcbench/exacad_sorted` |
+| **d3a** | `d3.json` | `easy` | real boards, small (PCBench) — **99 boards**, the same list in `train` and `test`. The corpus is the 679 paper boards; `tools/quickstart/prepare_pcbench.sh` rebuilds them from the public PCBench clone (the chain in [`tools/datagen/pcbench_prep/`](../../tools/datagen/pcbench_prep/README.md)) into `pcbench/exacad_sorted` |
 | **d3b** | `d3.json` | `medium` | real boards, medium (same set) |
 | **d3c** | `d3.json` | `hard` | real boards, large (same set) |
 | **d2a** | [`experiments/kdd/configs/datasets/d2a.json`](../../experiments/kdd/configs/datasets/d2a.json) | `easy` | synth 2-layer v2 (D2-A in the paper) |
@@ -41,14 +41,22 @@ the setup scripts build the board set and its split json in one pass, so a missi
 
 - **Rebuilt vs paper files.** A rebuild by the pcbench_prep chain reproduces the paper's 679 boards, order, splits and `.kicad_pro` rules; the
   guide boards differ only in the per-net track width chosen on 40 boards (the paper's set is one sample of a then non-deterministic `kicad-cli`
-  DRC — details: pcbench_prep README, "Expected result"). One split file serves both: what sits in `pcbench/exacad_sorted` is your D3.
+  DRC — details: pcbench_prep README, "Expected result"). One split file serves both: `pcbench/exacad_sorted` holds the 679 corpus
+  folders and `d3.json` selects D3 (677 boards) from them — the two excluded boards stay on disk, so the folder numbering is unchanged.
 - **`d3.json`'s `train` key mirrors the full list — deliberately.** It is the canonical full board list, consumed test-only; the `train` key
   keeps the full list as provision for a possible future D3-train split, so `test` ⊂ `train` in every difficulty. Not leakage — the
   benchmark's models never train on it.
-- ⚠️ **`0170_hackaday_esp-14…__autosave` is permanently excluded from the d3 pool**: its only netclass has clearance 0.0 and BDS min 0.0 →
-  an autosave leftover with an effective clearance of 0. DRC cannot catch zero-gap routing there, so it does not qualify as a benchmark
-  board (the only such case among the 679 exacad boards). `d3.json` therefore carries **678** boards; the excluded board
-  sits in the medium tier, so the medium bucket holds 286 boards — one fewer than the 287 the `d3_dataset` builder classifies from the raw CSV.
+- ⚠️ **Two corpus boards are permanently excluded from the d3 pool** (`EXCLUDED_BOARDS` in [the builder](../../experiments/kdd/d3_dataset/build.py)), so `d3.json` carries **677** of
+  the 679 exacad boards:
+  - `0096_karabas-nano_wifi_revA` (easy tier) — its 73 declared nets exceed the 64-slot cap of the paper's RL checkpoints, so it
+    is left out of `easy.test` ([experiments/kdd/README.md](../../experiments/kdd/README.md)). **D3-A is 99 boards**, the same list
+    in `easy.train` and `easy.test`.
+  - `0170_hackaday_esp-14…__autosave` (medium tier) — its only netclass has clearance 0.0 and BDS min 0.0 → an autosave leftover with an
+    effective clearance of 0. DRC cannot catch zero-gap routing there, so it does not qualify as a benchmark board (the only such case
+    among the 679 exacad boards). The medium bucket holds 286 boards.
+  - A tool that walks the corpus directory instead of `d3.json` sees both boards: the rule-based runner therefore requires
+    `--difficulty` for `--dataset pcbench`, and walks the corpus only on an explicit `--all-corpus`
+    ([methods/baselines/rule_based/README.md](../../methods/baselines/rule_based/README.md)).
 - **Naming convention**: tasks and datasets all use a lowercase `d`, **filename = logical id**; personal / not-yet-promoted files go in `local/`.
 - **Legacy on-disk alias**: cell paths under `var/results/kdd/` keep the legacy `t3/{t3a,t3b,t3c}` directories (the loader applies a d→t alias).
 - **External data root**: dataset locations live outside the repo under `$PCBWORLD_DATA_ROOT` (layout: [configs/paths.yaml](../paths.yaml)).

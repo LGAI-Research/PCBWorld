@@ -12,7 +12,7 @@ at a time — every engine is closed before the next is created.
 
 import pytest
 
-from pcb_world.engine.kicad_engine import KiCadEngine
+from tests.helpers.engine import open_engine
 
 BOARD = "tests/fixtures/simple_routing_board.kicad_pcb"
 
@@ -39,7 +39,7 @@ def _route_track(e, sx, sy, tx, ty, layer=1):
 
 @pytest.fixture
 def engine():
-    e = KiCadEngine(BOARD)
+    e = open_engine(BOARD)
     e.build_connectivity()
     yield e
     if e.is_routing():
@@ -143,7 +143,7 @@ def test_replay_vs_checkpoint_oracle():
 
     Two engines run sequentially (only one RLRouter alive at a time).
     """
-    er = KiCadEngine(BOARD)
+    er = open_engine(BOARD)
     er.build_connectivity()
     _route_track(er, 25.0, 5.0, 25.0, 9.0)
     _route_track(er, 25.0, 9.0, 20.0, 9.0)
@@ -152,7 +152,7 @@ def test_replay_vs_checkpoint_oracle():
         er.cancel_route()
     er.close()
 
-    ec = KiCadEngine(BOARD)
+    ec = open_engine(BOARD)
     ec.build_connectivity()
     _route_track(ec, 25.0, 5.0, 25.0, 9.0)
     h = ec.checkpoint()

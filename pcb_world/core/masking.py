@@ -4,7 +4,9 @@ Determines valid actions from engine state (has_net, is_routing,
 net_fully_connected) without a separate phase state machine.
 Masking rules are loaded from condition-based YAML configs.
 
-YAML format example (configs/masking/pcbworld_masking.yaml):
+YAML format example (configs/masking/pcbworld_masking.yaml; validated by
+:class:`MaskingRuleSchema` — every listed action states ``when:``, ``{}`` = always
+enabled; unlisted actions are always masked):
     name: strict
     actions:
       net_select:
@@ -20,8 +22,11 @@ Usage:
 
 from __future__ import annotations
 
+import typing
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Protocol
 
 import numpy as np
@@ -73,40 +78,65 @@ class MaskContext:
 class MaskingRule(Protocol):
     """Interface for masking rules."""
 
+    #: Every action this rule can ever grant (an LLM prompt must describe exactly these).
+    actions: frozenset[str]
+
     def build_mask(self, ctx: MaskContext) -> np.ndarray:
         """Return a boolean array of shape (NUM_ACTIONS,) indicating valid actions."""
         ...
 
 
 # ---------------------------------------------------------------------------
-# YAML condition-based masking rule
+# Masking rule schema + YAML condition-based masking rule
 # ---------------------------------------------------------------------------
 
+@dataclass(frozen=True)
+class MaskingRuleSchema:
+    """Schema of one masking rule YAML: action name → its ``when`` conditions
+    (:class:`MaskContext` field → required value). Build it with :meth:`from_dict`."""
+
+    name: str
+    actions: Mapping[str, Mapping[str, Any]]
+
+    @classmethod
+    def from_dict(cls, raw: Any, source: str | Path) -> "MaskingRuleSchema":
+        """Validate a parsed rule YAML; an unknown, missing or mistyped key — an unknown
+        action, a key other than ``when``, or a ``when`` field that is not a
+        :class:`MaskContext` field — raises ``ValueError`` naming *source*."""
+        from configs.loader import check_mapping
+
+        where = f"masking rule {source}"
+        top = check_mapping(raw, _SCHEMA_TYPES, where=where)
+        check_mapping(top["actions"], dict.fromkeys(ACTION_NAMES, dict), required=(), where=f"{where} actions")
+        for action, action_def in top["actions"].items():
+            check_mapping(action_def, {"when": dict}, where=f"{where} actions.{action}")
+            check_mapping(action_def["when"], _MASK_CONTEXT_TYPES, required=(), where=f"{where} actions.{action}.when")
+        return cls(name=top["name"], actions=MappingProxyType(
+            {action: MappingProxyType(dict(d["when"])) for action, d in top["actions"].items()}))
+
+
+_SCHEMA_TYPES = typing.get_type_hints(MaskingRuleSchema)
+_MASK_CONTEXT_TYPES = typing.get_type_hints(MaskContext)
+
+
 class YamlConditionMask:
-    """Masking rule loaded from a condition-based YAML config.
+    """Masking rule built from a validated :class:`MaskingRuleSchema`. An action is
+    enabled when ALL of its ``when`` conditions match the context."""
 
-    Each action has a ``when`` dict mapping MaskContext field names
-    to required values. An action is enabled when ALL conditions match.
-    """
-
-    def __init__(self, config: dict[str, Any]) -> None:
-        self.name: str = config.get("name", "yaml_custom")
+    def __init__(self, rule: MaskingRuleSchema) -> None:
+        self.name: str = rule.name
+        self.actions: frozenset[str] = frozenset(rule.actions)
         # _action_conditions: [(action_index, {field: required_value})]
-        self._action_conditions: list[tuple[int, dict[str, Any]]] = []
-        self._parse_actions(config.get("actions", {}))
-
-    def _parse_actions(self, actions_cfg: dict[str, Any]) -> None:
-        for action_name, action_def in actions_cfg.items():
-            idx = _ACTION_NAME_TO_IDX[action_name]
-            conditions = action_def.get("when", {}) if isinstance(action_def, dict) else {}
-            self._action_conditions.append((idx, conditions))
+        self._action_conditions: list[tuple[int, dict[str, Any]]] = [
+            (_ACTION_NAME_TO_IDX[action], dict(when)) for action, when in rule.actions.items()
+        ]
 
     def build_mask(self, ctx: MaskContext) -> np.ndarray:
         """Return a boolean action mask based on condition matching."""
         mask = np.zeros(NUM_ACTIONS, dtype=bool)
         for action_idx, conditions in self._action_conditions:
             if all(
-                getattr(ctx, field, None) == value
+                getattr(ctx, field) == value
                 for field, value in conditions.items()
             ):
                 mask[action_idx] = True
@@ -155,9 +185,19 @@ def load_masking_rule(path: str | Path) -> YamlConditionMask:
     Returns:
         Instantiated YamlConditionMask.
     """
-    from configs.loader import load_config
+    from configs.loader import load_rule_file
 
-    return YamlConditionMask(load_config(path))
+    return YamlConditionMask(MaskingRuleSchema.from_dict(load_rule_file(path, "masking"), path))
+
+
+def masking_rule_path(name: str) -> Path | None:
+    """The YAML file the masking rule *name* resolves to (an explicit path, else ``{name}.yaml``
+    under the search dirs after the name mapping); None when no file has that name (a rule
+    registered in-process only)."""
+    if name.endswith((".yaml", ".yml")):
+        return Path(name)
+    name = _NAME_COMPAT.get(name, name)
+    return next((d / f"{name}.yaml" for d in _MASKING_SEARCH_DIRS if (d / f"{name}.yaml").exists()), None)
 
 
 def get_masking_rule(name: str = "strict") -> MaskingRule:
@@ -183,12 +223,11 @@ def get_masking_rule(name: str = "strict") -> MaskingRule:
         return _MASKING_RULE_CACHE[name]
 
     # 4. Auto-discover {name}.yaml from the search dirs
-    for d in _MASKING_SEARCH_DIRS:
-        yaml_path = d / f"{name}.yaml"
-        if yaml_path.exists():
-            rule = load_masking_rule(yaml_path)
-            _MASKING_RULE_CACHE[name] = rule
-            return rule
+    yaml_path = masking_rule_path(name)
+    if yaml_path is not None:
+        rule = load_masking_rule(yaml_path)
+        _MASKING_RULE_CACHE[name] = rule
+        return rule
 
     raise KeyError(
         f"Unknown masking rule '{name}'. No cached rule and no {name}.yaml under "

@@ -1,7 +1,7 @@
 """Via and layer control API tests (Step 2.5).
 
 Tests:
-- toggle_via / is_placing_via
+- set_via_placement / is_placing_via
 - switch_layer / get_current_layer
 - set_via_diameter / set_via_drill
 """
@@ -32,26 +32,33 @@ def board_path() -> str:
     return str(BOARD_PATH)
 
 
-class TestToggleVia:
-    def test_toggle_via_changes_state(self, board_path: str) -> None:
+class TestSetViaPlacement:
+    def test_set_via_placement_changes_state(self, board_path: str) -> None:
         krl = _import_krl()
         r = krl.RLRouter(board_path)
         r.start_route(0.0, 0.0, 0)
 
         assert r.is_placing_via() is False
-        r.toggle_via()
+        r.set_via_placement(True)
         assert r.is_placing_via() is True
-        r.toggle_via()
+        r.set_via_placement(False)
         assert r.is_placing_via() is False
 
         r.cancel_route()
 
-    def test_toggle_via_before_routing(self, board_path: str) -> None:
-        """toggle_via can be called even when not routing (no crash)."""
+    def test_set_via_placement_on_before_routing_raises(self, board_path: str) -> None:
+        """Turning via placement on needs a route in progress."""
         krl = _import_krl()
         r = krl.RLRouter(board_path)
-        r.toggle_via()  # should not raise
-        # PNS via state only meaningful during active routing
+        with pytest.raises(RuntimeError, match="while a route is in progress"):
+            r.set_via_placement(True)
+        assert r.is_placing_via() is False
+
+    def test_set_via_placement_off_before_routing_is_noop(self, board_path: str) -> None:
+        """Asking for the state it already has (off) is a no-op, even when idle."""
+        krl = _import_krl()
+        r = krl.RLRouter(board_path)
+        r.set_via_placement(False)  # should not raise
         assert r.is_placing_via() is False
 
 
@@ -84,15 +91,24 @@ class TestSwitchLayer:
 
 
 class TestViaDimensions:
-    def test_set_via_diameter(self, board_path: str) -> None:
-        krl = _import_krl()
-        r = krl.RLRouter(board_path)
-        r.set_via_diameter(0.6)
+    """The via size setters override an open session only."""
 
-    def test_set_via_drill(self, board_path: str) -> None:
+    @pytest.mark.parametrize("setter,value,idx", [("set_via_diameter", 0.6, 1), ("set_via_drill", 0.3, 2)])
+    def test_set_in_session(self, board_path: str, setter: str, value: float, idx: int) -> None:
         krl = _import_krl()
         r = krl.RLRouter(board_path)
-        r.set_via_drill(0.3)
+        r.start_route(0.0, 0.0, 0)
+        assert r.is_routing()
+        getattr(r, setter)(value)
+        assert r.get_route_sizes()[idx] == pytest.approx(value)
+        r.cancel_route()
+
+    @pytest.mark.parametrize("setter", ["set_via_diameter", "set_via_drill"])
+    def test_set_while_idle_raises(self, board_path: str, setter: str) -> None:
+        krl = _import_krl()
+        r = krl.RLRouter(board_path)
+        with pytest.raises(RuntimeError, match="while a route is in progress"):
+            getattr(r, setter)(0.6)
 
 
 if __name__ == "__main__":

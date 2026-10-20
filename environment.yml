@@ -1,5 +1,5 @@
 # One-shot conda environment for PCBWorld — single env for training, eval AND the
-# rule-based baselines (FreeRouting/KRT/OrthoRoute). Linux x86_64 / CUDA 12 primary.
+# rule-based baselines (FreeRouting/KRT; OrthoRoute for the KDD record). Linux x86_64 / CUDA 12 primary.
 #
 #   conda env create -f environment.yml        # or: bash tools/setup/setup_all.sh
 #

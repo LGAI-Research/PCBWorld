@@ -23,6 +23,7 @@ from typing import Any
 from configs.loader.schema import DEFAULTS
 
 from pcb_world import diag
+from pcb_world.vec import get_mp_context
 from pcb_world.engine.router_client import EngineServerCrashed
 
 
@@ -164,7 +165,7 @@ class SubprocEvalPool:
         self._n_workers = n_workers
         self._reward_config = reward_config
         self._check_angle = check_angle
-        self._ctx = mp.get_context(start_method)
+        self._ctx = get_mp_context(start_method)
         self._closed = False
 
         self.remotes: list[mp.connection.Connection] = []

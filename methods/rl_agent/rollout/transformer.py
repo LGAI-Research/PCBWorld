@@ -8,15 +8,20 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import torch
 
 from eval import eval_utils as u
 from methods._shared.board_loader import BoardSpec
-from pcb_world.core.action_schema import ACTION_NAMES, ACT_IDLE
+# Early-stop guards live in methods/_shared/ so the LLM rollout can reuse
+# them without importing this (torch-bearing) RL driver.
+from methods._shared.early_stop import (
+    FinishNoProgressGuard,
+    NoGeometryProgressGuard,
+)
+from pcb_world.core.action_schema import ACTION_NAMES, ACT_IDLE, ACT_NET_END
 from methods.rl_agent.rollout.primitive import iter_rollout
 
 REPO_ROOT = Path(__file__).resolve().parents[3]   # rollout -> rl_agent -> methods -> repo root
@@ -33,10 +38,13 @@ TRACE_ACTION_NAMES = ACTION_NAMES[:ACT_IDLE]
 def load_policy_from_ckpt(
     ckpt_path: Path,
     device: torch.device,
-) -> tuple[Any, dict[str, Any], int]:
-    """Load a policy module from a .pt checkpoint."""
+    *,
+    strict: bool,
+) -> tuple[Any, Mapping[str, Any], int]:
+    """Load a policy module + its resolved checkpoint config from a .pt file
+    (``strict`` = ``--strict-ckpt``; see ``configs.loader.ckpt``)."""
     from methods.rl_agent.models.loader import _load_policy
-    return _load_policy(ckpt_path, device)
+    return _load_policy(ckpt_path, device, strict=strict)
 
 
 def max_net_slots_for_policy(policy: Any) -> int | None:
@@ -46,24 +54,30 @@ def max_net_slots_for_policy(policy: Any) -> int | None:
     return None if n_max_slots is None else int(n_max_slots)
 
 
-def apply_n_max_slots_override(policy: Any, new_value: int | None) -> None:
-    """Lift the checkpoint's slot cap for inference."""
+def apply_n_max_slots_override(policy: Any, new_value: int | None, *, explicit: bool) -> int | None:
+    """Lift the checkpoint's slot cap for inference; returns the override in effect (None =
+    the checkpoint's cap). Only a checkpoint without the input-side slot embedding
+    (``disable_slot_emb``, no ``slot_perm``) can take it: for another, an ``explicit``
+    override (given on the command line) raises, the default one is skipped (logged)."""
     if new_value is None:
-        return
+        return None
     vocab = getattr(getattr(policy, "tokenizer", None), "vocab", None)
     if vocab is None or not hasattr(vocab, "n_max_slots"):
         raise RuntimeError("policy.tokenizer.vocab.n_max_slots not found")
-    if not getattr(vocab, "disable_slot_emb", False):
-        raise RuntimeError(
-            "override_n_max_slots requires checkpoint trained with "
-            "disable_slot_emb=True (otherwise slot_emb_table would be "
-            "indexed out of range)"
-        )
-    if getattr(vocab, "slot_perm", False):
-        raise RuntimeError("override_n_max_slots requires slot_perm=False")
+    reason = ("it was trained with the slot embedding (disable_slot_emb=False), whose "
+              "slot_emb_table would be indexed out of range"
+              if not getattr(vocab, "disable_slot_emb", False) else
+              "it was trained with slot_perm" if getattr(vocab, "slot_perm", False) else None)
+    if reason is not None:
+        if explicit:
+            raise RuntimeError(f"--override-n-max-slots {new_value}: the checkpoint cannot take it — {reason}")
+        print(f"[eval] n_max_slots: default override {new_value} skipped — {reason}; "
+              f"keeping the checkpoint's {int(vocab.n_max_slots)}", flush=True)
+        return None
     prev = int(vocab.n_max_slots)
     vocab.n_max_slots = int(new_value)
     print(f"[eval] n_max_slots: {prev} -> {int(new_value)}", flush=True)
+    return int(new_value)
 
 
 def _board_net_count_from_obs(obs: dict[str, Any]) -> int:
@@ -72,88 +86,6 @@ def _board_net_count_from_obs(obs: dict[str, Any]) -> int:
         return len(board_static["net_code"])
     nets = board_static.get("nets", {})
     return len(nets) if isinstance(nets, dict) else 0
-
-
-# ============================================================================
-# Early-stop guard
-# ============================================================================
-
-
-def _float_or_nan(value: Any) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return math.nan
-
-
-def _geometry_signature(info: dict[str, Any]) -> tuple[float, float, float, float] | None:
-    vals = (
-        _float_or_nan(info.get("track_count")),
-        _float_or_nan(info.get("via_count")),
-        _float_or_nan(info.get("wirelength")),
-        _float_or_nan(info.get("ratsnest_reduction")),
-    )
-    if all(math.isnan(v) for v in vals):
-        return None
-    return vals
-
-
-def _geometry_changed(
-    prev: tuple[float, float, float, float] | None,
-    cur: tuple[float, float, float, float] | None,
-) -> bool:
-    if prev is None or cur is None:
-        return False
-    for a, b in zip(prev, cur):
-        if math.isnan(a) or math.isnan(b):
-            continue
-        if abs(a - b) > 1e-9:
-            return True
-    return False
-
-
-@dataclass
-class FinishNoProgressGuard:
-    """Track consecutive ``finish`` attempts that failed without geometry change."""
-    threshold: int = 0
-    count: int = 0
-    last_geometry: tuple[float, float, float, float] | None = None
-
-    def update(
-        self, *, action_name: str, action_class: str, info: dict[str, Any],
-    ) -> bool:
-        cur = _geometry_signature(info)
-        if _geometry_changed(self.last_geometry, cur):
-            self.count = 0
-        if cur is not None:
-            self.last_geometry = cur
-        if action_name == "finish" and action_class in {
-            "valid_dispatch_fail", "valid_empty",
-        }:
-            self.count += 1
-        return self.threshold > 0 and self.count >= self.threshold
-
-
-@dataclass
-class NoGeometryProgressGuard:
-    """Track consecutive steps with no observed geometry metric change."""
-    threshold: int = 0
-    count: int = 0
-    last_geometry: tuple[float, float, float, float] | None = None
-
-    def update(self, *, info: dict[str, Any]) -> bool:
-        cur = _geometry_signature(info)
-        if cur is None:
-            return self.threshold > 0 and self.count >= self.threshold
-        if self.last_geometry is None:
-            self.last_geometry = cur
-            return False
-        if _geometry_changed(self.last_geometry, cur):
-            self.count = 0
-        else:
-            self.count += 1
-        self.last_geometry = cur
-        return self.threshold > 0 and self.count >= self.threshold
 
 
 # ============================================================================
@@ -209,6 +141,7 @@ def _incompatible_row(
     deterministic: bool,
     board_net_count: int,
     max_net_slots: int,
+    initial_potential: float | None,
 ) -> dict[str, Any]:
     return u.assemble_rollout_row(
         identity={
@@ -222,12 +155,36 @@ def _incompatible_row(
         runtime={
             "status": "skipped_incompatible_board",
             "skip_reason": "board_net_count_exceeds_policy_slots",
+            # the reset's Φ₀ prices this failed attempt in the aggregation
+            "initial_potential": initial_potential,
             "error": (
                 f"Board has {board_net_count} nets but policy slot table has "
                 f"only {max_net_slots} slots."
             ),
         },
     )
+
+
+def giveup_event(info: dict[str, Any]) -> list[int] | None:
+    """``[net_id, step, ratsnest_edges_left]`` when this step's ``info`` is a
+    give-up — a successful ``net_end`` on a net that still has ratsnest edges
+    (the env's ``dispatch_info["remaining"]``) — else ``None``. A normal
+    ``net_end`` on a finished net (``remaining == 0``) is not a give-up."""
+    if info.get("action_type") != ACT_NET_END or not info.get("action_success"):
+        return None
+    dispatch = info.get("dispatch_info") or {}
+    left = int(dispatch.get("remaining") or 0)
+    if left <= 0 or dispatch.get("net_id") is None:
+        return None
+    return [int(dispatch["net_id"]), int(info.get("step", 0)), left]
+
+
+def _crash_info_with_phi0(info: dict[str, Any], phi0: Any) -> dict[str, Any]:
+    """A worker death's synthesized terminal info carries no env state: add the
+    slot's reset Φ₀ so the aggregation can price the failed attempt."""
+    if info.get("engine_crash") and "initial_potential" not in info:
+        return {**info, "initial_potential": phi0}
+    return info
 
 
 # ============================================================================
@@ -254,7 +211,12 @@ def _finalize_slot(
     reward_config: str,
     check_angle: int,
     per_board_rollout_time: float,
+    giveups: list[list[int]] | None = None,
 ) -> dict[str, Any]:
+    """One rollout's row. ``giveups`` (the :func:`giveup_event` list of the
+    episode) adds the give-up record (:data:`eval.eval_utils.GIVEUP_FIELDS`),
+    with the end state's unrouted nets read from the slot's env; ``None``
+    leaves those columns blank."""
     crashed = bool(info.get("engine_crash", False))
     artifact_path_str: str | None = None
     out_path: Path | None = None
@@ -299,6 +261,19 @@ def _finalize_slot(
         except Exception as exc:  # noqa: BLE001
             print(f"[eval] WARN: save_pcb failed for slot {slot}: {exc!r}")
 
+    # After the save: a failing diagnostic read must not cost the artifact.
+    giveup_cols: dict[str, Any] = {}
+    if giveups is not None:
+        unrouted: list[int] | None = None
+        if not crashed:
+            try:
+                unrouted = pool.env_method("unrouted_net_ids", indices=[slot])[0]
+            except Exception as exc:  # noqa: BLE001 — diagnostic only; row stays
+                print(f"[eval] WARN: unrouted_net_ids failed for slot {slot} "
+                      f"({board.board_id} r{rollout_idx}): {exc!r} — this rollout "
+                      f"is left out of the giveup_* metrics", flush=True)
+        giveup_cols = u.giveup_columns(giveups, unrouted)
+
     row = u.assemble_rollout_row(
         scored,
         error=scored_error,
@@ -314,6 +289,7 @@ def _finalize_slot(
         check_angle=check_angle,
     )
     row.update(drc_meta)
+    row.update(giveup_cols)
     return row
 
 
@@ -380,6 +356,12 @@ def _run_one_batch(
     obs_by_slot: dict[int, dict[str, Any]] = {
         slot: reset_out[k][0] for k, slot in enumerate(active_slots)
     }
+    # Each slot's bare-board Φ₀ from its reset: the aggregation prices a failed
+    # attempt with it, and a worker death's synthesized step carries no env state.
+    reset_phi0: dict[int, Any] = {
+        slot: (reset_out[k][1] or {}).get("initial_potential")
+        for k, slot in enumerate(active_slots)
+    }
 
     rows: list[dict] = []
 
@@ -395,6 +377,7 @@ def _run_one_batch(
                     board=board, rollout_idx=rollout_idx, seed=seed,
                     deterministic=deterministic,
                     board_net_count=net_count, max_net_slots=max_net_slots,
+                    initial_potential=reset_phi0[slot],
                 ))
             else:
                 compatible.append(slot)
@@ -407,6 +390,7 @@ def _run_one_batch(
     rewards: dict[int, float] = {slot: 0.0 for slot in active_slots}
     lengths: dict[int, int] = {slot: 0 for slot in active_slots}
     last_info: dict[int, dict[str, Any]] = {slot: {} for slot in active_slots}
+    giveups: dict[int, list[list[int]]] = {slot: [] for slot in active_slots}
     finish_guards: dict[int, FinishNoProgressGuard] = (
         {slot: FinishNoProgressGuard(threshold=int(early_stop_finish_no_progress))
          for slot in active_slots}
@@ -433,6 +417,9 @@ def _run_one_batch(
             rewards[slot] += float(batch.rewards[k])
             lengths[slot] += 1
             info = batch.infos[k]
+            event = giveup_event(info)
+            if event is not None:
+                giveups[slot].append(event)
             step_terminated = bool(batch.terminateds[k])
             step_truncated = bool(batch.truncateds[k])
             if (
@@ -480,6 +467,7 @@ def _run_one_batch(
             last_info[slot] = info
             if step_terminated or step_truncated:
                 done[slot] = True
+                info = _crash_info_with_phi0(info, reset_phi0[slot])
                 board = slot_boards[slot]
                 rollout_idx = slot_rollouts[slot]
                 seed = slot_seeds[slot]
@@ -493,6 +481,7 @@ def _run_one_batch(
                     final_drc=final_drc, reward_config=reward_config,
                     check_angle=check_angle,
                     per_board_rollout_time=_routing_time(),
+                    giveups=giveups[slot],
                 ))
 
     for slot in active_slots:
@@ -511,5 +500,6 @@ def _run_one_batch(
             final_drc=final_drc, reward_config=reward_config,
             check_angle=check_angle,
             per_board_rollout_time=_routing_time(),
+            giveups=giveups[slot],
         ))
     return rows

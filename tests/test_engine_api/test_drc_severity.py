@@ -15,19 +15,22 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from configs.loader.schema import EnvConfig  # noqa: E402
 from pcb_world.engine.drc import (  # noqa: E402
     DRC_SEVERITY_ERROR,
     DRC_SEVERITY_MODE_ERRORS_AND_PROMOTED,
     DRC_SEVERITY_MODE_ERRORS_AND_WARNINGS,
     DRC_SEVERITY_MODE_ERRORS_ONLY,
     DRC_SEVERITY_WARNING,
-    DRCE_DANGLING_TRACK,
-    DRCE_DANGLING_VIA,
-    DRCE_NET_CONFLICT,
     DRCUtils,
     classify_violation_type_id,
     violation_matches_severity_mode,
 )
+
+# KiCad PCB_DRC_CODE values (pcbnew/drc/drc_item.h) of the default promoted warnings.
+DRCE_DANGLING_VIA, DRCE_DANGLING_TRACK, DRCE_NET_CONFLICT = 12, 13, 37
+#: The configured promoted codes (configs/env.yaml env.drc_promoted_codes).
+PROMOTED = tuple(EnvConfig().drc_promoted_codes)
 
 
 class _V:
@@ -61,7 +64,7 @@ def test_taxonomy_known_types():
 
 
 def test_error_and_warning_counts():
-    h = DRCUtils()
+    h = DRCUtils(PROMOTED)
     h.update([
         _V("Clearance violation", DRC_SEVERITY_ERROR, nets=["A"]),
         _V("Clearance violation", DRC_SEVERITY_ERROR, nets=["B"]),
@@ -74,7 +77,7 @@ def test_error_and_warning_counts():
 
 
 def test_error_counts_by_net_with_orphan():
-    h = DRCUtils()
+    h = DRCUtils(PROMOTED)
     h.update([
         _V("Clearance violation", DRC_SEVERITY_ERROR, nets=["A", "B"]),
         _V("Clearance violation", DRC_SEVERITY_ERROR, nets=["A"]),
@@ -88,7 +91,7 @@ def test_error_counts_by_net_with_orphan():
 
 
 def test_sort_by_severity_then_distance():
-    h = DRCUtils()
+    h = DRCUtils(PROMOTED)
     h.update([
         _V("Clearance violation", DRC_SEVERITY_WARNING, x=0.0, y=0.0),   # near warning
         _V("Clearance violation", DRC_SEVERITY_ERROR, x=10.0, y=10.0),   # far error
@@ -104,7 +107,7 @@ def test_sort_by_severity_then_distance():
 
 
 def test_sort_cap_k():
-    h = DRCUtils()
+    h = DRCUtils(PROMOTED)
     h.update([_V("Clearance violation", DRC_SEVERITY_ERROR) for _ in range(40)])
     assert len(h.get_sorted(head_xy=(0.0, 0.0), k=32)) == 32
     assert len(h.get_sorted(head_xy=(0.0, 0.0), k=0)) == 0
@@ -132,25 +135,25 @@ def _promoted_sample():
 
 def test_severity_mode_predicate_errors_only():
     vs = _promoted_sample()
-    matched = [v for v in vs if violation_matches_severity_mode(v, DRC_SEVERITY_MODE_ERRORS_ONLY)]
+    matched = [v for v in vs if violation_matches_severity_mode(v, DRC_SEVERITY_MODE_ERRORS_ONLY, PROMOTED)]
     assert [v.net_names[0] for v in matched] == ["A"]
 
 
 def test_severity_mode_predicate_errors_and_promoted():
     vs = _promoted_sample()
-    matched = [v for v in vs if violation_matches_severity_mode(v, DRC_SEVERITY_MODE_ERRORS_AND_PROMOTED)]
+    matched = [v for v in vs if violation_matches_severity_mode(v, DRC_SEVERITY_MODE_ERRORS_AND_PROMOTED, PROMOTED)]
     # Error + three promoted warnings, connection_width dropped.
     assert sorted(v.net_names[0] for v in matched) == ["A", "B", "C", "D"]
 
 
 def test_severity_mode_predicate_errors_and_warnings():
     vs = _promoted_sample()
-    matched = [v for v in vs if violation_matches_severity_mode(v, DRC_SEVERITY_MODE_ERRORS_AND_WARNINGS)]
+    matched = [v for v in vs if violation_matches_severity_mode(v, DRC_SEVERITY_MODE_ERRORS_AND_WARNINGS, PROMOTED)]
     assert len(matched) == 5
 
 
 def test_helper_counts_by_mode():
-    h = DRCUtils()
+    h = DRCUtils(PROMOTED)
     h.update(_promoted_sample())
     assert h.get_count_by_severity_mode(DRC_SEVERITY_MODE_ERRORS_ONLY) == 1
     assert h.get_count_by_severity_mode(DRC_SEVERITY_MODE_ERRORS_AND_PROMOTED) == 4
@@ -160,7 +163,7 @@ def test_helper_counts_by_mode():
 
 
 def test_get_sorted_respects_severity_mode():
-    h = DRCUtils()
+    h = DRCUtils(PROMOTED)
     h.update(_promoted_sample())
     # No filter → every violation appears.
     assert len(h.get_sorted(head_xy=(0.0, 0.0), k=32)) == 5
@@ -177,6 +180,22 @@ def test_get_sorted_respects_severity_mode():
     assert len(promoted) == 4
     # Error still sorts first (severity desc).
     assert promoted[0]["severity"] == DRC_SEVERITY_ERROR
+
+
+def test_promoted_codes_are_the_helpers_own():
+    """A non-default ``drc_promoted_codes`` decides what errors_and_promoted counts:
+    here only the dangling track joins the error (before 2026-10-18 the set was a
+    module constant, so a run could not change it)."""
+    h = DRCUtils((DRCE_DANGLING_TRACK,))
+    h.update(_promoted_sample())
+    assert h.get_counts_by_net_by_severity_mode(DRC_SEVERITY_MODE_ERRORS_AND_PROMOTED) == {"A": 1, "B": 1}
+    assert len(h.get_sorted(severity_mode=DRC_SEVERITY_MODE_ERRORS_AND_PROMOTED)) == 2
+
+
+@pytest.mark.parametrize("codes", [["12"], [12.0], [True]])
+def test_promoted_codes_must_be_ints(codes):
+    with pytest.raises(ValueError, match="drc_promoted_codes"):
+        DRCUtils(codes)
 
 
 if __name__ == "__main__":

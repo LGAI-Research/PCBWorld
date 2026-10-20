@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from configs.loader.schema import EnvConfig
 from pcb_world.core.env import PCBWorld
 from pcb_world.core.action_schema import (
     ACT_MAKE_LINE,
@@ -24,7 +25,7 @@ from pcb_world.core.action_schema import (
     ACT_START_ROUTE,
 )
 from pcb_world.engine.drc import DRCUtils
-from pcb_world.engine.kicad_engine import KiCadEngine
+from tests.helpers.engine import open_engine
 
 BOARD = os.path.join(
     os.path.dirname(__file__), "..", "fixtures", "two_net_multiterm_board.kicad_pcb"
@@ -56,7 +57,7 @@ def _route_net1(env):
 # ---------------------------------------------------------------------------
 
 def test_subset_filters_obs_json():
-    env = PCBWorld(board_path=BOARD, target_nets={NET1})
+    env = PCBWorld(BOARD, EnvConfig(), target_nets={NET1})
     try:
         assert sorted(env.board_info.nets.keys()) == [NET1]
         assert sorted(env._routable_nets) == [NET1]
@@ -70,7 +71,7 @@ def test_subset_filters_obs_json():
 
 
 def test_subset_filters_obs_indexed():
-    env = PCBWorld(board_path=BOARD, obs_format="indexed", target_nets={NET1})
+    env = PCBWorld(BOARD, EnvConfig.with_overrides(obs_format="indexed"), target_nets={NET1})
     try:
         obs, _ = env.reset(seed=0)
         assert [int(c) for c in obs["board_static"]["net_code"]] == [NET1]
@@ -82,12 +83,12 @@ def test_subset_filters_obs_indexed():
 def test_subset_scopes_unrouted_count():
     """Scoped unrouted (target nets only) is strictly below the whole-board count
     on a board with an unrouted non-target net."""
-    env_all = PCBWorld(board_path=BOARD)
+    env_all = PCBWorld(BOARD, EnvConfig())
     env_all.reset(seed=0)
     whole = env_all._engine.get_unrouted_count()
     env_all.close()
 
-    env_sub = PCBWorld(board_path=BOARD, target_nets={NET1})
+    env_sub = PCBWorld(BOARD, EnvConfig(), target_nets={NET1})
     env_sub.reset(seed=0)
     scoped = env_sub._engine.get_unrouted_count()
     env_sub.close()
@@ -102,7 +103,7 @@ def test_subset_scopes_unrouted_count():
 def test_subset_terminates_when_target_connected():
     """Routing only NET1 to completion terminates the episode under
     target_nets={NET1} (scoped unrouted → 0), even though NET2 stays unrouted."""
-    env = PCBWorld(board_path=BOARD, max_steps=50, target_nets={NET1})
+    env = PCBWorld(BOARD, EnvConfig.with_overrides(max_steps=50), target_nets={NET1})
     env.reset(seed=0)
     _, _, terminated, _, info = _route_net1(env)
     env.close()
@@ -113,7 +114,7 @@ def test_subset_terminates_when_target_connected():
 def test_whole_board_not_terminated_by_one_net():
     """Control: the same NET1-only route does NOT terminate the whole-board
     problem, because NET2 is still unrouted — isolates the scoping effect."""
-    env = PCBWorld(board_path=BOARD, max_steps=50)   # no target_nets
+    env = PCBWorld(BOARD, EnvConfig.with_overrides(max_steps=50))   # no target_nets
     env.reset(seed=0)
     _, _, terminated, _, info = _route_net1(env)
     env.close()
@@ -127,11 +128,11 @@ def test_whole_board_not_terminated_by_one_net():
 
 def test_target_nets_none_matches_baseline():
     """Explicit target_nets=None reproduces the no-arg observation exactly."""
-    env_base = PCBWorld(board_path=BOARD)
+    env_base = PCBWorld(BOARD, EnvConfig())
     obs_base, _ = env_base.reset(seed=0)
     env_base.close()
 
-    env_none = PCBWorld(board_path=BOARD, target_nets=None)
+    env_none = PCBWorld(BOARD, EnvConfig(), target_nets=None)
     obs_none, _ = env_none.reset(seed=0)
     env_none.close()
 
@@ -154,7 +155,7 @@ def _viol(net_names, severity=0x20, error_type="clearance", code=1):
 
 def test_drc_filter_keeps_target_involving_only():
     """Rule D3: keep a violation iff its net_names intersect the target set."""
-    d = DRCUtils()
+    d = DRCUtils(EnvConfig().drc_promoted_codes)
     d.set_target_net_names({"NET1"})
     d.update([
         _viol(["NET1", "NET2"]),   # target involved  → keep
@@ -170,7 +171,7 @@ def test_drc_filter_keeps_target_involving_only():
 
 def test_drc_filter_none_keeps_all():
     """No filter (None) keeps every violation, including orphans (legacy)."""
-    d = DRCUtils()
+    d = DRCUtils(EnvConfig().drc_promoted_codes)
     d.update([_viol(["NET2"]), _viol([]), _viol(["NET1"])])
     assert d.get_violation_count() == 3
 
@@ -190,7 +191,7 @@ def test_reset_keeps_nontarget_routing():
     """With target_nets={2}, reset wipes only NET2's routing and KEEPS a
     pre-routed NET1 (not a target) — even though NET1 is unlocked. Keeping a net
     is decided by "not being re-routed", not by the lock flag."""
-    env = PCBWorld(board_path=BOARD, target_nets={2})
+    env = PCBWorld(BOARD, EnvConfig(), target_nets={2})
     env.reset(seed=0)
     _preroute(env._engine, A1, B1)          # pre-existing NET1 track (non-target)
     assert any(t.net_code == 1 for t in env._engine.get_tracks())
@@ -205,8 +206,7 @@ def test_reset_keeps_nontarget_routing():
 def test_reset_wipe_all_when_preserve_off():
     """preserve_nontarget_routing=False restores the bare-board reset: even a
     non-target pre-routed net is wiped."""
-    env = PCBWorld(board_path=BOARD, target_nets={2},
-                   preserve_nontarget_routing=False)
+    env = PCBWorld(BOARD, EnvConfig(), target_nets={2}, preserve_nontarget_routing=False)
     env.reset(seed=0)
     _preroute(env._engine, A1, B1)
     assert any(t.net_code == 1 for t in env._engine.get_tracks())
@@ -220,7 +220,7 @@ def test_reset_wipe_all_when_preserve_off():
 def test_reset_keep_nets_preserves_only_kept():
     """reset(options={'keep_nets': {c}}) wipes every net EXCEPT the kept set —
     the GUI 'keep' (preserve, don't re-route) semantics, independent of lock."""
-    env = PCBWorld(board_path=BOARD)
+    env = PCBWorld(BOARD, EnvConfig())
     env.reset(seed=0)
     eng = env._engine
     eng.set_routing_mode(2)
@@ -236,7 +236,7 @@ def test_reset_keep_nets_preserves_only_kept():
 
 def test_reset_keep_nets_empty_wipes_all():
     """An empty keep set (or none) wipes everything — legacy bare reset."""
-    env = PCBWorld(board_path=BOARD)
+    env = PCBWorld(BOARD, EnvConfig())
     env.reset(seed=0)
     _preroute(env._engine, A1, B1)
     assert any(t.net_code == 1 for t in env._engine.get_tracks())
@@ -249,7 +249,7 @@ def test_reset_keep_nets_empty_wipes_all():
 def test_delete_routing_of_nets_ignores_lock():
     """The engine strip primitive deletes by net, not by lock: a locked
     non-target net survives; the listed net is removed regardless of lock."""
-    eng = KiCadEngine(BOARD)
+    eng = open_engine(BOARD)
     _preroute(eng, A1, B1)                    # NET1
     _preroute(eng, (10.0, 20.0), (40.0, 20.0))  # NET2
     eng.lock_net(1)                           # lock the net we will KEEP
@@ -269,7 +269,7 @@ def test_delete_routing_of_nets_ignores_lock():
 def routed_board(tmp_path_factory):
     """The fixture board with BOTH nets fully routed, saved as its own file —
     the augmentation's precondition (a board file carrying complete routing)."""
-    eng = KiCadEngine(BOARD)
+    eng = open_engine(BOARD)
     try:
         _preroute(eng, A1, B1)                          # NET1 run
         _preroute(eng, C1, J1)                          # NET1 tap onto the run
@@ -286,7 +286,7 @@ def routed_board(tmp_path_factory):
 def test_keep_fraction_full_keeps_everything(routed_board):
     """f pinned to 1.0 → every net kept: the file routing survives reset, the
     kept nets seed born-closed, and reset info reports the sampled K."""
-    env = PCBWorld(board_path=routed_board, keep_routing_fraction=(1.0, 1.0))
+    env = PCBWorld(routed_board, EnvConfig.with_overrides(keep_routing_fraction=(1.0, 1.0)))
     _, info = env.reset(seed=0)
     tracks = {t.net_code for t in env._engine.get_tracks()}
     born = set(env._born_closed_nets)
@@ -306,8 +306,8 @@ def test_keep_nets_reproducible_from_ctor_seed(routed_board):
     """
     def k_for(seed: int):
         env = PCBWorld(
-            board_path=routed_board,
-            keep_routing_fraction=(0.0, 1.0),
+            routed_board,
+            EnvConfig.with_overrides(keep_routing_fraction=(0.0, 1.0)),
             seed=seed,
         )
         _, info = env.reset()      # unseeded reset — the training pattern
@@ -323,7 +323,7 @@ def test_keep_fraction_half_resamples_from_pristine_file(routed_board):
     later reset reloads the board from file and cuts a FRESH K out of the
     pristine routing — mid-episode routing on the non-kept net is gone and
     the file's designer routing backs whatever the new K selects."""
-    env = PCBWorld(board_path=routed_board, keep_routing_fraction=(0.5, 0.5))
+    env = PCBWorld(routed_board, EnvConfig.with_overrides(keep_routing_fraction=(0.5, 0.5)))
     _, info = env.reset(seed=3)
     assert len(info["keep_nets"]) == 1
     kept = info["keep_nets"][0]
@@ -347,7 +347,7 @@ def test_keep_fraction_survives_damaged_kept_copper(routed_board):
     no in-place restore. The reload-per-reset contract must recover: damage
     the kept net's routing, then reset — no RuntimeError, and the new episode
     starts from the file's complete designer routing again."""
-    env = PCBWorld(board_path=routed_board, keep_routing_fraction=(1.0, 1.0))
+    env = PCBWorld(routed_board, EnvConfig.with_overrides(keep_routing_fraction=(1.0, 1.0)))
     _, info = env.reset(seed=0)
     assert info["keep_nets"] == [1, 2]
     env._engine.delete_routing_of_nets([1])     # simulate shove damage
@@ -362,7 +362,7 @@ def test_keep_fraction_survives_damaged_kept_copper(routed_board):
 def test_keep_fraction_zero_is_from_scratch(routed_board):
     """lo=hi=0 → empty K: the whole board is wiped (pure from-scratch episode
     mixed into the augmentation range)."""
-    env = PCBWorld(board_path=routed_board, keep_routing_fraction=(0.0, 0.0))
+    env = PCBWorld(routed_board, EnvConfig.with_overrides(keep_routing_fraction=(0.0, 0.0)))
     _, info = env.reset(seed=0)
     n = env._engine.get_track_count()
     env.close()
@@ -373,7 +373,7 @@ def test_keep_fraction_zero_is_from_scratch(routed_board):
 def test_keep_fraction_seeded_draw_reproducible(routed_board):
     """A seeded reset reproduces the K draw across fresh envs (rebuilds)."""
     def draw(seed):
-        env = PCBWorld(board_path=routed_board, keep_routing_fraction=(0.0, 1.0))
+        env = PCBWorld(routed_board, EnvConfig.with_overrides(keep_routing_fraction=(0.0, 1.0)))
         _, info = env.reset(seed=seed)
         k = info["keep_nets"]
         env.close()
@@ -385,7 +385,7 @@ def test_keep_fraction_incomplete_board_raises():
     """The augmentation demands complete file routing: on the unrouted fixture
     every sampled kept net still has ratsnest after the strip → loud error
     naming the offending nets, instead of silently training on half-kept nets."""
-    env = PCBWorld(board_path=BOARD, keep_routing_fraction=(1.0, 1.0))
+    env = PCBWorld(BOARD, EnvConfig.with_overrides(keep_routing_fraction=(1.0, 1.0)))
     with pytest.raises(RuntimeError, match="not fully routed"):
         env.reset(seed=0)
     env.close()
@@ -395,9 +395,12 @@ def test_keep_fraction_conflicts_rejected(routed_board):
     """The env owns the keep set while the augmentation is on: net-subset mode,
     manual keep_nets resets, and runtime set_target_nets are all refused."""
     with pytest.raises(ValueError):
-        PCBWorld(board_path=routed_board, target_nets={1},
-                 keep_routing_fraction=(0.0, 0.5))
-    env = PCBWorld(board_path=routed_board, keep_routing_fraction=(1.0, 1.0))
+        PCBWorld(
+            routed_board,
+            EnvConfig.with_overrides(keep_routing_fraction=(0.0, 0.5)),
+            target_nets={1},
+        )
+    env = PCBWorld(routed_board, EnvConfig.with_overrides(keep_routing_fraction=(1.0, 1.0)))
     with pytest.raises(ValueError):
         env.reset(seed=0, options={"keep_nets": {1}})
     with pytest.raises(ValueError):
@@ -414,7 +417,7 @@ def test_board_reload_keeps_the_drc_net_filter():
     was scored on the subset and every later one whole-board — two arms of the
     same comparison reporting different Phi/DRV for the same board.
     """
-    env = PCBWorld(board_path=BOARD, target_nets={NET1})
+    env = PCBWorld(BOARD, EnvConfig(), target_nets={NET1})
     try:
         installed = env._engine.drc_helper._target_net_names
         assert installed, "a net-subset env must install the DRC name filter"
@@ -427,11 +430,36 @@ def test_board_reload_keeps_the_drc_net_filter():
 
 def test_board_reload_leaves_a_whole_board_env_unfiltered():
     """The whole-board path keeps its ``None`` filter across a reload."""
-    env = PCBWorld(board_path=BOARD)
+    env = PCBWorld(BOARD, EnvConfig())
     try:
         assert env._engine.drc_helper._target_net_names is None
         env.reset(seed=0)
         env._reload_board_from_file()
         assert env._engine.drc_helper._target_net_names is None
+    finally:
+        env.close()
+
+
+def test_keep_routing_reload_rechecks_rules_only_when_files_change(routed_board, monkeypatch):
+    """The per-reset reload skips ``verify_netclass_rules`` while the board and
+    project files are unchanged since the last check, and runs it again (strict,
+    no exemption) once one of them changes on disk."""
+    import pcb_world.core.env as env_mod
+
+    calls = []
+    real = env_mod.verify_netclass_rules
+    monkeypatch.setattr(env_mod, "verify_netclass_rules",
+                        lambda engine, rules: (calls.append(1), real(engine, rules)))
+    env = PCBWorld(routed_board, EnvConfig.with_overrides(keep_routing_fraction=(1.0, 1.0)))
+    try:
+        assert len(calls) == 1                       # construction
+        env.reset(seed=0)
+        env.reset()
+        assert len(calls) == 1                       # reloads with unchanged files
+        pro = env._engine.get_project_path()
+        st = os.stat(pro)
+        os.utime(pro, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+        env.reset()
+        assert len(calls) == 2                       # project file changed -> re-checked
     finally:
         env.close()

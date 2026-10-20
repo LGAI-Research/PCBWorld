@@ -19,7 +19,7 @@ python -c 'import kicad_rl_router as krl; print("OK")'
 ```
 
 - **Single env**: transformer/KiCad rollout AND the rule-based baselines
-  (FreeRouting/KRT/OrthoRoute) all run in the `pcbworld` env —
+  (FreeRouting/KRT) all run in the `pcbworld` env —
   [environment.yml](../environment.yml) carries openjdk 21 + rust.
 - Every data/checkpoint/result root lives under the in-repo `var/`:
 
@@ -114,7 +114,10 @@ CUDA_VISIBLE_DEVICES=0 python -u eval/pipeline.py \
 
 (`experiments/train.py table1` saves under
 `var/outputs/training_logs/table1_synth2l_t3a/<method>/checkpoints/`; pass
-`--output-root` to the trainer to keep several seeds' checkpoints apart.)
+`--output-root` to the trainer to keep several seeds' checkpoints apart — the
+`experiments/kdd/table1_rl/run.sh train` sweep puts each seed under `seed<S>/`, and
+`run.sh eval` rolls out every seed's checkpoint, pools them into one cell under
+`var/results/kdd/<task>/<cell>` (where `draw_figure.py` reads) and scores it with the paper cells' settings.)
 
 A pipeline rollout flattens its own outputs into the §1 unified layout: the saved
 artifacts are renamed to `boards/<board_id>_<cell>_s<SS>_r<RR>.kicad_pcb` (`<cell>` =
@@ -126,7 +129,9 @@ is assembled by rolling out each seed's checkpoint and merging the `boards/` fil
 and `per_rollout.csv` rows into one cell by hand.
 
 **FreeRouting (rule-based)**: `methods/baselines/rule_based/run_rule_based_routers.py`
-(or `eval/rollout/rule_based.py`) with `--no-eval`. These write
+(or `eval/rollout/rule_based.py`) with `--no-eval`; for a D3 task pass `--dataset pcbench
+--difficulty easy|medium|hard` (D3-A/B/C, the `d3.json` test boards; their `.dsn` siblings come from
+`tools/quickstart/prepare_pcbench.sh`). These write
 `<board_id>_<algo>.kicad_pcb` per seed, NOT the unified grammar — rename the routed
 boards into `<cell>/boards/` under the §1 grammar before §3 (Stage 2 synthesises the
 per-rollout rows from those filenames).
@@ -139,14 +144,21 @@ via `--stages` of `eval/pipeline.py` (run in the `pcbworld` env with the §0 roo
 
 ```bash
 # One cell: DRC (Stage 2) + aggregation (Stage 3). No ckpt needed (works from boards/).
+# --boards-list = the cell's board set, so a board that left no result counts as a failure.
+# A scored cell records its reward rule, check angle and selection (the KDD cells:
+# drc_dense_promoted) and re-scoring reuses them; a flag with another value re-scores the
+# cell under it (one warning; run_record.rescore.yaml keeps both values). A cell's first
+# scoring names what it lacks: the §2 --skip-drc rollout recorded only its check angle, so
+# pass --reward-config (here the paper's rule); a rule-based rollout records neither, so pass
+# --check-angle too (and --selection-method, else the default final_potential).
 CUDA_VISIBLE_DEVICES=0 python -u eval/pipeline.py \
   --stages eval,aggregate --output-dir "$EXPR_ROOT/t2/transformer_pcbworld" \
-  --rollout-mode parallel --n-envs 64 \
-  --selection-method posthoc_drc_aware --check-angle 45
+  --boards-list <the cell's board list> --reward-config drc_dense_promoted \
+  --rollout-mode parallel --n-envs 64
 
-# Re-run aggregation only (DRC already done; e.g. to compare selection modes)
+# Re-run aggregation only (DRC already done), with the cell's recorded selection
 python -u eval/pipeline.py --stages aggregate \
-  --output-dir "$EXPR_ROOT/t2/transformer_pcbworld" --selection-method final_potential
+  --output-dir "$EXPR_ROOT/t2/transformer_pcbworld"
 ```
 
 - **`--stages`**: comma set of `rollout` / `eval` (=DRC) / `aggregate` (aliases `drc`, `agg`).
@@ -166,7 +178,7 @@ rule-based and LLM all share this path (`eval_kicad_pcb` in `eval/pipeline.py`).
 
 ### Stage 3 — standard per-board aggregation (`eval.aggregation.aggregate_boards`)
 Reads the cell's `per_rollout.csv` and writes three files. Also runnable standalone:
-`python eval/aggregation.py --cell <cell> [--selection-mode final_potential|posthoc_drc_aware]`
+`python eval/aggregation.py --cell <cell> [--selection-mode final_potential|posthoc_drc_aware] [--boards-list <list>]`
 
 ```text
 <cell>/per_boards_ckpts.csv     # board × ckpt: <m>_avg / <m>_best / time_avg / time_best
@@ -182,6 +194,8 @@ Reads the cell's `per_rollout.csv` and writes three files. Also runnable standal
 - overall: `_avg` = mean over all runs / `_avg_std` = run sample std; `_best` = mean of
   per-ckpt bests / `_best_std` = their sample std (blank when <2 samples).
 - time: `_avg` = **mean** rollout time, `_best` = **sum** of rollout times.
+- A rollout without a routed artifact counts as a failed attempt (`n_failed`; `n_crashed` for crashes), never
+  dropped, priced at the bare board's potential — rules in [eval/README.md](../eval/README.md) "Output tree".
 
 > **Paper-table reporting is a separate step** from the aggregation above:
 > Table 1's passed-board-only (success) means and Table 2's P@k/CP@k live in

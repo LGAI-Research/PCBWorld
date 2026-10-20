@@ -141,3 +141,23 @@ def test_initial_potential_uses_same_drc_convention_as_final():
     # the same run_drc convention; the historical asymmetry breaks it.
     assert m["initial_potential"] == pytest.approx(m["final_potential"])
     assert m["potential_gain"] == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize("rule, state_drc, priced", [
+    ("drc_dense_promoted", False, False),   # a DRC-reading Φ cannot price a DRC-free state
+    ("drc_dense_promoted", True, True),
+    ("default", False, True),               # a Φ without DRC prices it as is
+])
+def test_supplied_initial_state_without_drc_is_priced_only_by_a_drc_free_phi(
+        rule, state_drc, priced, recwarn):
+    from pcb_world.core.reward import RewardState
+
+    eng = _DrcGatedEngine()
+    state = RewardState.from_snapshot(eng.get_reward_snapshot(run_drc=state_drc))
+    m = compute_metrics(eng, u_0=3, reward_config_name=rule, check_angle=45,
+                        initial_pad_groups=eng.get_pad_groups(), initial_state=state,
+                        initial_state_drc=state_drc)
+
+    assert (m["initial_potential"] is not None) is priced
+    assert (m["potential_gain"] is not None) is priced
+    assert any("reset ran none" in str(w.message) for w in recwarn) is not priced

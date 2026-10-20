@@ -46,18 +46,18 @@ on-disk difficulty order. The builder splits it as:
 
 where `T = --medium-pin-threshold` (default 100).
 
-These are the raw CSV classifications. One board is dropped from the pool
-outright (reason + name in
-[`configs/datasets/README.md`](../../../configs/datasets/README.md)) and it
-falls in the medium tier, so the shipped
-[`configs/datasets/d3.json`](../../../configs/datasets/d3.json) carries 286
-medium boards, 678 in total.
+These are the raw CSV classifications. The two boards in `EXCLUDED_BOARDS`
+(one easy, one medium; reasons in
+[`configs/datasets/README.md`](../../../configs/datasets/README.md)) are not
+part of D3: the builder drops them from every list after the test picks below,
+so [`configs/datasets/d3.json`](../../../configs/datasets/d3.json) carries 99
+easy, 286 medium and 292 hard boards, 677 in total. The builder stops with an
+error when an excluded board is missing from the corpus or is picked for a test
+set.
 
 ## Test-set selection
 
-* **easy.test (99)** — every easy board *except* the one matching
-  `--easy-train-only-glob` (default `0096_*`). That one stays in
-  `easy.train` only, as a fixed single-board sanity sample.
+* **easy.test (99)** — every easy board: the same list as `easy.train`.
 * **medium.test (10) / hard.test (10)** — for each:
   1. keep only `layer == 2` boards (4-layer / 8-layer support is
      untested in current routing pipeline);

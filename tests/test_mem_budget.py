@@ -20,7 +20,7 @@ import torch
 
 from methods.rl_agent.algorithms import _common
 from methods.rl_agent.algorithms._common import policy_update_loop
-from methods.rl_agent.models.v1.net import NUM_ACTION_TYPES, KiCadRLModel
+from methods.rl_agent.models.v1.net import KiCadRLModel
 from methods.rl_agent.rollout.primitive import budgeted_forward
 from methods.rl_agent.training.mem_budget import (
     SAFETY,
@@ -28,6 +28,7 @@ from methods.rl_agent.training.mem_budget import (
     run_calibration,
 )
 from tests._mock_obs import make_mock_obs
+from tests.helpers.dist_inputs import permissive_buffer, permissive_dist
 
 
 def _model_with_coeffs(c: float, a: float, b: float, limit: float) -> MemBudgetModel:
@@ -161,6 +162,8 @@ class TestPlannedUpdateEquivalence:
     def _fresh_policy(self, use_critic: bool = True) -> KiCadRLModel:
         torch.manual_seed(0)
         p = KiCadRLModel(
+            disable_slot_emb=False,
+            policy_net_select=False,
             d_model=32, n_heads=4, n_layers=2, d_ff=64, max_seq_len=4000,
             n_freq=4, use_critic=use_critic,
         )
@@ -172,22 +175,12 @@ class TestPlannedUpdateEquivalence:
 
     def _buffer(self, obs_list, *, ppo: bool) -> dict:
         p = self._fresh_policy(use_critic=ppo)
+        dist = permissive_dist(p, obs_list)
         if ppo:
-            acts, old_lp, _ = p.act_and_value(obs_list, deterministic=True)
+            acts, old_lp, _ = p.act_and_value(obs_list, dist=dist, deterministic=True)
         else:
-            acts, old_lp = p.act(obs_list, deterministic=True)
-        n = len(obs_list)
-        rng = np.random.default_rng(0)
-        buf = {
-            "obs_list": obs_list,
-            "actions": acts.cpu().numpy(),
-            "old_log_probs": old_lp.cpu().numpy(),
-            "action_masks": np.ones((n, NUM_ACTION_TYPES), dtype=bool),
-            "advantages": rng.standard_normal(n).astype(np.float32),
-        }
-        if ppo:
-            buf["returns"] = rng.standard_normal(n).astype(np.float32)
-        return buf
+            acts, old_lp = p.act(obs_list, dist=dist, deterministic=True)
+        return permissive_buffer(obs_list, acts, old_lp, returns=ppo)
 
     def _forced_chunk_model(self, policy, obs_list) -> MemBudgetModel:
         """cost = B * L_max tokens, budget = 2 * longest sample -> multi-chunk."""
@@ -292,22 +285,17 @@ class TestRolloutSplit:
     _varied_obs = TestPlannedUpdateEquivalence._varied_obs
     _forced_chunk_model = TestPlannedUpdateEquivalence._forced_chunk_model
 
-    def _masks(self, n: int):
-        mask_t = torch.ones(n, NUM_ACTION_TYPES, dtype=torch.bool)
-        ptr_t = torch.full((n, 0), -1, dtype=torch.long)
-        return mask_t, ptr_t
-
     def test_budgeted_forward_matches_whole_batch(self):
         obs_list = self._varied_obs()
         policy = self._fresh_policy(use_critic=True)
-        mask_t, ptr_t = self._masks(len(obs_list))
+        dist = permissive_dist(policy, obs_list)
         acts_w, lp_w, val_w = policy.act_and_value(
-            obs_list, action_masks=mask_t, pointer_masks=ptr_t,
+            obs_list, dist=dist,
             deterministic=True,
         )
         model = self._forced_chunk_model(policy, obs_list)
         acts_b, lp_b, val_b = budgeted_forward(
-            policy, obs_list, mask_t, ptr_t, None, {}, model,
+            policy, obs_list, dist, model,
             want_value=True, deterministic=True,
         )
         assert torch.equal(acts_w, acts_b)
@@ -317,14 +305,14 @@ class TestRolloutSplit:
     def test_budgeted_forward_act_path(self):
         obs_list = self._varied_obs()
         policy = self._fresh_policy(use_critic=False)
-        mask_t, ptr_t = self._masks(len(obs_list))
+        dist = permissive_dist(policy, obs_list)
         acts_w, lp_w = policy.act(
-            obs_list, action_masks=mask_t, pointer_masks=ptr_t,
+            obs_list, dist=dist,
             deterministic=True,
         )
         model = self._forced_chunk_model(policy, obs_list)
         acts_b, lp_b, val_b = budgeted_forward(
-            policy, obs_list, mask_t, ptr_t, None, {}, model,
+            policy, obs_list, dist, model,
             want_value=False, deterministic=True,
         )
         assert val_b is None
@@ -337,15 +325,15 @@ class TestRolloutSplit:
         walk-cache contract."""
         obs_list = self._varied_obs()
         policy = self._fresh_policy(use_critic=True)
-        mask_t, ptr_t = self._masks(len(obs_list))
+        dist = permissive_dist(policy, obs_list)
         tok = policy.tokenizer
         walked = tok._walk_obs(obs_list)
         out_plain = policy.act_and_value(
-            obs_list, action_masks=mask_t, pointer_masks=ptr_t,
+            obs_list, dist=dist,
             deterministic=True,
         )
         out_walked = policy.act_and_value(
-            obs_list, action_masks=mask_t, pointer_masks=ptr_t,
+            obs_list, dist=dist,
             deterministic=True, walked=walked,
         )
         for a, b in zip(out_plain, out_walked):

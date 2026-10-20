@@ -4,7 +4,7 @@
 # By design, Table 2's interactive column reuses Table 1(b)'s LLM rollouts
 # verbatim (the earlier quick-start recipe). This wrapper is just an
 # alias so the Table 2 commands in the docs stay self-consistent — for any
-# real divergence, edit table1/llm/run.sh.
+# real divergence, edit table1_llm/run.sh.
 set -euo pipefail
 _self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -22,4 +22,4 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-exec "$_self_dir/../table1/llm/run.sh" "${args[@]}"
+exec "$_self_dir/../table1_llm/run.sh" "${args[@]}"

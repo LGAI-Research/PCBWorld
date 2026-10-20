@@ -308,10 +308,13 @@ class DDPUpdateGroup:
         assert torch.device(device).type == "cuda", (
             "--update-gpus > 1 requires a CUDA device"
         )
-        assert torch.cuda.device_count() >= world_size, (
-            f"--update-gpus {world_size} > visible CUDA devices "
-            f"({torch.cuda.device_count()})"
-        )
+        visible = torch.cuda.device_count()
+        if visible < world_size:
+            raise RuntimeError(
+                f"update_gpus={world_size} > visible CUDA devices ({visible}) — a resumed run "
+                f"takes update_gpus and device ({args.device!r}) from its checkpoint: pass "
+                f"--update-gpus {max(visible, 1)} (1 = single-GPU update), and --device cuda:0 "
+                "when that device is not on this node, to run here")
         # file-store rendezvous: path must not pre-exist.
         fd, rdv_file = tempfile.mkstemp(prefix="pcbworld_ddp_rdv_")
         os.close(fd)

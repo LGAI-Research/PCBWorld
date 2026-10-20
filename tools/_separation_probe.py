@@ -57,7 +57,7 @@ def main() -> int:
     from pcb_world.engine.kicad_engine import KiCadEngine
     from pcb_world.engine.router_client import RouterProxy
 
-    eng = KiCadEngine(str(BOARD))
+    eng = KiCadEngine.for_board_file(str(BOARD))
     try:
         if not isinstance(eng._r, RouterProxy):
             print("engine is running in-process (KICAD_ENGINE_IPC=0) — this "

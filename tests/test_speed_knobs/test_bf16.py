@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 import torch
 
+from tests.helpers.dist_inputs import permissive_dist
 from tests.test_speed_knobs._helpers import batch, opened_model, run_eval
 
 pytestmark = pytest.mark.skipif(
@@ -16,7 +17,7 @@ class TestBF16Sanity:
     def test_bf16_close_and_grads_finite(self):
         m = opened_model()
         obs = batch()
-        acts, _ = m.act(obs, deterministic=True)
+        acts, _ = m.act(obs, dist=permissive_dist(m, obs), deterministic=True)
 
         lp_f, ent_f, val_f, g_f = run_eval(m, obs, acts)
 

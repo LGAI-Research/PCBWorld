@@ -17,6 +17,7 @@ import torch
 
 from methods.rl_agent.models.v1.net import KiCadRLModel
 from tests._mock_obs import make_mock_obs
+from tests.helpers.dist_inputs import permissive_dist
 
 
 def opened_model(n_heads: int = 4) -> KiCadRLModel:
@@ -24,6 +25,8 @@ def opened_model(n_heads: int = 4) -> KiCadRLModel:
     flex tests pass n_heads=2."""
     torch.manual_seed(0)
     m = KiCadRLModel(
+        disable_slot_emb=False,
+        policy_net_select=False,
         d_model=32, n_heads=n_heads, n_layers=2, d_ff=64, max_seq_len=2000,
         n_freq=4, use_critic=True, same_net_bias=True,
     ).to("cuda")
@@ -34,6 +37,11 @@ def opened_model(n_heads: int = 4) -> KiCadRLModel:
             layer.res_attn.alpha.fill_(0.7)
             layer.res_ff.alpha.fill_(0.5)
     return m
+
+
+def key_padding_mask(lens: torch.Tensor, L: int) -> torch.Tensor:
+    """True at the padding positions of each row (index >= that row's length)."""
+    return torch.arange(L, device=lens.device)[None, :] >= lens[:, None]
 
 
 def batch() -> list[dict]:
@@ -49,7 +57,7 @@ def batch() -> list[dict]:
 
 def run_eval(m: KiCadRLModel, obs, acts):
     m.zero_grad(set_to_none=True)
-    lp, ent, val = m.evaluate_actions_and_value(obs, acts)
+    lp, ent, val = m.evaluate_actions_and_value(obs, acts, dist=permissive_dist(m, obs))
     (lp.sum() + ent.sum() + val.pow(2).sum()).backward()
     grads = {
         n: p.grad.detach().clone()
@@ -65,14 +73,15 @@ def assert_compile_matches_eager(
     equivalence: actions exact, outputs/grads 1e-4."""
     m = opened_model(n_heads=2 if attn == "flex" else 4)
     obs = batch()
-    acts, _ = m.act(obs, deterministic=True)
+    dist = permissive_dist(m, obs)
+    acts, _ = m.act(obs, dist=dist, deterministic=True)
 
     lp_e, ent_e, val_e, g_e = run_eval(m, obs, acts)
-    a_e, alp_e, av_e = m.act_and_value(obs, deterministic=True)
+    a_e, alp_e, av_e = m.act_and_value(obs, dist=dist, deterministic=True)
 
     m.configure_speed(compile_regions=regions, attn=attn)
     lp_c, ent_c, val_c, g_c = run_eval(m, obs, acts)
-    a_c, alp_c, av_c = m.act_and_value(obs, deterministic=True)
+    a_c, alp_c, av_c = m.act_and_value(obs, dist=dist, deterministic=True)
 
     assert torch.equal(a_e, a_c)
     assert torch.allclose(alp_e, alp_c, atol=1e-4)

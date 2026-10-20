@@ -1,4 +1,4 @@
-"""Verbatim copies of the SES/ORS → kicad_pcb converters.
+"""The SES/ORS → kicad_pcb converters (the SES one maps user layer aliases to KiCad names).
 
 Source: the ``bench_results_kicadpcb/_scripts/`` helpers of the original
 benchmark result tree (under the shared data root; not distributed with

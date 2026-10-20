@@ -1,6 +1,7 @@
 # PCBench fair-comparison sample set (excludes union of FR/KRT/PPO compat boards)
 # Compat: FR=0004,0024,0035,0077  KRT=0024  PPO=0096_karabas-nano (missing)
 # Total: 95 samples (out of 100)
+# KDD-era record (the 100-folder runs above); the D3-A standard is configs/datasets/d3.json easy.test (99 boards, no 0096).
 0001_rufs__autosave-simple_kicad_schema_and_pcb_v1
 0002_rufs_simple_kicad_schema_and_pcb_v1
 0003_kitspace_grove_adaptor

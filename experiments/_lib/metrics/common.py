@@ -214,7 +214,8 @@ def group_by_seed_board(rows: Sequence[dict], cell: str) -> dict[tuple[str, int]
     """Group rows by ``(board_id, seed)`` using the artifact-name contract
     ``<board_id>_<cell>_s<SS>_r<RR>.kicad_pcb`` (same parser as the aggregation
     pipeline). Rows whose artifact does not parse (crashes / no-geometry) are
-    skipped, exactly as ``eval.aggregation.aggregate_boards`` does."""
+    skipped, as the KDD paper tables did; ``eval.aggregation.aggregate_boards``
+    instead counts them as failed attempts."""
     groups: dict[tuple[str, int], list[dict]] = {}
     for r in rows:
         p = u.parse_cell_artifact(r.get("artifact_path", "") or "", cell)
@@ -359,8 +360,7 @@ def llm_time_for(rel: str) -> float | None:
 
 
 # KRT / OrthoRoute routing time was not persisted in the unified cells, so it is
-# filled here by lookup. D2 / D3-A reuse the original paper's numbers (Table
-# 3/22); KRT D3-B is the measured mean elapsed_routing_s from the 2026-05-28
+# filled here by lookup. D2 / D3-A: the KDD Table 3/22 values; KRT D3-B is the measured mean elapsed_routing_s from the 2026-05-28
 # baseline run (~/logs/eval_260528_baselines/baseline_runs/t3b/krt/.../manifest.json,
 # 10 boards, all ok). Ortho D3-B has no run -> stays '--'. Keyed (leaf, namespace).
 RULE_BASED_TIME_PAPER = {

@@ -826,12 +826,13 @@ def make_envs(config):
         from methods.llm_agent.wrappers.action_converter import pcbworld_projection
 
         # pcbworld-side config slice (the env.pcbworld.* block + the env.*
-        # knobs pcbworld reads). Defaults live in configs/pcbworld.yaml (llm_train:)
+        # knobs pcbworld reads). Defaults live in configs/llm.yaml (llm_train:)
         # (configs.loader.schema.LLMTrainConfig); the verl Hydra config supplies the
-        # per-run overrides — this just sources the fallbacks from one place.
+        # per-run overrides; an env.pcbworld key the schema does not know raises.
         cad = LLMTrainConfig.from_verl_config(config)
         board_path = cad.board_path
-        env_kwargs = cad.to_env_kwargs()
+        env_build = {"env_config": cad.env, "state_format": cad.state_format,
+                     "prompt_version": cad.prompt_version}
 
         # Board scheduling (single / round_robin / per_env_random / per_env_epoch).
         # Defaults to single-board behaviour so pre-existing configs keep
@@ -880,7 +881,7 @@ def make_envs(config):
             group_n=group_n,
             resources_per_worker=resources_per_worker,
             is_train=True,
-            env_kwargs=env_kwargs,
+            **env_build,
         )
         _val_envs = build_pcbworld_envs(
             board_paths=initial_val_paths,
@@ -889,7 +890,7 @@ def make_envs(config):
             group_n=1,
             resources_per_worker=resources_per_worker,
             is_train=False,
-            env_kwargs=env_kwargs,
+            **env_build,
         )
 
         print(

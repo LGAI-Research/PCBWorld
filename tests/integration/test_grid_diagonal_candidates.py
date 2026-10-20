@@ -36,6 +36,7 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
+from configs.loader.schema import EnvConfig
 from pcb_world.core.env import PCBWorld  # noqa: E402
 from pcb_world.vec.candidate_pool import (  # noqa: E402
     CTYPE_DIRECTIONAL,
@@ -207,11 +208,8 @@ def run_one_grid(
     seed: int,
 ) -> dict:
     env = PCBWorld(
-        board_path=str(board_path),
-        max_steps=n_steps,
-        masking_rule="default",
-        reward_rule="drc_only_dense",
-        emit_drc_tokens=False,
+        str(board_path),
+        EnvConfig.with_overrides(max_steps=n_steps, masking_rule="default", reward_rule="drc_only_dense", emit_drc_tokens=False),
     )
     wrapper = KiCadRLWrapper(
         env, seed=seed, directional_candidates=None,  # 8-direction default
@@ -280,8 +278,9 @@ def run_one_grid(
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    from configs.loader.cli import StrictArgumentParser
+    p = StrictArgumentParser(description=__doc__,
+                             formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--grid-sizes", nargs="+", type=int,
                    default=sorted(_GRID_STEP_CELLS),
                    help="Grid sizes to test. Default: all configured.")

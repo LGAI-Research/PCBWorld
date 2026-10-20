@@ -20,6 +20,7 @@ import pytest
 
 from pcb_world.engine import KiCadEngine
 from tests.helpers.pro_sidecar import materialize_pro_pair
+from tests.helpers.engine import open_engine
 
 BOARD_SIZE = 100.0
 CLEARANCE = 0.05
@@ -102,9 +103,8 @@ def _render_board(pads: list[tuple[float, float, int]]) -> str:
 
 
 def _prep(engine: KiCadEngine) -> None:
+    # No size setup: start_route imports the sizes from the start item's net class.
     engine.set_routing_mode(2)
-    engine.set_track_width(0)
-    engine.reset_via_mode()
     engine.clear_drc_cache()
 
 
@@ -113,7 +113,7 @@ def test_drc_clean_single_route(tmp_path: Path) -> None:
     pads = [(10.05, 50.05, 1), (90.05, 50.05, 1)]
     bp = tmp_path / "clean.kicad_pcb"
     bp.write_text(_render_board(pads))
-    e = KiCadEngine(materialize_pro_pair(bp))
+    e = open_engine(materialize_pro_pair(bp))
     try:
         _prep(e)
         assert e.start_route(pads[0][0], pads[0][1], 1)
@@ -170,7 +170,7 @@ def test_drc_detects_too_close_parallel_tracks(tmp_path: Path) -> None:
     ]
     bp = tmp_path / "too_close_injected.kicad_pcb"
     bp.write_text(_render_board_with_tracks(pads, segments))
-    e = KiCadEngine(materialize_pro_pair(bp))
+    e = open_engine(materialize_pro_pair(bp))
     try:
         violations = e.run_drc()
         assert len(violations) > 0, (
@@ -189,7 +189,7 @@ def test_drc_detects_pad_overlap_different_nets(tmp_path: Path) -> None:
     ]
     bp = tmp_path / "pad_overlap.kicad_pcb"
     bp.write_text(_render_board(pads))
-    e = KiCadEngine(materialize_pro_pair(bp))
+    e = open_engine(materialize_pro_pair(bp))
     try:
         violations = e.run_drc()
         assert len(violations) > 0, (

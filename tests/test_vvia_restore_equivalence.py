@@ -12,8 +12,8 @@ assert the resulting geometry matches, which is exactly what exercises VVIAs.
 """
 
 import pytest
+from tests.helpers.engine import open_engine
 
-from pcb_world.engine.kicad_engine import KiCadEngine
 
 BOARD = "tests/fixtures/simple_routing_board.kicad_pcb"
 
@@ -31,14 +31,19 @@ def _snap(e):
     return tracks, vias
 
 
-def _route(e, sx, sy, tx, ty, layer=1):
+def _route(e, sx, sy, tx, ty, layer=1, width=None):
+    """Route one segment; ``width`` overrides the net class track width for this
+    route only (the override must come after start_route, which re-imports the
+    net class sizes)."""
     e.start_route(sx, sy, layer)
+    if width is not None:
+        e.set_track_width(width)
     e.fix_route(tx, ty, True)
 
 
 @pytest.fixture
 def engine():
-    e = KiCadEngine(BOARD)
+    e = open_engine(BOARD)
     e.build_connectivity()
     yield e
     if e.is_routing():
@@ -49,18 +54,17 @@ def engine():
 def _route_probe(e):
     """Route NET3 straight through (25, 10) — the point where the width-change
     joint (and thus a VVIA) is created below."""
-    e.set_track_width(0.25)
-    _route(e, 25.0, 5.0, 25.0, 25.0, layer=1)
+    _route(e, 25.0, 5.0, 25.0, 25.0, layer=1, width=0.25)
     return _snap(e)
 
 
 def _make_width_change_vvia(e):
     """Route NET1 as two different-width segments meeting at (25, 10): the joint
     there is a width-change joint, so FixupVirtualVias mints a VVIA at (25, 10)."""
-    e.set_track_width(0.20)
-    _route(e, 10.0, 10.0, 25.0, 10.0)
-    e.set_track_width(0.40)
-    _route(e, 25.0, 10.0, 40.0, 10.0)
+    _route(e, 10.0, 10.0, 25.0, 10.0, width=0.20)
+    _route(e, 25.0, 10.0, 40.0, 10.0, width=0.40)
+    widths = sorted(round(t.width_mm, 4) for t in e.get_tracks())
+    assert widths == [0.2, 0.4], f"expected a width-change joint, got {widths}"
 
 
 def test_route_after_incremental_matches_full(engine):

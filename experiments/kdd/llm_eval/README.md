@@ -14,7 +14,8 @@ Two task framings live in this directory:
 
 CAD-Gen patches its routing into the unrouted board and scores the result
 via `eval.metrics.evaluate_one`. API-Seq parses one action per line and
-replays them through a fresh `PCBWorld`, then scores the final state.
+replays them through a fresh `PCBWorld`, then scores the final state. Both
+report `drv_count` (and `drv_at_k_min`) as DRC errors only.
 
 ## Versioned prompts
 
@@ -80,6 +81,18 @@ Each per-(set, mode) run writes:
 - `summary.csv`, `overall.json`
 - `overall_multi_k.json` + `summary_k{1,5,10,25}.csv` when `--ks` is set
 - `audit.json` + `audit_summary.csv` (engine-free v2+ with 45° audit)
+
+In the plan-only run a board that errors counts as a failure in every rate
+(`boards_failed` next to the rates) and makes the run exit 1; the `error` column of
+`summary.csv` names each board's failure, and `--reaggregate` reads the same errors back
+from each board's `aggregate.json`. An error fails the whole board: samples replayed
+before it are not used. At each k of `--ks`, `overall_multi_k.json` and the rows of
+`summary_k{k}.csv` cover the boards with at least k samples plus the errored boards whose
+requested `-k` (the `k` of their `aggregate.json`, also on `--reaggregate`) is at least k.
+A failed API call keeps the previous run's responses of that board on disk.
+In the engine-free run an errored board (or, on `--reaggregate`, a board without samples)
+is left out of the rates (`boards_failed`) and also makes the run exit 1, live and on
+`--reaggregate` alike.
 
 Re-aggregate without re-spending API tokens:
 ```bash

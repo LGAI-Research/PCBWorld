@@ -26,6 +26,7 @@ redeclare them. Heavy KiCad imports stay function-local so importing this module
 from __future__ import annotations
 
 import math
+import warnings
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -69,8 +70,10 @@ class EvalResult:
 # Per-board metric computation (engine -> metric dict)
 # ============================================================================
 
-# Mirror of pcb_world.engine.drc._PROMOTED_ERROR_CODES (canonical) — DRC error codes
-# promoted from warning severity.
+# DRC error codes promoted from warning severity in scoring: the default of the env knob
+# EnvConfig.drc_promoted_codes (configs/env.yaml). Scoring is fixed to this one set for
+# every method and run (cells are compared across methods): the knob is a training-env knob,
+# so inline scoring refuses an env built with another set (compute_metrics_inline).
 _PROMOTED_CODES = {12, 13, 37}   # DANGLING_VIA, DANGLING_TRACK, NET_CONFLICT
 # Local mirror of pcb_world.engine.drc.DRC_SEVERITY_ERROR/WARNING (canonical). Kept
 # local — not imported — so importing eval.metrics stays cheap: this module
@@ -282,16 +285,23 @@ def compute_metrics(
     reward_config_name: str,
     check_angle: int,
     initial_pad_groups: dict[int, int] | None = None,
+    initial_state: Any = None,
+    initial_state_drc: bool = False,
     routed_pcb: str | None = None,
     pro_path: str | None = None,
 ) -> dict:
     """Shared metric computation for both disk-loaded and live-engine eval.
 
     When ``u_0`` is ``None`` the engine is destructively reset after
-    capturing the routed snapshot so the initial-unconnected count and the
-    initial pad grouping can be discovered.  When ``u_0`` is provided the
-    engine state is left untouched and ``initial_pad_groups`` must be
-    supplied by the caller (captured at episode reset).
+    capturing the routed snapshot so the initial-unconnected count, the
+    initial pad grouping and the bare-board reward state can be discovered.
+    When ``u_0`` is provided the engine state is left untouched and
+    ``initial_pad_groups`` must be supplied by the caller (captured at
+    episode reset), with the bare board's ``RewardState`` as
+    ``initial_state`` (None: no ``initial_potential`` / ``potential_gain``)
+    and ``initial_state_drc`` = whether that state counted DRC: a DRC-free state
+    cannot be priced by a DRC-reading ``reward_config_name``, so Φ₀ / gain are
+    then None, with a warning.
     """
     from pcb_world.engine.drc import DRCUtils
     from pcb_world.core.reward import RewardState
@@ -335,15 +345,14 @@ def compute_metrics(
     # the same reset we use to discover u_0. Reported as a baseline so the
     # headline potential can be stated as a (non-negative) gain over the bare
     # board instead of a raw, sometimes-negative absolute value. None on the
-    # inline path (u_0 supplied) where the engine is intentionally not reset.
-    # run_drc=True so the bare-board Phi uses the SAME DRC convention as the
+    # inline path (u_0 supplied) the engine is intentionally not reset: the
+    # caller's reset-time initial_state is priced with THIS reward config, so
+    # inline and post-hoc rows share one Φ₀ definition. run_drc=True so the bare-board Phi uses the SAME DRC convention as the
     # routed final_potential (run_drc=True above); otherwise potential_gain
     # would subtract a DRC-free initial from a DRC-included final and mix two
-    # Phi definitions. The training env runs DRC on reset only in per_step
-    # mode (RewardTracker.run_drc_on_reset); a terminal-mode env's own
-    # info["initial_potential"] is therefore DRC-free and differs from this
-    # baseline (tests/test_reward_parity.py compares Φ₀ only where they agree).
-    initial_snap = None
+    # Phi definitions. The training env's reset-time Φ₀ runs DRC too
+    # (RewardTracker.run_drc_on_reset), so its info["initial_potential"] equals
+    # this baseline (tests/test_reward_parity.py).
     if u_0 is None:
         if eng.is_routing():
             eng.cancel_route()
@@ -352,6 +361,16 @@ def compute_metrics(
         initial_snap = eng.get_reward_snapshot(run_drc=True)
         u_0 = int(initial_snap.unrouted_count)
         initial_pad_groups = eng.get_pad_groups()
+        initial_state = RewardState.from_snapshot(initial_snap)
+    elif initial_state is not None and not initial_state_drc:
+        from pcb_world.core.env import _potential_uses_drc
+
+        if _potential_uses_drc(pr):
+            warnings.warn(
+                f"inline scoring with {reward_config_name!r} reads DRC, but this env's reset ran "
+                f"none (its reward reads no DRC) — initial_potential / potential_gain left blank; "
+                f"Stage 2 prices the bare input board for them", stacklevel=3)
+            initial_state = None
     # Per-reset reward hook (size-weighted ladder): weights come from the
     # bare-board pad groups — the env's reset-time capture on the inline
     # path, the stripped board here — i.e. the routability baseline itself.
@@ -361,8 +380,7 @@ def compute_metrics(
         routable_nets=eng.get_routable_nets(),
     )
     initial_potential: float | None = (
-        float(pr.compute_final(RewardState.from_snapshot(initial_snap)))
-        if initial_snap is not None else None
+        float(pr.compute_final(initial_state)) if initial_state is not None else None
     )
 
     # ---- Phase 3: derived metrics ----
@@ -454,6 +472,7 @@ def compute_metrics(
             "net_completion_bonus": float(pr.net_completion_bonus),
             "net_clean_bonus": float(pr.net_clean_bonus),
             "net_bonus_size_log_scale": float(pr.net_bonus_size_log_scale),
+            "net_bonus_size_linear_scale": float(pr.net_bonus_size_linear_scale),
             # {net_code: w_i} once bind_board resolved them (size-weighted
             # ladder only); None otherwise.
             "net_size_weights": (
@@ -522,16 +541,46 @@ def compute_metrics_inline(
     the RL and LLM worker wrappers expose it as their ``eval_inline_drc``
     ``env_method`` hook (serial rollout ``--inline-drc on`` / LLM manager
     episode scoring).
+
+    Φ₀ is the reset-time bare-board reward state priced with
+    ``reward_config_name`` (as post-hoc scoring prices the stripped board), not
+    the env's own ``initial_potential`` (its training rule). A reset that ran no
+    DRC (the env's reward reads none) cannot price a DRC-reading scoring config:
+    ``initial_potential`` / ``potential_gain`` are then None, with a warning
+    (Stage 2 prices the bare input board for them, :func:`eval.pipeline.score_bare_boards`).
+    ``env_phi0_matches`` records whether the env's own Φ₀ — the value its crash and
+    skip rows carry — is this Φ₀ (the env's effective reward and the scoring config
+    define the same Φ, ``phi_diff``; its reset then ran DRC iff that Φ reads DRC), so
+    :func:`eval.aggregation.aggregate_inline` may price failed attempts with it.
+
+    The live engine prices Φ and the promoted counts with its own
+    ``drc_promoted_codes``; scoring is fixed to :data:`_PROMOTED_CODES` (the
+    post-hoc set), so an env built with another set is refused.
     """
-    return compute_metrics(
+    env_codes = set(env._engine.drc_helper.promoted_codes)
+    if env_codes != _PROMOTED_CODES:
+        raise ValueError(
+            f"inline scoring needs the scoring DRC promoted codes {sorted(_PROMOTED_CODES)}, "
+            f"but this env was built with drc_promoted_codes={sorted(env_codes)} — a "
+            f"non-default promoted set is a training-env knob, not a scoring knob; score "
+            f"the saved board post-hoc (evaluate_one) instead"
+        )
+    from pcb_world.core.reward_config import get_reward_config, phi_diff
+
+    result = compute_metrics(
         env._engine,
         u_0=int(env._initial_unconnected),
         reward_config_name=reward_config_name,
         check_angle=check_angle,
         initial_pad_groups=dict(env._initial_pad_groups),
+        initial_state=env._initial_reward_state,
+        initial_state_drc=env._reward.run_drc_on_reset,
         routed_pcb=routed_pcb,
         pro_path=pro_path,
     )
+    result["env_phi0_matches"] = not phi_diff(env._reward_config,
+                                              get_reward_config(reward_config_name))
+    return result
 
 
 def evaluate_one(
@@ -551,7 +600,7 @@ def evaluate_one(
         raise ValueError(f"check_angle must be 45 or 90, got {check_angle}")
     from pcb_world.engine.kicad_engine import KiCadEngine
 
-    eng = KiCadEngine(routed_pcb, project_path=(pro_path or None))
+    eng = KiCadEngine.for_board_file(routed_pcb, project_path=(pro_path or None))
     eng.build_connectivity()
     return compute_metrics(
         eng, u_0=None,

@@ -10,6 +10,7 @@ import os
 import pytest
 
 from pcb_world.engine.layer_mapping import LayerMapping
+from tests.helpers.engine import open_engine
 
 
 # ---------------------------------------------------------------------------
@@ -138,9 +139,8 @@ class TestLayerMappingWithEngine:
     def test_4layer_board_engine(self):
         _skip_if_no_kicad()
         _skip_if_no_4layer_board()
-        from pcb_world.engine.kicad_engine import KiCadEngine
 
-        engine = KiCadEngine(_4LAYER_BOARD)
+        engine = open_engine(_4LAYER_BOARD)
         assert engine.layer_map.max_layer == 4
         assert engine.layer_map.board_layer_order == [0, 4, 6, 2]
         # Verify conversions

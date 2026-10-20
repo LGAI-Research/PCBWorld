@@ -25,7 +25,7 @@ MISSING = FIXTURES / "does_not_exist_260825.kicad_pcb"
 @pytest.mark.skipif(not BOARD_A.exists(), reason="fixture board missing")
 def test_reload_board_factory_error_is_reported(pool_kwargs):
     pool = make_decoder_env_pool(
-        str(BOARD_A), n_envs=1,
+        str(BOARD_A), n_envs=1, advance_rng_on_reload=False,
         **pool_kwargs(max_steps=20, masking_rule="default_no_finish",
                       reward_rule="drc_only_dense"),
     )

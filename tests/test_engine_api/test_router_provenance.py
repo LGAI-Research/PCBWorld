@@ -363,8 +363,9 @@ def _construct_engine(build_dir: Path, ipc: str, via: str = "build",
     else:
         env["PCBWORLD_KICAD_RL_BUILD_DIR"] = str(build_dir)
     env.update(extra_env or {})
-    code = ("from pcb_world.engine import KiCadEngine\n"
-            "KiCadEngine('does-not-exist.kicad_pcb')\n")
+    code = ("from configs.loader.schema import EnvConfig\n"
+            "from pcb_world.engine import KiCadEngine\n"
+            "KiCadEngine('does-not-exist.kicad_pcb', **EnvConfig().engine_kwargs())\n")
     return subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True,
                           cwd=Path(engine_home()).parent, timeout=120)
 

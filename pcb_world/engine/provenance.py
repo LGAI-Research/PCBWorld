@@ -84,12 +84,28 @@ def lib_dir_of(build_dir: str) -> str:
     return os.path.join(build_dir, "pcbnew", "python", "rl")
 
 
-def read_stamp(build_dir: str) -> str | None:
+def _read_lib_stamp(lib_dir: str) -> str | None:
     try:
-        with open(os.path.join(lib_dir_of(build_dir), STAMP_NAME), encoding="utf-8") as fh:
+        with open(os.path.join(lib_dir, STAMP_NAME), encoding="utf-8") as fh:
             return fh.read().strip()
     except OSError:
         return None
+
+
+def read_stamp(build_dir: str) -> str | None:
+    return _read_lib_stamp(lib_dir_of(build_dir))
+
+
+def router_cpp_hash() -> str | None:
+    """The ``ENGINE_CPP_HASH`` stamp of the router this process loads (the IPC server and the
+    in-process import resolve the same ``pcb_world.engine.router_lib_dir``), after the provenance
+    guard has passed — the C++ identity available for the run record (in place of the C++
+    constants). Under ``PCBWORLD_ENGINE_ALLOW_MISMATCH=1`` it is the loaded router's stamp, not
+    this tree's hash. None only for a router built before the stamp existed (the guard warned)."""
+    from pcb_world.engine import ensure_router_provenance, router_lib_dir
+
+    ensure_router_provenance()
+    return _read_lib_stamp(router_lib_dir())
 
 
 def main_root(project_root: str) -> str:
@@ -167,20 +183,18 @@ def check_router_matches_sources(lib_dir: str, engine_root: str) -> None:
     key = (lib_dir, engine_root)
     if _checked.get(key):
         return
-    stamp_path = os.path.join(lib_dir, STAMP_NAME)
     if not os.path.isdir(lib_dir):
         return                                   # no router here: the import itself will say so
     source = source_hash(engine_root)
     if source is None:
         return                                   # older engine bundle without the script
-    if not os.path.isfile(stamp_path):
+    stamped = _read_lib_stamp(lib_dir)
+    if stamped is None:
         warnings.warn(f"router at {lib_dir} carries no {STAMP_NAME} (built before the stamp existed): "
                       f"cannot verify it matches engine/kicad-patches/ — {REBUILD_HINT}",
                       RuntimeWarning, stacklevel=2)
         _checked[key] = True
         return
-    with open(stamp_path, encoding="utf-8") as fh:
-        stamped = fh.read().strip()
     if stamped != source:
         msg = (f"router at {lib_dir} was built from other C++ than this tree: engine/kicad-patches/ "
                f"hashes to {source}, the router is stamped {stamped}. {REBUILD_HINT}"

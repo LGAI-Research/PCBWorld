@@ -9,9 +9,8 @@ records the install location and provides a ``run_route()`` helper /
 Install location resolution (first match wins):
     1. env var ``KRT_ROOT``
     2. default ``external/KiCadRoutingTools`` in this repo (the pinned
-       checkout made by ``tools/setup/fetch_baselines.sh``). The repo-side
-       runner falls back to the ``krt_tool`` entry of ``configs/paths.yaml``
-       when that checkout is absent (this package stays repo-import-free).
+       checkout made by ``tools/setup/fetch_baselines.sh``). With neither, the
+       repo-side runner stops before routing.
 """
 
 from __future__ import annotations
@@ -100,6 +99,21 @@ def _so_is_loadable(path: Path) -> bool:
         return False
 
 
+def _grid_router_version() -> str:
+    """The grid_router version the KRT tree's rust_router/Cargo.toml declares."""
+    import re
+
+    manifest = get_krt_root() / "rust_router" / "Cargo.toml"
+    if not manifest.is_file():
+        raise FileNotFoundError(f"{manifest} not found — the grid_router cache is keyed by its "
+                                "version; set KRT_RUST_SO_DIR to a directory with a matching "
+                                "grid_router.so instead")
+    m = re.search(r'^version\s*=\s*"([^"]+)"', manifest.read_text(), re.MULTILINE)
+    if not m:
+        raise RuntimeError(f"no version in {manifest}")
+    return m.group(1)
+
+
 def _ensure_grid_router_so() -> Path:
     """Materialize a usable ``grid_router.so`` and return its parent dir.
 
@@ -112,14 +126,16 @@ def _ensure_grid_router_so() -> Path:
     Resolution (first match wins):
       1. env var ``KRT_RUST_SO_DIR`` — directory containing
          ``grid_router.so`` (skip creation if present)
-      2. ``~/.cache/krt_runner/grid_router.so``
+      2. ``~/.cache/krt_runner/<grid_router version>/grid_router.so`` — keyed by the
+         version in the KRT tree's ``rust_router/Cargo.toml``, so a module built for
+         another KRT version (which KRT's own startup check refuses) is never reused
 
     If the upstream pre-built .so cannot load on this host, ``cargo``
     is invoked to rebuild from source into the cache dir (one-time).
     """
     explicit = os.environ.get("KRT_RUST_SO_DIR")
     d = Path(explicit).resolve() if explicit else (
-        Path.home() / ".cache" / "krt_runner"
+        Path.home() / ".cache" / "krt_runner" / _grid_router_version()
     )
     d.mkdir(parents=True, exist_ok=True)
     target = d / "grid_router.so"

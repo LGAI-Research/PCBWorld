@@ -26,6 +26,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from pcb_world.engine import KiCadEngine  # noqa: E402
 from pcb_world.core.reward import RewardFunction, RewardState  # noqa: E402
+from tests.helpers.engine import open_engine
 
 BOARD = str(PROJECT_ROOT / "tests" / "fixtures" / "simple_obstacle_board.kicad_pcb")
 
@@ -37,7 +38,7 @@ BOARD = str(PROJECT_ROOT / "tests" / "fixtures" / "simple_obstacle_board.kicad_p
 @pytest.fixture(scope="module")
 def router() -> KiCadEngine:
     """Singleton router for all tests in this module."""
-    return KiCadEngine(BOARD)
+    return open_engine(BOARD)
 
 
 def _clean(router: KiCadEngine) -> None:

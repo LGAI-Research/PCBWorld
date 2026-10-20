@@ -38,6 +38,8 @@ KNOWN_LEVELS = ("interactive", "engine_free", "plan_only")
 _LEVEL_ALIASES = {"pcbworld": "interactive", "codelevel": "engine_free",
                   "apilevel": "plan_only"}
 _LEVEL_ORDER = {lvl: i for i, lvl in enumerate(KNOWN_LEVELS)}
+# drv_definition of an overall.json that predates the key (score_rollouts.py's old drv_count).
+LEGACY_DRV_DEFINITION = "errors_and_promoted (legacy)"
 
 
 def safe_float(value: object, default: float = math.nan) -> float:
@@ -141,11 +143,22 @@ def collect(root: Path, expected_k: int, strict: bool) -> list[dict[str, object]
             "final_potential_at_k_best_mean": safe_float(data.get("final_potential_at_k_best_mean"), 0.0),
             "drv_at_k_min_mean":            safe_float(data.get("drv_at_k_min_mean"), 0.0),
             "track_angle_drv_at_k_min_mean": safe_float(data.get("track_angle_drv_at_k_min_mean"), 0.0),
+            # Summaries written before the key existed counted errors + promoted warnings.
+            "drv_definition": str(data.get("drv_definition", LEGACY_DRV_DEFINITION)),
             "reward_config":  str(data.get("reward_config", "")),
             "check_angle":    safe_int(data.get("check_angle"), 0),
             "wall_time_sec":  safe_float(data.get("wall_time_sec"), 0.0),
             "source_overall_json": str(overall),
         })
+
+    definitions = {str(r["drv_definition"]) for r in rows}
+    if len(definitions) > 1:
+        by_def = defaultdict(list)
+        for r in rows:
+            by_def[str(r["drv_definition"])].append(str(r["source_overall_json"]))
+        raise SystemExit("[error] summaries with different DRV definitions under one root "
+                         "(re-score the legacy ones with score_rollouts.py): "
+                         + "; ".join(f"{d}: {', '.join(paths)}" for d, paths in sorted(by_def.items())))
 
     rows.sort(key=lambda r: (
         str(r["model"]),
@@ -230,7 +243,11 @@ def print_table(rows: list[dict[str, object]], k: int) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(
+    repo_dir = str(Path(__file__).resolve().parents[3])  # configs.loader when run as a script
+    if repo_dir not in sys.path:
+        sys.path.insert(0, repo_dir)
+    from configs.loader.cli import StrictArgumentParser
+    p = StrictArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -272,7 +289,7 @@ def main() -> int:
         "mean_success_rate", "clean_mean_success_rate",
         "routability_at_k_best_mean", "routability_at_k_mean_mean",
         "final_potential_at_k_best_mean",
-        "drv_at_k_min_mean", "track_angle_drv_at_k_min_mean",
+        "drv_at_k_min_mean", "track_angle_drv_at_k_min_mean", "drv_definition",
         "reward_config", "check_angle", "wall_time_sec",
         "source_overall_json",
     ]

@@ -18,7 +18,7 @@ from types import SimpleNamespace
 
 from pcb_world.core.action import ActionDispatcher, net_end
 from pcb_world.core.action_schema import ACT_NET_END
-from pcb_world.core.masking import MaskContext, YamlConditionMask, get_masking_rule
+from pcb_world.core.masking import MaskContext, MaskingRuleSchema, YamlConditionMask, get_masking_rule
 
 
 class _StubEngine:
@@ -79,10 +79,10 @@ class TestMaskOwnsThePrecondition:
         assert not rule.build_mask(_ctx(fully_connected=False))[ACT_NET_END]
 
     def test_permissive_rule_exposes_early_net_end(self):
-        rule = YamlConditionMask({
+        rule = YamlConditionMask(MaskingRuleSchema.from_dict({
             "name": "netend_free_inline",
             "actions": {
                 "net_end": {"when": {"has_net": True, "is_routing": False}},
             },
-        })
+        }, "<inline>"))
         assert rule.build_mask(_ctx(fully_connected=False))[ACT_NET_END]

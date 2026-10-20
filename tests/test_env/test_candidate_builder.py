@@ -28,6 +28,7 @@ from pcb_world.vec.candidate_pool import (
     build_directional_candidates,
     parse_directional_mode,
 )
+from tests.helpers.engine import open_engine
 
 
 # ---------------------------------------------------------------------------
@@ -537,7 +538,6 @@ class TestThruHoleRealBoard:
         if not os.path.exists(board):
             pytest.skip(f"Board not found: {board}")
         try:
-            from pcb_world.engine.kicad_engine import KiCadEngine
             from pcb_world.engine.pcb_file_parser import parse_pcb_file
             from pcb_world.core.observation import (
                 BoardStatic,
@@ -546,7 +546,7 @@ class TestThruHoleRealBoard:
         except Exception as e:
             pytest.skip(f"engine/state imports unavailable: {e}")
 
-        engine = KiCadEngine(board)
+        engine = open_engine(board)
         parsed = parse_pcb_file(board, engine)
         meta = engine.get_board_meta()
         board_info = BoardStatic.from_board(

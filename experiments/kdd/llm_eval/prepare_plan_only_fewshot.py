@@ -73,7 +73,7 @@ def auto_route_actions(board_path: Path) -> str:
     """
     from pcb_world.engine.kicad_engine import KiCadEngine
 
-    engine = KiCadEngine(str(board_path))
+    engine = KiCadEngine.for_board_file(str(board_path))
     try:
         engine.build_connectivity()
         nets: dict[int, list] = defaultdict(list)
@@ -117,6 +117,7 @@ def replay_and_save(board_path: Path, actions_text: str, out_pcb: Path) -> dict:
     rolled-out board, returning routing stats so the cache JSON can
     advertise example quality.
     """
+    from configs.loader.schema import EnvConfig
     from pcb_world.core.env import PCBWorld
     from pcb_world.engine.drc_config import DEFAULT_DRC_CONFIG_PATH
     # Parse the same way ``eval_plan_only_llm_v8_standalone.py`` will when the
@@ -125,11 +126,13 @@ def replay_and_save(board_path: Path, actions_text: str, out_pcb: Path) -> dict:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from eval_plan_only_llm_v8_standalone import parse_action_line  # type: ignore
 
-    env = PCBWorld(
-        board_path=str(board_path), max_steps=10_000,
-        use_yaml_drc_fallback=True,
+    env = PCBWorld(str(board_path), EnvConfig.with_overrides(
+        max_steps=10_000, rules_source="board_or_yaml",
         drc_config_path=str(DEFAULT_DRC_CONFIG_PATH),
-    )
+        # Paper-era observation (the recipe's values before they were YAML defaults).
+        outline_obs="tess", simplify_outline=False, net_constraint_obs=False,
+        reject_if_stuck=False,   # paper-era make_line (commit the partial stub; before 2026-07-10)
+    ))
     try:
         env.reset()
         u_0 = env._initial_unconnected
@@ -137,10 +140,8 @@ def replay_and_save(board_path: Path, actions_text: str, out_pcb: Path) -> dict:
             action = parse_action_line(line)
             if action is None:
                 continue
-            try:
-                env.step(action)
-            except Exception:
-                pass
+            # A rejected action is a return value; an exception is a crash or a bug.
+            env.step(action)
         snap = env._engine.get_reward_snapshot(run_drc=True)
         out_pcb.parent.mkdir(parents=True, exist_ok=True)
         env._engine.save(str(out_pcb))
@@ -153,10 +154,7 @@ def replay_and_save(board_path: Path, actions_text: str, out_pcb: Path) -> dict:
             "wirelength_mm": float(snap.total_wirelength),
         }
     finally:
-        try:
-            env.close()
-        except Exception:
-            pass
+        env.close()
 
 
 # ---------------------------------------------------------------------------
@@ -166,29 +164,30 @@ def replay_and_save(board_path: Path, actions_text: str, out_pcb: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 def extract_initial_board_state(board_path: Path, state_format: str = "sexpr") -> str:
+    from configs.loader.schema import EnvConfig
     from pcb_world.core.env import PCBWorld
     from pcb_world.engine.drc_config import DEFAULT_DRC_CONFIG_PATH
     from methods.llm_agent.wrappers.state_converter import (
         format_state_split_sexpr, format_state_split,
     )
 
-    env = PCBWorld(
-        board_path=str(board_path), state_format=state_format,
-        max_steps=10_000, use_yaml_drc_fallback=True,
+    env = PCBWorld(str(board_path), EnvConfig.with_overrides(
+        max_steps=10_000, rules_source="board_or_yaml",
         drc_config_path=str(DEFAULT_DRC_CONFIG_PATH),
-    )
+        # Paper-era observation (the recipe's values before they were YAML defaults).
+        outline_obs="tess", simplify_outline=False, net_constraint_obs=False,
+        reject_if_stuck=False,   # paper-era make_line (commit the partial stub; before 2026-07-10)
+    ))
     try:
         obs, _info = env.reset()
+        # paper-era (legacy v5) obs elements of this env
         if state_format == "sexpr":
-            static, _ = format_state_split_sexpr(obs)
+            static, _ = format_state_split_sexpr(obs, "v5", net_constraint_obs=env.net_constraint_obs)
         else:
-            static, _ = format_state_split(obs)
+            static, _ = format_state_split(obs, "v5", net_constraint_obs=env.net_constraint_obs)
         return static
     finally:
-        try:
-            env.close()
-        except Exception:
-            pass
+        env.close()
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +195,8 @@ def extract_initial_board_state(board_path: Path, state_format: str = "sexpr") -
 # ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__)
+    from configs.loader.cli import StrictArgumentParser
+    p = StrictArgumentParser(description=__doc__)
     p.add_argument("src_dir", type=Path,
                    help="Directory of unrouted .kicad_pcb (e.g. synth_2L_v2/val).")
     p.add_argument("-o", "--output", type=Path, required=True,

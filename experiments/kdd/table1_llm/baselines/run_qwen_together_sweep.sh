@@ -74,7 +74,7 @@ APISEQ_FEWSHOT_CACHE="${APISEQ_FEWSHOT_CACHE:-${REPO_ROOT}/cache/apiseq_fewshot}
 KS="${KS:-1,5,10,25}"
 N_SAMPLES="${N_SAMPLES:-25}"          # = max(KS)
 N_FEWSHOT="${N_FEWSHOT:-2}"
-LIMIT_REAL="${LIMIT_REAL:-20}"
+LIMIT_REAL="${LIMIT_REAL:-20}"       # first N D3-A boards (configs/datasets/d3.json easy.test); 0 = all 99
 # 0 = no limit; the synth_2L_v2/test set holds all 128 boards.
 LIMIT_SYNTH="${LIMIT_SYNTH:-0}"
 
@@ -189,10 +189,13 @@ run_one() {
     local recursive_arg=()
     local limit_arg=()
     if [[ "$set_name" == "real" ]]; then
-        mapfile -t real_files < <(
-            find "$REAL_BOARD_DIR" -maxdepth 2 -type f \
-                -name "$REAL_BOARD_NAME_FILTER" | sort | head -n "$LIMIT_REAL"
-        )
+        # D3-A boards (configs/datasets/d3.json easy.test); LIMIT_REAL caps the count.
+        # A failed resolution fails this scenario only; the sweep loop moves on.
+        local _resolved
+        _resolved="$(python3 "$SCRIPT_DIR/d3a_boards.py" "$REAL_BOARD_DIR" "$REAL_BOARD_NAME_FILTER" "$LIMIT_REAL")" \
+            || { echo "[error] could not resolve the D3-A board list under $REAL_BOARD_DIR (see above)" >&2; return 1; }
+        real_files=()
+        [[ -n "$_resolved" ]] && mapfile -t real_files <<< "$_resolved"
         if [[ "${#real_files[@]}" -eq 0 ]]; then
             echo "[skip] no real boards matched $REAL_BOARD_NAME_FILTER under $REAL_BOARD_DIR"
             return

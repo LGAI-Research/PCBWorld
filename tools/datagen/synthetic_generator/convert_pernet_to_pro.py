@@ -6,7 +6,7 @@ netclass_patterns.
 Unlike ``migrate_dataset_to_pro.py`` (which derives ONE shared rules template
 from the default netclass and reuses it for every board — correct only when all
 boards share rules), this runs a PER-BOARD engine round-trip:
-``KiCadEngine(board).save(board)``. The engine writes a .kicad_pro whose
+``load_and_save_via_engine(board, board)``. The engine writes a .kicad_pro whose
 net_settings.classes/patterns preserve each net's own clearance/width/via
 (verified: get_netclass_for_net round-trips per-net). Required for D2-B-V, where
 every board — and every net within a board — has different rules.
@@ -16,7 +16,6 @@ Usage:
 """
 from __future__ import annotations
 
-import argparse
 import multiprocessing as mp
 import os
 import sys
@@ -38,7 +37,8 @@ def _convert_one(pcb_path_str: str) -> tuple[str, bool, str]:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__)
+    from configs.loader.cli import StrictArgumentParser
+    p = StrictArgumentParser(description=__doc__)
     p.add_argument("--src", required=True, help="dir of board_*.kicad_pcb")
     p.add_argument("--workers", type=int, default=16)
     p.add_argument("--shard", default=None, metavar="I/N",

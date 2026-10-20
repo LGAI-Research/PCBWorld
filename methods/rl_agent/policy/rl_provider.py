@@ -37,14 +37,14 @@ Checkpoint contract (v55/v56, as written by ``scripts/train.py``):
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 
-# Codec helpers — the visualizer drives the bare PCBWorld (no wrapper), so we
-# reuse the same stateless codec the wrapper uses (de-dup of former private
-# copies _sorted_net_codes_from_obs / _net_valid_mask_from_obs).
-from methods.rl_agent.models.v1.encoding import (
-    net_valid_mask,
-    sorted_net_codes_from_obs,
-)
+from configs.loader.schema import RLEnvConfig
+
+# Codec helper — the visualizer drives the bare PCBWorld (no wrapper), so the
+# candidate pool and the full mask payload come from the same stateless codec
+# functions as KiCadRLWrapper's.
+from methods.rl_agent.models.v1.encoding import dist_from_obs
 
 
 # Map routing_mode int → single-letter token consumed by
@@ -152,6 +152,31 @@ def _resolve_rl_ckpt_file(path: str) -> str:
     return iter_files[-1][1]
 
 
+@dataclass(frozen=True)
+class CkptMaskKnobs:
+    """The act-time mask knobs a checkpoint trained under — what the serving
+    paths (this provider, the remote act server) feed ``dist_from_obs``."""
+
+    mask_start_point: bool
+    offboard_mask: bool
+    force_walkaround: bool
+    net_reselect: bool
+
+    @classmethod
+    def from_checkpoint(cls, ckpt_args: dict) -> "CkptMaskKnobs":
+        """Resolved exactly as eval rebuilds the training env
+        (``RLEnvConfig.from_checkpoint``: inverted ``no_mask_start_point``,
+        pre-knob checkpoints take the legacy values)."""
+        # max_steps is not a mask knob; the env config is read for the knobs only.
+        cfg = RLEnvConfig.from_checkpoint(ckpt_args, max_steps=1)
+        return cls(
+            mask_start_point=cfg.mask_start_point,
+            offboard_mask=cfg.offboard_mask,
+            force_walkaround=cfg.force_walkaround,
+            net_reselect=cfg.env.net_reselect,
+        )
+
+
 class RLPolicyProvider:
     """Local RL policy provider — see module docstring."""
 
@@ -179,25 +204,23 @@ class RLPolicyProvider:
         # legacy-arg inference + use_critic from the state_dict + tolerant
         # action-history/drc missing keys, hard mismatches raise.
         self._agent = KiCadRLAgent.from_checkpoint(
-            ckpt_file, device=device, deterministic=deterministic,
+            ckpt_file, device=device, strict=args.strict_ckpt,
+            deterministic=deterministic,
         )
         self.policy = self._agent.model  # back-compat attribute
-        ta: dict = self._agent.ckpt_args
+        ta = self._agent.ckpt_args
 
         self.device = self._agent.device
         self.deterministic = deterministic
-        # Match training obs distribution: when training ran with
-        # ``--no-drc-tokens``, the tokenizer didn't see ``drc_violations``,
-        # so we strip them here too. See ``BatchedStateTokenizer`` ~line 408.
-        self.no_drc_tokens = bool(ta.get("no_drc_tokens", False))
-        # When training ran with policy-driven net selection, infer net_valid_mask
-        # at inference too — otherwise the policy keeps picking already-routed
-        # nets (training-time distribution mismatch).
-        self.policy_net_select = bool(ta.get("policy_net_select", False))
-        # KiCadRLWrapper default is True (training arg likely missing
-        # from older runs — match wrapper default rather than False so we
-        # don't silently break parity for policies that learned with it on).
-        self.mask_start_point = bool(ta.get("mask_start_point") or True)
+        # Act as trained: strip drc_violations (--no-drc-tokens), infer
+        # net_valid_mask (policy net selection), and the mask knobs the policy
+        # trained under (shared with the remote act server).
+        self.no_drc_tokens = not ta["emit_drc_tokens"]
+        self.policy_net_select = bool(ta["policy_net_select"])
+        self.mask_knobs = CkptMaskKnobs.from_checkpoint(ta)
+        # Provider contract (env_io.check_policy_matches_env): the caller
+        # driving the env must build its PCBWorld with this value.
+        self.net_reselect = self.mask_knobs.net_reselect
         # Wrapper state we re-derive on the inference side: the candidate
         # key (x, y, layer) of the most recent ACT_START_ROUTE the policy
         # emitted, kept until ACT_NET_END / ACT_NET_SELECT (or auto-cleared
@@ -213,31 +236,30 @@ class RLPolicyProvider:
               f"deterministic={self.deterministic}")
 
     def generate(self, prompt_pairs, observations=None, *,
-                 action_masks=None, raw_tokens: bool = False):
+                 action_masks, raw_tokens: bool = False):
         """Emit one decoded action per observation.
 
         ``prompt_pairs`` is accepted for interface uniformity but ignored:
         the RL policy consumes the raw obs dict, not text. Pass the obs
         list via ``observations=`` — length must match ``prompt_pairs``.
 
-        ``action_masks`` (optional) — per-obs boolean masks of valid
-        action types, shape ``(N, NUM_ACTIONS)`` (numpy or torch). Source
-        is :meth:`PCBWorld.action_masks` (one row per obs). Without it
-        the decoder can sample an action_type whose pointer/mode head has
-        no valid output, producing NaN logits at terminal-like states.
-        Matches the training-time path
-        (``methods/rl_agent/training/collect.py``).
+        ``action_masks`` — per-obs boolean masks of valid action types,
+        shape ``(N, NUM_ACTIONS)`` (array-like). Source is
+        :meth:`PCBWorld.action_masks` (one row per obs). The rest of the
+        mask payload (same-point, off-board, off-layer, mode, net-valid) is
+        rebuilt from the obs with the wrapper's own rules
+        (``encoding.dist_from_obs``), so the masks are the ones the policy
+        trained under. The candidate pool comes from the obs alone: without
+        the wrapper's ``_aug`` it uses the default directional ring, no
+        connectivity filter and no pad-graze guard, whatever the checkpoint
+        trained with.
 
         ``raw_tokens=True`` switches the response's ``<think>`` body to
         the demo integer triple ``[at, ptr, mode]``. The ``<action>``
         body remains the LLM-format parseable command either way so
         ``pcbworld_projection → env.step`` doesn't care.
         """
-        import torch
-        from pcb_world.vec.candidate_pool import (
-            collect_raw_candidates,
-            build_directional_candidates,
-        )
+        import numpy as np
         from methods.rl_agent.policy.human_render import (
             render_action_human, count_state_entities,
         )
@@ -254,18 +276,14 @@ class RLPolicyProvider:
                 f"prompt_pairs length ({len(prompt_pairs)})"
             )
 
-        masks_t = None
-        if action_masks is not None:
-            import numpy as np
-            arr = np.asarray(action_masks, dtype=bool)
-            if arr.ndim == 1:
-                arr = arr[None, :]
-            if arr.shape[0] != len(observations):
-                raise RuntimeError(
-                    f"action_masks first dim ({arr.shape[0]}) does not match "
-                    f"observations length ({len(observations)})"
-                )
-            masks_t = torch.from_numpy(arr)
+        am = np.asarray(action_masks, dtype=bool)
+        if am.ndim == 1:
+            am = am[None, :]
+        if am.shape[0] != len(observations):
+            raise RuntimeError(
+                f"action_masks first dim ({am.shape[0]}) does not match "
+                f"observations length ({len(observations)})"
+            )
 
         from pcb_world.core.masking import (
             ACT_START_ROUTE, ACT_MAKE_LINE, ACT_MAKE_VIA, ACT_FINISH,
@@ -278,23 +296,7 @@ class RLPolicyProvider:
                 # Shallow-copy so caller's obs is untouched.
                 obs = {**obs, "drc_violations": []}
 
-            # Rebuild cand pool first — needed both for pointer_masks (built
-            # before policy call) and for envelope construction after.
-            # collect_raw_candidates mirrors the tokenizer at
-            # state_tokenizer_batched.py:467.
             rh = obs.get("router_head", {})
-            cn = rh.get("current_net", -1)
-            cur_net = cn if isinstance(cn, int) and cn > 0 else None
-            extra = None
-            if rh.get("is_routing", False):
-                hxy = rh["current_xy"]
-                _pa = obs.get("_aug") or {}
-                extra = build_directional_candidates(
-                    (hxy[0], hxy[1]), rh["current_layer"],
-                    mode=_pa.get("directional_candidates"),
-                )
-            raw_cands = collect_raw_candidates(obs, cur_net, extra)
-            cand_mm = [(x, y, ly) for (x, y, ly, _ct) in raw_cands]
 
             # Auto-clear stale start-route state when no net is active
             # (env.reset → current_net=-1, ACT_NET_END → current_net=-1).
@@ -305,59 +307,17 @@ class RLPolicyProvider:
             if rh.get("current_net", -1) == -1:
                 self._last_start_route_xy = None
 
-            # Without action_masks, the pointer/mode head can produce NaN
-            # logits at terminal-like states (empty cand pool, no valid net).
-            # Threading env.action_masks() through matches training-time
-            # collect.py call shape.
-            per_obs_mask = masks_t[i:i + 1] if masks_t is not None else None
-
-            # net_valid_mask: only meaningful when the policy was trained
-            # with policy_net_select=True (otherwise the wrapper picked
-            # nets externally and the policy's pointer logits over the
-            # net pool were never used in the loss). Reconstructed from
-            # obs.routing_geometry so the visualizer can stay on the
-            # bare PCBWorld (no wrapper).
-            extra_kwargs: dict = {}
-            if self.policy_net_select:
-                import numpy as np
-                sorted_codes_for_mask = sorted_net_codes_from_obs(obs)
-                nvm = net_valid_mask(
-                    sorted_net_codes=sorted_codes_for_mask, last_obs=obs,
-                )
-                extra_kwargs["net_valid_mask"] = torch.from_numpy(
-                    nvm[None, :]
-                )
-                extra_kwargs["allow_net_select_lp"] = True
-
-            # pointer_masks (mask_start_point): exclude the cand equal to
-            # the active start_route key (x, y, layer) — mirrors
-            # KiCadRLWrapper.start_route_pointer_indices (layer-aware).
-            # Without this, the policy can re-pick the start pad
-            # as a routing target (visible in the GUI as a
-            # start_route→finish FAIL loop on the same coord).
-            # Provider-side state since the bare PCBWorld has no wrapper.
-            if (
-                self.mask_start_point
-                and self._last_start_route_xy is not None
-                and cand_mm
-            ):
-                sx, sy, sl = self._last_start_route_xy
-                pm_idxs = [
-                    k for k, (cx, cy, ly) in enumerate(cand_mm)
-                    if abs(cx - sx) < 0.01 and abs(cy - sy) < 0.01
-                    and ly == sl
-                ]
-                if pm_idxs:
-                    extra_kwargs["pointer_masks"] = torch.tensor(
-                        [pm_idxs], dtype=torch.long,
-                    )
+            # Provider-side start-route state since the bare PCBWorld has no
+            # wrapper; everything else is a function of the obs. The pool is
+            # also the envelope's pointer table (same pool as the tokenizer).
+            dist, (cand_mm,), (sorted_codes,) = dist_from_obs(
+                [obs], [am[i]], [self._last_start_route_xy], self.mask_knobs,
+                policy_net_select=self.policy_net_select,
+            )
+            dist = dist.to(self.device)
 
             # Inference through the agent facade (no_grad inside .act).
-            actions, _logp = self._agent.act(
-                [obs],
-                action_masks=per_obs_mask,
-                **extra_kwargs,
-            )
+            actions, _logp = self._agent.act([obs], dist=dist)
             at, ptr, rm = (int(x) for x in actions[0].tolist())
 
             # Update _last_start_route_xy after decoding the action — same
@@ -384,14 +344,11 @@ class RLPolicyProvider:
             # unchanged. Without this, the GUI would treat the response
             # as unparseable text and fall through to the idle fallback,
             # leaving the board unmodified.
-            sorted_codes = sorted_net_codes_from_obs(obs)
             envelope = _build_action_envelope(
                 at, ptr, rm,
                 cand_mm=cand_mm,
                 sorted_net_codes=sorted_codes,
-                policy_net_select=bool(
-                    self._train_args.get("policy_net_select", False)
-                ),
+                policy_net_select=self.policy_net_select,
                 human_text=human_text,
             )
             responses.append(envelope)
@@ -400,10 +357,8 @@ class RLPolicyProvider:
             # human_render.count_state_entities for the per-entity breakdown.
             token_counts.append((0, count_state_entities(
                 obs,
-                obstacle_obs=bool(self._train_args.get("obstacle_obs", False)),
-                action_history_len=int(
-                    self._train_args.get("action_history_len", 1)
-                ),
+                obstacle_obs=bool(self._train_args["obstacle_obs"]),
+                action_history_len=int(self._train_args["action_history_len"]),
             ), 1))
 
         return responses, token_counts

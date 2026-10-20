@@ -32,4 +32,5 @@ paper_repro_load_figure6_reward_case() {
   FIGURE6_N_HEADS=8
   FIGURE6_N_LAYERS=4
   FIGURE6_D_FF=512
+  FIGURE6_PAPER_N_ROLLOUTS=1
 }

@@ -19,8 +19,10 @@ from pathlib import Path
 
 import pytest
 
+from configs.loader.schema import EnvConfig
 from pcb_world.core.reward import PotentialReward, RewardState
 from pcb_world.engine.drc import ORPHAN_NET_KEY
+from tests._rule_helpers import ENV_PENALTIES, yaml_lines
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 REWARD_RULES_DIR = PROJECT_ROOT / "tests" / "fixtures" / "reward_rules"
@@ -221,9 +223,9 @@ def test_env_resolves_weights_and_clean_log_scale(board_path, tmp_path):
         "  drc_log_offset: 2.0\n"
         "  step_penalty: 0.0\n"
         "  drc_severity_mode: errors_and_promoted\n"
+        + yaml_lines(ENV_PENALTIES)
     )
-    env = PCBWorld(board_path=str(board_path), max_steps=10,
-                   reward_rule=str(rule))
+    env = PCBWorld(str(board_path), EnvConfig.with_overrides(max_steps=10, reward_rule=str(rule)))
     try:
         env.reset()
         pot = env._potential_reward
@@ -254,8 +256,8 @@ def test_env_snapshot_populates_connectivity(board_path):
     from pcb_world.core.env import PCBWorld
 
     env = PCBWorld(
-        board_path=str(board_path), max_steps=10,
-        reward_rule=str(REWARD_RULES_DIR / "reward_ladder_wlnorm.yaml"),
+        str(board_path),
+        EnvConfig.with_overrides(max_steps=10, reward_rule=str(REWARD_RULES_DIR / "reward_ladder_wlnorm.yaml")),
     )
     try:
         env.reset()

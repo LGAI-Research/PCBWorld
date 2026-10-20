@@ -24,6 +24,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from eval import eval_utils as u
@@ -41,17 +42,16 @@ from methods._shared.board_loader import (
     load_boards_from_split_json,
 )
 from eval.metrics import EvalResult
-from methods.rl_agent.models.loader import (
-    _corner_mode_code,
-    apply_drc_off,
-    env_kwargs_from_checkpoint,
-    env_kwargs_from_training_args,
-)
+from configs.loader.ckpt import add_strict_ckpt_arg
+from configs.loader.expect import check_expect
+from configs.loader.record import RUN_RECORD, board_record, write_run_record
+from configs.loader.resolve import ConfigError, Entry, Layer, RunConfig, same_value, user_layers
+from configs.loader.schema import RLEnvConfig
 from methods.rl_agent.rollout.transformer import (
     apply_n_max_slots_override,
     load_policy_from_ckpt,
 )
-from eval.rollout.rl import eval_transformer
+from eval.rollout.rl import eval_env_config, eval_transformer, resolve_eval_env
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -133,6 +133,7 @@ def _rows_from_boards_dir(cell_dir: Path) -> list[dict[str, Any]]:
             "board_id": bid,
             "rollout_idx": r,
             "seed": s,
+            "ckpt": s,
             "status": "completed",
             "artifact_path": str(pcb.resolve()),
         })
@@ -151,8 +152,10 @@ def flatten_rollout_artifacts(cell_dir: Path, *, ckpt_seed: int = 0) -> int:
     each saved rollout board (with its ``.kicad_pro``/``.kicad_prl`` sidecars)
     is renamed into ``boards/`` and its ``artifact_path`` row is rewritten in
     place. ``s<SS>`` is the checkpoint's training seed (one ckpt per rollout
-    run). Rows whose filename already matches the grammar are left untouched,
-    so re-runs are no-ops. Returns the number of files moved.
+    run); it is also written to the ``ckpt`` column of every row, so a failed
+    attempt (no artifact) stays attributable after cells are merged. Rows whose
+    filename already matches the grammar are left untouched, so re-runs are
+    no-ops. Returns the number of files moved.
     """
     cell_dir = Path(cell_dir).resolve()
     cell = cell_dir.name
@@ -162,7 +165,11 @@ def flatten_rollout_artifacts(cell_dir: Path, *, ckpt_seed: int = 0) -> int:
     rows = u.read_csv(per_rollout_path)
     boards_dir = cell_dir / "boards"
     moved = 0
+    stamped = 0
     for row in rows:
+        if row.get("ckpt", "") == "":
+            row["ckpt"] = int(ckpt_seed)
+            stamped += 1
         ap = row.get("artifact_path", "") or ""
         if not ap or u.parse_cell_artifact(ap, cell) is not None:
             continue  # no artifact, or already in the unified grammar
@@ -189,8 +196,9 @@ def flatten_rollout_artifacts(cell_dir: Path, *, ckpt_seed: int = 0) -> int:
             row["routed_pcb"] = str(dst)
         row["artifact_path"] = str(dst)
         moved += 1
-    if moved:
+    if moved or stamped:
         u.write_csv(per_rollout_path, rows, u.PER_ROLLOUT_FIELDS)
+    if moved:
         try:  # drop the staging dir when the move emptied it
             (cell_dir / "artifacts").rmdir()
         except OSError:
@@ -349,6 +357,137 @@ def eval_kicad_pcb(
     return rows
 
 
+_BARE_BOARD_FIELDS = (
+    "board_id", "board_path", "pro_path", "initial_potential", "reward_config",
+    "eval_status", "error",
+)
+
+
+def _failed_board_inputs(
+    rows: list[dict[str, Any]], cell_dir: Path, boards: list[BoardSpec] | None,
+) -> dict[str, str]:
+    """board_id -> input ``.kicad_pcb`` of every board with a failed attempt
+    (Stage 3's rule, :func:`eval.aggregation.classify_cell_rows`, plus an
+    expected board without a row, plus a board with a ckpt whose routed attempts
+    all failed scoring — Stage 3 prices those as failed attempts too — plus a
+    board with a scored attempt that carries no Φ₀: inline scoring of an env whose
+    reset ran no DRC, :func:`eval.metrics.compute_metrics_inline`; Stage 3 fills its
+    Φ₀ and gain); ``""`` when no path is known."""
+    from eval.aggregation import all_routed_unscored, classify_cell_rows, scored_without_phi0
+
+    routed, failed, board_index = classify_cell_rows(
+        rows, cell_dir, cell_dir / "per_rollout.csv", caller="score_bare_boards")
+    expected = {b.board_id: b.path for b in boards or ()}
+    priced = dict(failed)
+    for bid, per in routed.items():
+        unscored = [rr for rr in per.values() if all_routed_unscored(rr)]
+        if unscored and bid not in priced:
+            priced[bid] = unscored[0]
+        if bid not in priced and any(scored_without_phi0(r) for rr in per.values() for r in rr):
+            priced[bid] = [r for rr in per.values() for r in rr]
+    need = {
+        bid: next((r["board_path"] for r in rr if r.get("board_path")), "")
+        or expected.get(bid, "")
+        for bid, rr in priced.items()
+    }
+    for bid, path in expected.items():
+        if bid not in board_index:
+            need[bid] = path
+    return need
+
+
+def score_bare_boards(
+    cell_dir: Path,
+    boards: list[BoardSpec] | None,
+    *,
+    n_workers: int = 1,
+    reward_config: str = DEFAULTS.reward_config,
+    check_angle: int = DEFAULTS.check_angle,
+    boards_dir: Path | None = None,
+    start_method: str = "forkserver",
+) -> list[dict[str, Any]]:
+    """Stage 2 for failed attempts: record the bare-board Φ₀ of every board
+    with one (or with a scored attempt that carries no Φ₀) in
+    ``<cell>/initial_potentials.csv``.
+
+    A failed attempt left no board, so Stage 3 prices it as the input board
+    left untouched: :func:`eval.metrics.evaluate_one` on the input board, whose
+    ``initial_potential`` (tracks/vias stripped, DRC included) is the same Φ₀ a
+    routed attempt's scoring reports. Boards already recorded under the same
+    ``reward_config`` are skipped, so reruns are incremental.
+    """
+    cell_dir = Path(cell_dir).resolve()
+    per_rollout_path = cell_dir / "per_rollout.csv"
+    rows = u.read_csv(per_rollout_path) if per_rollout_path.is_file() else []
+    need = _failed_board_inputs(rows, cell_dir, boards)
+    out_csv = cell_dir / u.BARE_BOARD_POTENTIALS_CSV
+    records: dict[str, dict[str, Any]] = {}
+    if out_csv.is_file():
+        records = {
+            r["board_id"]: r for r in u.read_csv(out_csv)
+            if r.get("eval_status") == "ok" and r.get("reward_config") == reward_config
+        }
+    # An input board without its own project file (e.g. PCBench's
+    # ``processed_v9_guide_v3_unrouted.kicad_pcb``) takes the one next to the
+    # board-list entry (``processed_v9_guide_v3.kicad_pro``).
+    listed_pro = {b.board_id: Path(b.path).with_suffix(".kicad_pro")
+                  for b in boards or () if b.path}
+    jobs: list[dict[str, Any]] = []
+    for bid, path in sorted(need.items()):
+        if bid in records:
+            continue
+        rec = {"board_id": bid, "board_path": path, "reward_config": reward_config}
+        if not path or not Path(path).is_file():
+            records[bid] = {**rec, "eval_status": "no_input_board",
+                            "error": f"input board not found: {path!r}"}
+            continue
+        pro = u.resolve_pro_path(Path(path), str(boards_dir) if boards_dir else None)
+        if pro is None and bid in listed_pro and listed_pro[bid].is_file():
+            pro = listed_pro[bid]
+        jobs.append({**rec, "pro_path": str(pro) if pro else ""})
+    print(f"[bare_boards] {cell_dir.name}: boards_with_failed_or_unscored={len(need)} "
+          f"jobs={len(jobs)} already_done={len(need) - len(jobs)}", flush=True)
+
+    def _record(job: dict[str, Any], result: dict[str, Any]) -> None:
+        phi0 = result.get("initial_potential")
+        ok = "error" not in result and phi0 is not None and math.isfinite(phi0)
+        records[job["board_id"]] = {
+            **job, "initial_potential": phi0 if ok else "",
+            "eval_status": "ok" if ok else "error",
+            "error": "" if ok else str(result.get("error", "no initial_potential"))[:500],
+        }
+
+    if jobs and n_workers <= 1:
+        from eval.metrics import evaluate_one
+
+        for job in jobs:
+            try:
+                result = evaluate_one(job["board_path"], job["pro_path"] or None,
+                                      reward_config_name=reward_config,
+                                      check_angle=check_angle)
+            except Exception as exc:  # noqa: BLE001
+                result = {"error": f"{type(exc).__name__}: {exc}"}
+            _record(job, result)
+    elif jobs:
+        from pcb_world.vec.subproc_pool import SubprocEvalPool
+
+        with SubprocEvalPool(n_workers=min(n_workers, len(jobs)), reward_config=reward_config,
+                             check_angle=check_angle, start_method=start_method) as pool:
+            pool.evaluate_many(
+                [(j["board_path"], j["pro_path"] or None) for j in jobs],
+                on_result=lambda k, result: _record(jobs[k], result),
+            )
+    out = [records[b] for b in sorted(records)]
+    if out:
+        u.write_csv(out_csv, out, _BARE_BOARD_FIELDS)
+    bad = [r for r in out if r.get("eval_status") != "ok"]
+    if bad:
+        print(f"[bare_boards] WARNING: {len(bad)} board(s) have no Φ₀ "
+              f"(e.g. {bad[0]['board_id']}: {bad[0]['error']}) — Stage 3 leaves "
+              f"their failed attempts' potential blank.", flush=True)
+    return out
+
+
 # ============================================================================
 # Emission helpers — moved to the sink homes (logger / evaluator); imported
 # here for the CLI main(). emit_tensorboard lives next to log_metrics;
@@ -390,12 +529,16 @@ def _resolve_device(spec: str) -> "torch.device":
     return torch.device(spec)
 
 
-def _parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(
+def _parse_args() -> tuple[Any, argparse.Namespace]:
+    """The pipeline's parser and its parse (the parser keeps the dests the command line gave)."""
+    from configs.loader.cli import StrictArgumentParser
+    from configs.loader.resolve import add_run_args
+    p = StrictArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--ckpt", type=Path, default=None)
+    add_strict_ckpt_arg(p)
     boards = p.add_mutually_exclusive_group(required=False)
     boards.add_argument("--boards-dir", type=Path)
     boards.add_argument("--boards-list", type=Path)
@@ -446,15 +589,19 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "DRC scoring config (configs/reward/*.yaml; same namespace as the "
             f"training reward_rule). Default: {DEFAULTS.reward_config!r} "
-            "(errors-only). Override to score with a different DRV config; "
-            "warns when it differs from the ckpt's training reward_rule."
+            "(the shipped training rule). Override to score with a different DRV config; "
+            "warns when it differs from the ckpt's training reward_rule. With "
+            "--skip-rollout (re-scoring) the cell's recorded rule is used unless "
+            "this flag names another (warned; both recorded) or the cell records none."
         ),
     )
     p.add_argument(
         "--check-angle", type=int, choices=CHECK_ANGLES, default=None,
         help=(
-            "DRC track-angle check (45/90). Omitted: inherit the ckpt's "
-            "corner_mode."
+            "DRC track-angle check (45/90). Omitted: the env's final "
+            "corner_mode (the ckpt's, or --corner-mode). With --skip-rollout "
+            "(re-scoring) the cell's recorded angle is used unless this flag names "
+            "another (warned; both recorded) or the cell records none."
         ),
     )
     # ---- env-kwargs overrides (None = inherit the ckpt's training args) ----
@@ -480,6 +627,9 @@ def _parse_args() -> argparse.Namespace:
         choices=SELECTION_METHODS,
         default=DEFAULTS.selection_method,
         dest="selection_method",
+        help=("Stage 3 per-board rollout selection. With --skip-rollout (re-scoring) the "
+              "cell's recorded selection is used unless this flag names another (warned; "
+              "both recorded) or the cell records none."),
     )
     p.add_argument("--dump-per-board-csv", action="store_true")
     p.add_argument("--output-dir", type=Path, default=None)
@@ -494,6 +644,7 @@ def _parse_args() -> argparse.Namespace:
              "overrides the --skip-* flags. e.g. --stages eval,aggregate.",
     )
     p.add_argument("--dry-run", action="store_true")
+    add_run_args(p)
     args = p.parse_args()
     # --stages (positive) -> the three skip booleans (overrides --skip-*).
     if args.stages is not None:
@@ -522,6 +673,8 @@ def _parse_args() -> argparse.Namespace:
             p.error("--skip-rollout requires --output-dir containing per_rollout.csv")
         if args.inline_drc == "on":
             p.error("--inline-drc on is incompatible with --skip-rollout")
+        if args.recipe is not None or args.expect is not None:
+            p.error("--recipe / --expect apply to the rollout's env config: not with --skip-rollout")
     else:
         if args.ckpt is None:
             p.error("--ckpt is required unless --skip-rollout is set")
@@ -531,7 +684,7 @@ def _parse_args() -> argparse.Namespace:
             p.error("--seed is required unless --skip-rollout is set")
         if args.n_rollouts is None:
             p.error("--n-rollouts is required unless --skip-rollout is set")
-    return args
+    return p, args
 
 
 def _resolve_modes(args: argparse.Namespace) -> tuple[str, bool]:
@@ -551,25 +704,215 @@ def _resolve_modes(args: argparse.Namespace) -> tuple[str, bool]:
     return mode, final_drc
 
 
-def _env_overrides_from_args(args: argparse.Namespace) -> dict[str, Any]:
-    """Collect explicitly-set eval-time env overrides (None values = inherit).
+#: The eval CLI's env overrides: dest = the env record key (None = inherit the checkpoint).
+ENV_OVERRIDE_DESTS = ("max_steps", "reward_rule", "via_penalty", "wirelength_penalty", "drc_penalty",
+                      "reward_step_penalty", "corner_mode")
 
-    Returned keys match :func:`methods.rl_agent.models.loader.env_kwargs_from_checkpoint` so they
-    can be overlaid directly onto the ckpt-derived env_kwargs.
-    """
-    raw = {
-        "reward_rule": args.reward_rule,
-        "via_penalty": args.via_penalty,
-        "wirelength_penalty": args.wirelength_penalty,
-        "drc_penalty": args.drc_penalty,
-        "reward_step_penalty": args.reward_step_penalty,
-        "corner_mode": (
-            None if args.corner_mode is None else _corner_mode_code(args.corner_mode)
-        ),
-        # store_true flag: absent → None (inherit ckpt/default False)
-        "simplify_outline": True if getattr(args, "simplify_outline", False) else None,
-    }
-    return {k: v for k, v in raw.items() if v is not None}
+
+def env_overrides_vs_ckpt(env_run: Any, ckpt_where: str) -> dict[str, tuple[Any, Any]]:
+    """``{key: (ckpt value, eval value)}`` of the env keys the eval CLI or recipe set to another
+    value than the checkpoint's — compared with the checkpoint layer's entry (``where`` =
+    ``ckpt_where``), not the layer just below (a recipe or the DRC_OFF ``mode-default`` layer);
+    a key that restates the checkpoint value is not an override."""
+    out = {}
+    for k, e in env_run.provenance.items():
+        ckpt = _ckpt_entry(e.chain, ckpt_where)
+        if (e.source == "cli" or e.source.startswith("recipe:")) and ckpt and not same_value(ckpt["value"], e.value):
+            out[k] = (ckpt["value"], e.value)
+    return out
+
+
+#: The scoring settings a cell records and a re-scoring run reuses: Stage 2's DRC scoring (the
+#: scored rows carry it too) and Stage 3's per-board selection.
+SCORING_KEYS = ("reward_config", "check_angle", "selection_method")
+DRC_SCORING_KEYS = SCORING_KEYS[:2]
+#: The run record of a re-scoring run (``--skip-rollout``), beside the rollout's ``run_record.yaml``.
+RESCORE_RUN_RECORD = "run_record.rescore.yaml"
+
+
+def _same_scoring(key: str, a: Any, b: Any) -> bool:
+    """Two scoring values name the same setting: a rule file path ``…/foo.yaml`` is the rule
+    ``foo`` (the name the scored rows record), and ``90`` is ``"90"``."""
+    def name(v: Any) -> Any:
+        return Path(v).stem if key == "reward_config" and str(v).endswith((".yaml", ".yml")) else v
+    return same_value(name(a), name(b))
+
+
+def scoring_vs_training(training: Mapping[str, Any], scoring_rule: str, *,
+                        warn: bool = True) -> dict[str, Any]:
+    """The record of how an RL cell's DRC scoring rule relates to the reward its checkpoint
+    trained with — ``training`` holds the ckpt's ``reward_rule`` and its per-run overrides
+    (:data:`~pcb_world.core.reward_config.REWARD_OVERRIDE_ARGS`) — for ``extra.scoring``. Compared
+    by the Φ they define (``phi_diff``: an alias or a path to the same rule matches); a different
+    Φ is warned about (``warn``), naming both and the arguments that differ."""
+    from pcb_world.core.reward_config import (REWARD_OVERRIDE_ARGS, effective_reward_config,
+                                              get_reward_config, phi_diff)
+
+    rule = str(training["reward_rule"])
+    try:
+        trained = effective_reward_config(rule, training)
+    except (KeyError, FileNotFoundError) as exc:
+        raise ConfigError(
+            f"comparing the DRC scoring rule {scoring_rule!r} with the ckpt's training reward_rule "
+            f"{rule!r} failed: the training rule does not resolve ({exc}). Restore its YAML under "
+            "configs/reward/ or experiments/kdd/configs/reward/ (`git log --all -- '*/<name>.yaml'` "
+            "finds it) and rerun") from exc
+    diff = phi_diff(trained, get_reward_config(scoring_rule))
+    overrides = {k: training[k] for k in REWARD_OVERRIDE_ARGS if training[k] is not None}
+    if diff and warn:
+        fields = ", ".join(f"{k}: {a!r} -> {b!r}" for k, (a, b) in diff.items())
+        print(f"[eval] WARNING: DRC scoring rule {scoring_rule!r} defines another Φ than the ckpt's "
+              f"training reward ({rule!r}, overrides {overrides}): {fields} — Φ is not the "
+              "potential the policy was trained to raise.", flush=True)
+    return {"training_reward_rule": rule, "training_reward_overrides": overrides,
+            "matches_training_rule": not diff}
+
+
+def _ckpt_entry(chain: Sequence[Mapping[str, Any]], ckpt_where: str) -> Mapping[str, Any] | None:
+    """The checkpoint layer's entry (``where`` = ``ckpt_where``) of a provenance chain; None
+    when the checkpoint did not set the key."""
+    return next((c for c in chain if c["where"] == ckpt_where), None)
+
+
+def cell_training_reward(cell_dir: Path) -> dict[str, Any] | None:
+    """The training ``reward_rule`` and reward overrides of the checkpoint an RL cell rolled out:
+    the checkpoint layer of each key in its run record (an eval override is not training's).
+    None for a cell no checkpoint rolled out (rule-based, LLM) or without a run record."""
+    import yaml
+
+    from pcb_world.core.reward_config import REWARD_OVERRIDE_ARGS
+
+    path = cell_dir / RUN_RECORD
+    if not path.is_file():
+        return None
+    record = yaml.safe_load(path.read_text())
+    ckpt = (record.get("extra") or {}).get("ckpt")
+    if ckpt is None:
+        return None
+    out = {}
+    for key in ("reward_rule", *REWARD_OVERRIDE_ARGS):
+        entry = _ckpt_entry(record["config"][key]["chain"] if key in record["config"] else (), ckpt)
+        if entry is None:
+            raise ConfigError(f"{path} records no checkpoint value of {key} (config.{key}.chain has "
+                              f"no entry where {ckpt!r}): the cell's training reward is unknown")
+        out[key] = entry["value"]
+    return out
+
+
+def recorded_scoring(cell_dir: Path) -> dict[str, tuple[list[Any], str]]:
+    """The scoring settings a cell records: ``{key: (values, where)}`` for each
+    :data:`SCORING_KEYS` member it records — from the run records' ``extra.scoring`` (the last
+    re-scoring run's, which scored the rows last, else the rollout's), else the DRC scoring
+    from the ``per_rollout.csv`` rows (every value the rows carry: rows scored by two runs list
+    two) and the selection from the rollout's ``manifest.json`` ``args`` when that
+    run aggregated (cells rolled out before the records carried it; a run that skipped Stage 3
+    wrote only the option's default). The manifest's DRC scoring is not read: its
+    ``check_angle: null`` meant the ckpt's ``corner_mode`` in older pipelines and the final
+    env's later, so a cell no scoring has touched names its settings on the command line."""
+    import yaml
+
+    found: dict[str, tuple[list[Any], list[str]]] = {}
+
+    def put(key: str, values: list[Any], where: str) -> None:
+        values = [int(v) if key == "check_angle" else str(v) for v in values if v not in (None, "")]
+        if values:
+            have, wheres = found.setdefault(key, ([], []))
+            for v in values:
+                if not any(_same_scoring(key, v, h) for h in have):
+                    have.append(v)
+            wheres.append(where)
+
+    for name in (RESCORE_RUN_RECORD, RUN_RECORD):
+        path = cell_dir / name
+        if path.is_file():
+            scoring = (yaml.safe_load(path.read_text()).get("extra") or {}).get("scoring") or {}
+            for key in SCORING_KEYS:
+                if key in scoring and key not in found:
+                    put(key, [scoring[key]], f"{path} extra.scoring.{key}")
+    rows_path = cell_dir / "per_rollout.csv"
+    missing = [key for key in DRC_SCORING_KEYS if key not in found]
+    if missing and rows_path.is_file():
+        rows = u.read_csv(rows_path)
+        for key in missing:
+            put(key, sorted({r[key] for r in rows if r.get(key)}), f"{rows_path} column {key}")
+    manifest = cell_dir / "manifest.json"   # the rollout's eval command line, not a checkpoint's
+    if "selection_method" not in found and manifest.is_file():
+        stage1 = json.loads(manifest.read_text())
+        stage1 = stage1["args"] if "args" in stage1 else {}   # older manifests: env kwargs only
+        if "selection_method" in stage1 and stage1.get("skip_aggregate") is False:
+            put("selection_method", [stage1["selection_method"]], f"{manifest} args.selection_method")
+    return {key: (values, "; ".join(wheres)) for key, (values, wheres) in found.items()}
+
+
+def resolve_rescoring(cell_dir: Path, parser: Any, args: argparse.Namespace,
+                      needed: tuple[str, ...]) -> RunConfig:
+    """The scoring settings of a re-scoring run of ``cell_dir``: the ones the cell records
+    (:func:`recorded_scoring`), carried whole so the run's record keeps them, and the
+    ``needed`` ones (of :data:`SCORING_KEYS`: those of the stages this run runs) decided. An
+    explicit flag (the ``parser`` parse ``args``, its ``needed`` options) wins, also over another
+    recorded value — warned about, naming both, with the cell's value kept in the provenance
+    chain under the flag's — and chooses among several recorded values; without the flag the
+    cell's single recorded value is used, never the option's default. A needed DRC scoring key
+    the cell does not record must be on the command line (no default); an unrecorded selection
+    is the command line's, else the option's default (the one a rollout starts from)."""
+    recorded = recorded_scoring(cell_dir)
+    cli = user_layers(parser, args, keys=needed)[-1]
+    flags = {a.dest: a.option_strings[0] for a in parser._actions if a.dest in SCORING_KEYS}
+    provenance: dict[str, Entry] = {}
+    unrecorded: list[str] = []
+    problems: list[str] = []
+    for key in SCORING_KEYS:
+        flag = flags[key]
+        values, where = recorded.get(key, ([], ""))
+        shown = values[0] if len(values) == 1 else values
+        chain = [{"source": "cell", "value": shown, "where": where}] if values else []
+        if key not in needed:
+            if len(values) == 1:
+                provenance[key] = Entry(shown, "cell", where, tuple(chain))
+            continue
+        if key in cli.values:
+            given = cli.entry(key)
+            if values and not any(_same_scoring(key, given["value"], v) for v in values):
+                print(f"[eval] WARNING: {given['where']} differs from the {key} the cell records, "
+                      f"{shown!r} ({where}): re-scoring under {given['value']!r} changes the cell's "
+                      "metrics" + ("" if args.dry_run else f"; {RESCORE_RUN_RECORD} records both"),
+                      flush=True)
+            chain.append(given)
+        elif len(values) > 1:
+            problems.append(f"the cell records several {key} values {values} ({where}): pass "
+                           f"{flag} with the one to re-score with")
+            continue
+        elif not values and key == "selection_method":
+            chain.append({"source": "defaults", "value": parser.get_default(key), "where": flag})
+        elif not values:
+            unrecorded.append(key)
+            continue
+        last = chain[-1]
+        provenance[key] = Entry(last["value"], last["source"], last["where"], tuple(chain))
+    if unrecorded:
+        has_record = (any((cell_dir / n).is_file() for n in (RESCORE_RUN_RECORD, RUN_RECORD, "per_rollout.csv",
+                                                              "manifest.json"))
+                      or any((cell_dir / "boards").glob("*.kicad_pcb")))
+        why = ("its rollout scored nothing, e.g. --skip-drc or a rule-based rollout, and no row was "
+               "scored since" if has_record else
+               f"it holds no {RUN_RECORD}, {RESCORE_RUN_RECORD}, per_rollout.csv, manifest.json or boards/ — "
+               "is it the cell?")
+        problems.append(f"{cell_dir} records no {' / '.join(unrecorded)} ({why}): pass "
+                        f"{' '.join(flags[k] for k in unrecorded)} — re-scoring does not fall back to a default")
+    if problems:
+        raise ConfigError("; ".join(problems))
+    return RunConfig("eval", provenance)
+
+
+def _rescore_drc_only(rescoring: RunConfig) -> RunConfig:
+    """``rescoring`` with its selection back at the cell's recorded entry (dropped when the cell
+    records none): the record of a re-scoring whose Stage 3 has not run yet."""
+    provenance = dict(rescoring.provenance)
+    entry = provenance.pop("selection_method", None)
+    cell = next((c for c in entry.chain if c["source"] == "cell"), None) if entry else None
+    if cell is not None:
+        provenance["selection_method"] = Entry(cell["value"], "cell", cell["where"], (cell,))
+    return RunConfig("eval", provenance)
 
 
 def _default_output_dir(args: argparse.Namespace) -> Path:
@@ -597,7 +940,7 @@ def _boards_from_per_rollout(per_rollout_rows: list[dict]) -> list[BoardSpec]:
 
 
 def main() -> int:
-    args = _parse_args()
+    parser, args = _parse_args()
     if args.output_dir is None:
         args.output_dir = _default_output_dir(args)
     output_dir = Path(args.output_dir).resolve()
@@ -633,15 +976,44 @@ def main() -> int:
     # explicit --env-drc override); stays None on the --skip-rollout path.
     step_drc: bool | None = None
     env_overrides_changed: dict[str, tuple[Any, Any]] = {}
-    # reward_config: fixed canonical eval default (overridable; warns on mismatch
-    # with the ckpt's reward_rule). check_angle: None = inherit ckpt corner_mode
-    # (resolved in Stage 1), falling back to the EvalDefaults constant w/o a ckpt.
-    reward_config: str = args.reward_config
-    check_angle: int | None = args.check_angle
+    # The Stage 2 scoring settings: a rollout's from the CLI and its env (Stage 1), a
+    # re-scoring run's from the cell's record (resolve_rescoring); None = not scored here.
+    reward_config: str | None = None
+    check_angle: int | None = None
+    rescoring: RunConfig | None = None
+    rescoring_vs_training: dict[str, Any] = {}   # a re-scoring run's scoring_vs_training
+    selection_method = args.selection_method   # a re-scoring run's: the cell's (resolve_rescoring)
+
+    def write_rescore_record(run: RunConfig) -> None:
+        """Record a re-scoring stage that succeeded (Stage 2, then Stage 3): a failed stage or a
+        --dry-run leaves the cell's records as they were; settings not decided are carried over."""
+        write_run_record(output_dir / RESCORE_RUN_RECORD, run, boards=None if boards is None else
+                         board_record([b.path for b in boards], boards_list=args.boards_list), extra={
+            "scoring": {**run.values, **rescoring_vs_training},
+            "explicit": sorted(parser.explicit_dests)})
 
     # ---- Stage 1 — rollout ----
     if args.skip_rollout:
         print("[eval] --skip-rollout; expecting existing per_rollout.csv")
+        # The cell's board list is its expected board set (Stage 2 prices the
+        # failed boards' Φ₀, Stage 3 counts a board without rows). --boards-dir
+        # here only locates .kicad_pro files and may be a whole dataset root.
+        if args.boards_list is not None:
+            boards = load_boards_from_dir_or_list(boards_list=args.boards_list)
+        # Re-scoring uses the cell's scoring (Stage 2) and selection (Stage 3) — the settings
+        # its records name — unless an explicit flag gives another (warned, both recorded).
+        needed = (() if args.skip_drc else DRC_SCORING_KEYS) + (() if args.skip_aggregate else ("selection_method",))
+        if needed:
+            rescoring = resolve_rescoring(output_dir, parser, args, needed)
+            if not args.skip_drc:
+                reward_config, check_angle = rescoring.reward_config, rescoring.check_angle
+            training = cell_training_reward(output_dir)
+            if training is not None and "reward_config" in rescoring.values:
+                # an aggregate-only run records the cell's rule against training, unwarned
+                rescoring_vs_training = scoring_vs_training(training, rescoring.reward_config,
+                                                            warn=not args.skip_drc)
+            if not args.skip_aggregate:
+                selection_method = rescoring.selection_method
     else:
         device = _resolve_device(args.device)
         boards = load_boards_from_dir_or_list(
@@ -649,6 +1021,8 @@ def main() -> int:
         )
         if not boards:
             raise SystemExit("no boards found")
+        # The eval CLI's env overrides (recipe < cli), the USER layers of the env config.
+        user = user_layers(parser, args, keys=ENV_OVERRIDE_DESTS)
 
         if args.dry_run:
             print(json.dumps({
@@ -659,7 +1033,7 @@ def main() -> int:
                 "n_envs": args.n_envs,
                 "rollout_mode": mode,
                 "env_drc": args.env_drc, "final_drc": final_drc,
-                "env_overrides": _jsonable(_env_overrides_from_args(args)),
+                "env_overrides": _jsonable({k: v for layer in user for k, v in layer.values.items()}),
                 "seed": args.seed,
                 "output_dir": str(output_dir),
                 "save_artifacts": args.save_artifacts,
@@ -670,47 +1044,25 @@ def main() -> int:
 
         print(f"[eval] device={device} boards={len(boards)} "
               f"n_rollouts={args.n_rollouts} seed={args.seed}", flush=True)
-        policy, ckpt_args, _it = load_policy_from_ckpt(args.ckpt, device)
-        apply_n_max_slots_override(policy, args.override_n_max_slots)
-        max_steps = int(args.max_steps) if args.max_steps is not None else int(
-            ckpt_args.get("max_steps", 256),
+        policy, ckpt_args, _it = load_policy_from_ckpt(
+            args.ckpt, device, strict=args.strict_ckpt,
         )
-        # Base env config follows the ckpt's training args; eval CLI overrides
-        # (non-None only) are overlaid on top. None = inherit.
-        env_kwargs = env_kwargs_from_checkpoint(ckpt_args, max_steps)
-        overrides = _env_overrides_from_args(args)
-        for key, val in overrides.items():
-            ckpt_val = env_kwargs.get(key)
-            env_kwargs[key] = val
-            if ckpt_val != val:
-                env_overrides_changed[key] = (ckpt_val, val)
-        if overrides:
-            print(f"[eval] env overrides (eval CLI): {overrides}", flush=True)
-            for key, (old, new) in env_overrides_changed.items():
-                print(
-                    f"[eval] WARNING: env override {key}: ckpt={old!r} -> {new!r} "
-                    f"(differs from training)",
-                    flush=True,
-                )
-            if "reward_rule" in env_overrides_changed:
-                print(
-                    "[eval] WARNING: reward_rule overridden — via/wirelength/drc "
-                    "penalties that relied on the training rule's defaults now follow "
-                    "the NEW rule's defaults unless explicitly overridden.",
-                    flush=True,
-                )
-        else:
-            print("[eval] env_kwargs fully inherited from ckpt (no eval overrides)",
-                  flush=True)
+        # The training seed stamps every artifact row (flatten below): checked
+        # here, before the rollout, not after it.
+        if "seed" not in ckpt_args:
+            raise SystemExit(f"[eval] checkpoint {args.ckpt} stores no training seed — "
+                             "its rollout artifacts cannot be stamped")
+        ckpt_seed = int(ckpt_args["seed"])
+        # The cap in effect (None = the ckpt's): what the run record and manifest show.
+        slot_cap = apply_n_max_slots_override(
+            policy, args.override_n_max_slots, explicit="override_n_max_slots" in parser.explicit_dests)
 
-        # Env DRC reward/tokens during rollout: follow the ckpt's emit_drc_tokens
-        # unless --env-drc forces it. step_drc=False makes eval_transformer strip
-        # the env DRC reward (apply_drc_off).
-        emit_drc_tokens = bool(env_kwargs.get("emit_drc_tokens", True))
-        if args.env_drc is None:
-            step_drc = emit_drc_tokens
-        else:
-            step_drc = (args.env_drc == "on")
+        # The env config: the ckpt's training env, the eval CLI's overrides (recipe < cli) on
+        # top — resolved once in mode eval (only eval_override fields may differ from the
+        # ckpt). Env DRC reward/tokens follow the ckpt's emit_drc_tokens unless --env-drc
+        # forces them; step_drc=False is the DRC_OFF layer.
+        emit_drc_tokens = bool(ckpt_args["emit_drc_tokens"])
+        step_drc = emit_drc_tokens if args.env_drc is None else (args.env_drc == "on")
         if not step_drc and emit_drc_tokens:
             print(
                 f"[eval] WARNING: env DRC tokens/reward will be stripped "
@@ -724,33 +1076,48 @@ def main() -> int:
                 "no_drc_tokens; env keeps the ckpt's no-token setting.",
                 flush=True,
             )
-        print(
-            f"[eval] step_drc={step_drc} (env-drc={args.env_drc!r}, "
-            f"ckpt emit_drc_tokens={emit_drc_tokens})",
-            flush=True,
-        )
-
-        # DRC scoring config: fixed canonical eval default (errors-only); warn
-        # when it differs from the ckpt's training reward_rule.
+        env_run = resolve_eval_env(
+            RLEnvConfig.from_checkpoint(ckpt_args, int(ckpt_args["max_steps"])),
+            step_drc=step_drc, where=str(args.ckpt), sources=policy.ckpt_sources, user=user)
+        if args.expect is not None:
+            check_expect(args.expect, env_run)
+        env_config = eval_env_config(env_run)
+        max_steps = env_config.env.max_steps
+        env_overrides_changed = env_overrides_vs_ckpt(env_run, str(args.ckpt))
+        for key, (old, new) in env_overrides_changed.items():
+            print(f"[eval] WARNING: env override {key}: ckpt={old!r} -> {new!r} "
+                  f"(differs from training)", flush=True)
+        if "reward_rule" in env_overrides_changed:
+            print(
+                "[eval] WARNING: reward_rule overridden — via/wirelength/drc "
+                "penalties that relied on the training rule's defaults now follow "
+                "the NEW rule's defaults unless explicitly overridden.",
+                flush=True,
+            )
+        print(f"[eval] step_drc={step_drc} (env-drc={args.env_drc!r}, "
+              f"ckpt emit_drc_tokens={emit_drc_tokens})", flush=True)
         reward_config = args.reward_config
-        ckpt_rule = str(ckpt_args.get("reward_rule", "") or "")
-        if ckpt_rule and ckpt_rule != reward_config:
-            print(f"[eval] WARNING: DRC scoring reward_config {reward_config!r} "
-                  f"differs from ckpt reward_rule {ckpt_rule!r} — scoring with a "
-                  f"different DRV config than training.", flush=True)
-        # DRC track-angle: inherit the ckpt's corner_mode unless overridden.
-        ckpt_corner = int(ckpt_args.get("corner_mode", DEFAULTS.check_angle))
-        if ckpt_corner not in CHECK_ANGLES:
-            ckpt_corner = DEFAULTS.check_angle
-        if args.check_angle is None:
-            check_angle = ckpt_corner
-            print(f"[eval] check_angle inherited from ckpt corner_mode: "
-                  f"{check_angle}", flush=True)
-        else:
-            check_angle = args.check_angle
-            if ckpt_corner != check_angle:
-                print(f"[eval] WARNING: --check-angle {check_angle} differs from "
-                      f"ckpt corner_mode {ckpt_corner}.", flush=True)
+        # DRC track-angle: the angle the env routes with (the ckpt's, or the
+        # --corner-mode override); an explicit --check-angle must equal it.
+        check_angle = u.resolve_check_angle(env_config.env.corner_mode, args.check_angle)
+        print(f"[eval] check_angle follows the env corner_mode: {check_angle}",
+              flush=True)
+        # Recorded before any env exists, so a crash still leaves it; the scoring settings
+        # are what a later re-scoring of this cell reuses (resolve_rescoring). check_angle is
+        # the env's; reward_config only when this run scores (Stage 2 or inline) or names it —
+        # an unscored cell's first scoring chooses its rule —, selection_method likewise only
+        # when this run aggregates (Stage 3) or names it.
+        # A scored rule is checked against the ckpt's training reward_rule (scoring_vs_training).
+        scoring = ({"reward_config": reward_config,
+                    **scoring_vs_training(ckpt_args, reward_config)}
+                   if final_drc or not args.skip_drc or "reward_config" in parser.explicit_options else {})
+        scoring["check_angle"] = check_angle
+        if not args.skip_aggregate or "selection_method" in parser.explicit_options:
+            scoring["selection_method"] = selection_method
+        write_run_record(output_dir, env_run, boards=board_record(
+            [b.path for b in boards], boards_dir=args.boards_dir, boards_list=args.boards_list), extra={
+            "ckpt": str(args.ckpt), "scoring": scoring,
+            "invocation": _jsonable({**vars(args), "override_n_max_slots": slot_cap}), "explicit": sorted(parser.explicit_dests)})
 
         artifacts_dir = output_dir / "artifacts" if args.save_artifacts == "on" else None
         per_rollout_csv = output_dir / "per_rollout.csv"
@@ -758,15 +1125,19 @@ def main() -> int:
             None if args.selection_method == "none" else args.selection_method
         )
 
+        # Stochastic rollouts sample actions from torch's global RNG in this process (the env
+        # workers seed themselves from --seed per slot): seeded here, a --seed reproduces them.
+        import torch
+        torch.manual_seed(args.seed)
         t0 = time.monotonic()
         result = eval_transformer(
             policy, device, boards,
-            env_kwargs=env_kwargs,
+            env_config=env_config,
             n_rollouts=args.n_rollouts, n_envs=args.n_envs,
             base_seed=args.seed, max_steps=max_steps,
             deterministic=args.deterministic,
             boards_per_batch=args.boards_per_batch,
-            step_drc=step_drc, final_drc=final_drc,
+            final_drc=final_drc,
             reward_config=reward_config, check_angle=check_angle,
             selection_mode=sel_mode_for_overlay,
             save_artifacts=(args.save_artifacts == "on"),
@@ -780,40 +1151,46 @@ def main() -> int:
         # per_rollout.csv already flushed incrementally. Write manifest only.
         manifest = {
             "schema_version": SCHEMA_VERSION,
-            "env_kwargs": _jsonable(env_kwargs),
-            "args": _jsonable(vars(args)),
+            "env_kwargs": _jsonable(env_config.to_record()),
+            "args": _jsonable({**vars(args), "override_n_max_slots": slot_cap}),
         }
         (output_dir / "manifest.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True),
         )
         # Bridge Stage 1 -> Stage 3: rename the saved artifacts into the
-        # unified boards/ cell layout that aggregation parses. No manual
-        # flattening step is needed between the stages.
-        if args.save_artifacts == "on":
-            flatten_rollout_artifacts(
-                output_dir, ckpt_seed=int(ckpt_args.get("seed", 0) or 0),
-            )
-
-    # check_angle inherits the ckpt's corner_mode; without a ckpt (e.g.
-    # --skip-rollout) it stays None, so fall back to the constant here.
-    if check_angle is None:
-        check_angle = DEFAULTS.check_angle
+        # unified boards/ cell layout that aggregation parses, and stamp the
+        # ckpt on every row. No manual flattening step is needed between the
+        # stages.
+        flatten_rollout_artifacts(output_dir, ckpt_seed=ckpt_seed)
 
     # ---- Stage 2 — post-hoc DRC ----
     if args.skip_drc:
         print("[eval] --skip-drc set")
-    elif final_drc:
-        print("[eval] inline DRC ran during rollout; skipping Stage 2")
     else:
         t_drc = time.monotonic()
-        eval_kicad_pcb(
-            output_dir,
-            n_workers=args.n_envs,
-            reward_config=reward_config,
-            check_angle=check_angle,
-            boards_dir=args.boards_dir,
-        )
+        if final_drc:
+            print("[eval] inline DRC ran during rollout; skipping Stage 2 artifact scoring")
+        else:
+            eval_kicad_pcb(
+                output_dir,
+                n_workers=args.n_envs,
+                reward_config=reward_config,
+                check_angle=check_angle,
+                boards_dir=args.boards_dir,
+            )
+        if not args.dry_run:
+            score_bare_boards(
+                output_dir, boards,
+                n_workers=args.n_envs,
+                reward_config=reward_config,
+                check_angle=check_angle,
+                boards_dir=args.boards_dir,
+            )
         stage_wall_times["drc_wall_sec"] = time.monotonic() - t_drc
+        if rescoring is not None and not args.dry_run:
+            # The rows now carry the new DRC scoring: recorded before Stage 3 (whose failure must
+            # not leave the old record), with the selection still the cell's.
+            write_rescore_record(_rescore_drc_only(rescoring))
 
     # ---- Stage 3 — standard per-board aggregation (method-agnostic) ----
     # Reads the unified per_rollout.csv (DRC-filled by Stage 1 inline / Stage 2)
@@ -829,16 +1206,20 @@ def main() -> int:
         if not args.dry_run:
             t_agg = time.monotonic()
             from eval.aggregation import aggregate_boards
-            sel_mode = (args.selection_method
-                        if args.selection_method in ("final_potential", "posthoc_drc_aware")
+            sel_mode = (selection_method
+                        if selection_method in ("final_potential", "posthoc_drc_aware")
                         else "final_potential")
-            aggregate_boards(output_dir, selection_mode=sel_mode)
+            # Stage 1's board set, or --boards-list on --skip-rollout; else the rows'.
+            aggregate_boards(output_dir, selection_mode=sel_mode, expected_boards=boards)
             stage_wall_times["aggregate_wall_sec"] = time.monotonic() - t_agg
             print(
                 f"[eval] <<< Stage 3 aggregate done in "
                 f"{stage_wall_times['aggregate_wall_sec']:.1f}s",
                 flush=True,
             )
+
+    if rescoring is not None and not args.dry_run and not args.skip_aggregate:
+        write_rescore_record(rescoring)   # the selection Stage 3 aggregated with
 
     finished_at = datetime.now(timezone.utc).isoformat()
     summary_data: dict[str, Any] = {
@@ -857,8 +1238,8 @@ def main() -> int:
         "n_envs": int(args.n_envs),
         "n_rollouts": int(args.n_rollouts) if args.n_rollouts is not None else None,
         "seed": int(args.seed) if args.seed is not None else None,
-        "selection_method": args.selection_method,
-        "selection_mode": args.selection_method,
+        "selection_method": selection_method,
+        "selection_mode": selection_method,
         "skipped": {
             "rollout": bool(args.skip_rollout),
             "drc": bool(args.skip_drc),
@@ -875,7 +1256,7 @@ def main() -> int:
     if overall is not None:
         summary_data["overall"] = _jsonable(overall)
     if overall_best is not None:
-        best_selection_name = _selection_output_name(args.selection_method)
+        best_selection_name = _selection_output_name(selection_method)
         summary_data[f"overall_best_{best_selection_name}"] = _jsonable(overall_best)
     (output_dir / "eval_overall_summary.json").write_text(
         json.dumps(summary_data, indent=2, sort_keys=True),

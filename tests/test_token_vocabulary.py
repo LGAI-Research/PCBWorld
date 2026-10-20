@@ -116,7 +116,7 @@ class TestEnums:
 # Vocabulary structure
 # ===================================================================
 def _vocab(d_model=32, n_freq=8, **kw):
-    return TokenVocabulary(d_model=d_model, n_freq=n_freq, **kw)
+    return TokenVocabulary(d_model=d_model, n_freq=n_freq, **{"disable_slot_emb": False, **kw})
 
 
 class TestVocabularyStructure:
@@ -257,7 +257,7 @@ class TestPerEntityEncoders:
     def test_encode_net_legacy_3f_shape(self):
         from methods.rl_agent.models.v1.embedding import TokenVocabulary
 
-        v = TokenVocabulary(d_model=32, n_freq=4, legacy_net_encoding=True)
+        v = TokenVocabulary(disable_slot_emb=False, d_model=32, n_freq=4, legacy_net_encoding=True)
         out = v.encode_net(
             track_w=torch.rand(2, 1),
             clearance=torch.rand(2, 1),
@@ -396,6 +396,7 @@ class TestGradientFlow:
 class TestMLPCoordEncoding:
     def test_mlp_pad_works(self):
         v = TokenVocabulary(
+            disable_slot_emb=False,
             d_model=32, n_freq=8, coord_encoding="mlp", mlp_hidden=64,
         )
         out = v.encode_pad(
@@ -422,7 +423,7 @@ class TestPerEntityHeadXyParity:
 
     def _make_vocab(self):
         torch.manual_seed(0)
-        return TokenVocabulary(d_model=32, n_freq=8)
+        return TokenVocabulary(disable_slot_emb=False, d_model=32, n_freq=8)
 
     @staticmethod
     def _broadcast(head_xy_2: torch.Tensor, K: int) -> torch.Tensor:
@@ -582,11 +583,9 @@ def test_n_max_slots_configurable_and_ckpt_compat():
     from configs.loader.schema import RLPolicyConfig
     from tests._mock_obs import make_mock_obs
 
-    # Default value + from_checkpoint fallback (an old checkpoint with no key
-    # falls back to the literal 64, independent of the YAML default).
+    # Default value; a checkpoint's value is the row count of its slot table
+    # (tests/test_config_ckpt.py), independent of the YAML default.
     assert RLPolicyConfig().n_max_slots == 512
-    assert RLPolicyConfig.from_checkpoint({}).n_max_slots == 64
-    assert RLPolicyConfig.from_checkpoint({"n_max_slots": 128}).n_max_slots == 128
 
     torch.manual_seed(0)
     big = RLPolicyConfig(d_model=32, n_heads=4, n_layers=1, d_ff=64, n_freq=4,
@@ -600,12 +599,10 @@ def test_n_max_slots_configurable_and_ckpt_compat():
     assert out.token_embeddings.shape[0] == 1
     # checkpoint round-trip: a 128-slot state_dict loads into a model rebuilt with the same config
     sd = big.state_dict()
-    # A saved checkpoint stores every knob; mirror the ones that add weights (shape_obs ->
-    # shape_embed) so the twin is built with the same modules as `big` (yaml defaults).
-    twin = RLPolicyConfig.from_checkpoint(
-        {"d_model": 32, "n_heads": 4, "n_layers": 1, "d_ff": 64, "n_freq": 4,
-         "use_critic": False, "disable_slot_emb": True, "n_max_slots": 128,
-         "obstacle_obs": big.tokenizer.vocab.obstacle_obs if hasattr(big.tokenizer.vocab, "obstacle_obs") else True,
-         "shape_obs": True},
-    ).build(None)
+    # The checkpoint loader derives n_max_slots=128 from the saved slot table.
+    from tests.helpers.ckpt_payload import resolve_state_dict
+    twin_cfg = resolve_state_dict(sd, d_model=32, n_heads=4, n_layers=1, d_ff=64, n_freq=4,
+                                  disable_slot_emb=True)
+    assert twin_cfg["n_max_slots"] == 128
+    twin = RLPolicyConfig.from_checkpoint(twin_cfg).build(None)
     twin.load_state_dict(sd)

@@ -19,6 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "build_rl" / "pcbnew" / "python" / "rl"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from configs.loader.schema import EnvConfig
 from pcb_world.core.action_schema import (  # noqa: E402
     ACT_MAKE_LINE,
     ACT_MAKE_VIA,
@@ -60,8 +61,6 @@ def _route_all_nets(env):
         return obs, reward, terminated, truncated, info
 
     n1, n2, n3 = _net_at(env, 10, 10), _net_at(env, 10, 20), _net_at(env, 25, 5)
-    env._engine.set_via_diameter(0.6)
-    env._engine.set_via_drill(0.3)
 
     # NET1: make_line (10,10) -> (40,10)
     do({"action_type": ACT_NET_SELECT, "net_id": n1})
@@ -94,9 +93,8 @@ def _run_episode(reward_rule: str):
     from pcb_world.core.env import PCBWorld
 
     env = PCBWorld(
-        board_path=BOARD, max_steps=200,
-        masking_rule="default_no_finish",
-        reward_rule=reward_rule,
+        BOARD,
+        EnvConfig.with_overrides(max_steps=200, masking_rule="default_no_finish", reward_rule=reward_rule),
     )
     env.reset()
     # Read the env's own cached initial state (DRC included iff mode=='per_step')

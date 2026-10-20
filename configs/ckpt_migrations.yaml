@@ -1,0 +1,107 @@
+# Checkpoint migrations — what an old checkpoint, or a file it names, lacks.
+#
+# ckpt_args: the value a checkpoint that lacks a key was trained with.
+# A checkpoint stores its training args; a knob added later is missing from every older file.
+# configs/loader/ckpt.py (load_ckpt_config, the only reader of a checkpoint's args) fills such
+# a key from this table — the value that reproduces the behaviour before the knob existed, NOT
+# the current default (configs/env.yaml / rl.yaml / llm.yaml) — with a warning (--strict-ckpt refuses it) and the
+# source `legacy`, whatever version wrote the checkpoint.
+# A config field that is neither in the checkpoint nor derivable from its weights nor listed
+# here makes the loader raise; tools/ckpt_migrate.py writes the same values into a file.
+#
+# Per key:
+#   value:     the pre-knob behaviour
+#   trainers:  (optional) the checkpoint writers (payload `trainer`) that store the key;
+#              absent = every writer. A schema-2 config of another writer takes `value`.
+# Rule: when you add a knob, add here the value that reproduces the pre-knob behaviour.
+
+ckpt_args:
+  env:
+    outline_obs:             {value: tess}   # tessellated Edge.Cuts (the only representation before `arc`)
+    simplify_outline:        {value: false}   # no outline simplification; raw EDGE token counts
+    net_constraint_obs:      {value: false}   # NET-token constraint channels were constant 0
+    directional_candidates:  {value: null}   # the default 8-direction 0.5 mm ring
+    offboard_mask:           {value: false}   # every directional candidate selectable
+    connectivity_filter:     {value: false}   # every existing-copper candidate selectable (pointer index space)
+    pad_graze_margin_mm:     {value: 0.0}   # no graze guard
+    action_history_len:      {value: 1}   # single previous-action window
+    net_reselect:            {value: false}   # net_end retired the net for the episode
+    drc_config_path:         {value: null}   # no YAML DRC fallback file
+    # Engine knobs (KiCadEngine): the values every run used before the knob was recorded.
+    engine_seed:             {value: 77}
+    shove_iter_limit:        {value: 250}
+    followbranch_iter_limit: {value: 1000000}
+    trim_at_contact:         {value: false}
+    # Constants before they became knobs (reward_noise_clip_sigma is train-only, not stored).
+    drc_incremental:         {value: true}   # per-step DRC was incremental
+    drc_promoted_codes:      {value: [12, 13, 37]}   # dangling via / track, net conflict
+    # make_line on a stuck walkaround: true since 2026-07-10 (8a4e37ce7), stored from 2026-10. The
+    # shove_iter_limit key (recorded from 2026-07-07) is the proxy: absent -> trained before the
+    # change (false), present -> true. The same commit also stopped clamping edge/hole clearance
+    # in initRouter with no flag, so `false` reproduces that engine only partially
+    # (source legacy:partial).
+    reject_if_stuck:
+      proxy: shove_iter_limit
+      value_if_absent: false
+      value_if_present: true
+
+  rl_policy:
+    time_feature:            {value: step_ratio}   # step / max_steps HEAD-token time scalar
+    time_feature_cap:        {value: 10000}   # unused by step_ratio; the default it had
+    obstacle_obs:            {value: false}   # no OBSTACLE tokens
+    detach_critic:           {value: false, trainers: [ppo, bc]}   # critic gradients reached the trunk (a PPO flag; BC stores its base's resolved config)
+
+# env_records: record keys (RLEnvConfig.to_record — an old run's env_records/val_env.yaml,
+# read by the async-val / queue watchers) that older records lack, where the value their env was built with differs
+# from the ckpt_args: env value above. configs/loader/ckpt.py with_legacy_env_defaults fills a
+# missing key from here, else the train-only layer off (a val env never had it), else ckpt_args:.
+env_records:
+  reject_if_stuck: true    # the engine's construction default (the knob was not carried to it)
+
+# rule_files: rule YAMLs written before the current schema (a key since required or retired).
+# Old checkpoints name such files; the loader migrates only what is listed here, each migration
+# with a loud warning naming the file and the keys to update in it. Tracked files are never
+# migrated — they must be complete.
+# Rule YAMLs (configs.loader.load_rule_file): rule kind → how the old loader read what the file
+# lacks. Applied only to a rule file outside the tracked tree. A non-empty mapping is a nested
+# table, applied only where the file has that key — except a table with a "*" key, which marks a
+# collection (absent → empty) and applies its table to every entry (a null entry reads as empty).
+# A null value (~) drops that key where present; any other value, `{}` included, is filled where absent.
+# A reward rule in the format before `potential:` is first converted by `old_reward_format:` below.
+rule_files:
+  reward:
+    name: yaml_custom
+    mode: terminal
+    potential:
+      step_penalty: 0.01
+      invalid_action_penalty: 0.01
+      parse_fail_penalty: 0.2
+      mask_reject_penalty: 0.09
+      use_drc: ~          # retired: the old loader ignored it
+  masking:
+    name: yaml_custom
+    actions:
+      "*":
+        when: {}
+
+# old_reward_format: a reward rule outside the tracked tree written before `potential:` (top-level
+# `step_reward:` / `final_reward:` / penalties) is read the way the old loader read it, with a warning:
+# `step_reward:` and any other top-level key but name / mode are ignored; each penalty is the top-level
+# key, else the value below; each `final_reward:` weight becomes the `potential:` argument, else the
+# value below; `drc_penalty` applies only when `final_reward.use_drc` is true (else 0). The
+# rule_files: reward table then fills name / mode.
+old_reward_format:
+  penalties:
+    step_penalty: 0.01
+    invalid_action_penalty: 0.01
+    parse_fail_penalty: 0.2
+    mask_reject_penalty: 0.09
+  final_reward:
+    completion_bonus: 5.0
+    unconnected_penalty: 1.0
+    wirelength_penalty: 0.0
+    via_penalty: 0.0
+    truncation_mode: none
+    wire_via_emission: per_step
+  use_drc: false
+  drc_penalty: 0.5

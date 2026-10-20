@@ -14,6 +14,7 @@ import pytest
 krl = pytest.importorskip("kicad_rl_router")
 
 from tests.test_engine_api.conftest import FIXTURES_DIR
+from tests.helpers.engine import open_engine
 
 BOARD = FIXTURES_DIR / "outline_in_footprint_board.kicad_pcb"
 REFERENCE = FIXTURES_DIR / "corner_edge_board.kicad_pcb"
@@ -44,9 +45,8 @@ def test_outline_shapes_and_bbox_include_footprint_graphics():
 
 def test_env_parser_accepts_the_board():
     """The Python load gate used to raise ValueError('no Edge.Cuts outline segments found') on such boards."""
-    from pcb_world.engine import KiCadEngine
     from pcb_world.engine.pcb_file_parser import parse_pcb_file
-    eng = KiCadEngine(str(BOARD))
+    eng = open_engine(str(BOARD))
     try:
         parsed = parse_pcb_file(str(BOARD), eng)
         assert len(parsed["board_edges"]) == 6

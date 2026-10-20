@@ -22,6 +22,8 @@ No C++ dependency — pure PyTorch. CPU always runs; CUDA runs too when present.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 import torch
 
@@ -35,6 +37,7 @@ from methods.rl_agent.models.v1.net import (
     KiCadRLModel,
 )
 from tests._mock_obs import make_mock_obs
+from tests.helpers.dist_inputs import permissive_dist
 
 
 def _devices() -> list[str]:
@@ -50,6 +53,8 @@ def _opened_model(device: str, same_net_bias: bool = True) -> KiCadRLModel:
     """
     torch.manual_seed(0)
     m = KiCadRLModel(
+        disable_slot_emb=False,
+        policy_net_select=False,
         d_model=32, n_heads=4, n_layers=3, d_ff=64, max_seq_len=2000,
         n_freq=4, use_critic=True, same_net_bias=same_net_bias,
     ).to(device)
@@ -287,7 +292,9 @@ class TestModel:
         # empty/degenerate pointer pool — the env masks them in production).
         am = torch.zeros(3, NUM_ACTION_TYPES, dtype=torch.bool, device=device)
         am[:, ACT_NET_SELECT] = True
-        a, lp, v = m.act_and_value(obs, deterministic=True, action_masks=am)
+        a, lp, v = m.act_and_value(
+            obs, dist=replace(permissive_dist(m, obs), action=am), deterministic=True,
+        )
         assert a.shape == (3, 3) and (a[:, 0] == ACT_NET_SELECT).all()
         assert torch.isfinite(lp).all() and torch.isfinite(v).all()
 
@@ -300,8 +307,11 @@ class TestModel:
         assert not any("incremental_decode" in k for k in src.state_dict())
 
         obs = _varied_batch()
-        acts, _ = src.act(obs, deterministic=True)
+        dist = permissive_dist(src, obs)
+        acts, _ = src.act(obs, dist=dist, deterministic=True)
         dst = KiCadRLModel(
+            disable_slot_emb=False,
+            policy_net_select=False,
             d_model=32, n_heads=4, n_layers=3, d_ff=64, max_seq_len=2000,
             n_freq=4, use_critic=True, same_net_bias=True,
         )
@@ -309,8 +319,8 @@ class TestModel:
         assert not missing and not unexpected
 
         with torch.no_grad():
-            lp_s, _, v_s = src.evaluate_actions_and_value(obs, acts)
-            lp_d, _, v_d = dst.evaluate_actions_and_value(obs, acts)
+            lp_s, _, v_s = src.evaluate_actions_and_value(obs, acts, dist=dist)
+            lp_d, _, v_d = dst.evaluate_actions_and_value(obs, acts, dist=dist)
         assert torch.allclose(lp_s, lp_d, atol=1e-5)
         assert torch.allclose(v_s, v_d, atol=1e-5)
 
@@ -360,7 +370,7 @@ class TestFactoredExactMode:
     def test_factored_joint_matches_evaluate(self, device):
         m = _opened_model(device)     # float32 (real-obs tokenizer emits float32)
         obs = self._obs()
-        out = m.factored_action_logits(obs)
+        out = m.factored_action_logits(obs, dist=permissive_dist(m, obs))
         assert out["mode_pt_logits"] is not None
         K = out["ptr_logits"].shape[-1]
         assert K >= 2, "mock obs must expose candidate pointers"
@@ -380,7 +390,10 @@ class TestFactoredExactMode:
             dtype=torch.int64, device=device,
         )
         with torch.no_grad():
-            ev, _, _ = m.evaluate_actions_and_value(obs * len(acts), actions_t)
+            ev, _, _ = m.evaluate_actions_and_value(
+                obs * len(acts), actions_t,
+                dist=permissive_dist(m, obs * len(acts)),
+            )
         # Exact factored joint == the autoregressive reference (float32: the two
         # paths differ only by full-rerun vs incremental-decode round-off).
         assert torch.allclose(fac, ev, atol=1e-4), (fac - ev).abs().max()
@@ -396,10 +409,10 @@ class TestFactoredExactMode:
         """
         m = _opened_model(device)
         obs = self._obs()
-        out = m.factored_action_logits(obs)
+        out = m.factored_action_logits(obs, dist=permissive_dist(m, obs))
 
         with torch.no_grad():
-            enc = m._encode_state(obs, return_cache=False)
+            enc = m._encode_state(obs, action_masks=None, return_cache=False)
             embs = enc.tok_out.token_embeddings
             kpm = enc.tok_out.key_padding_mask
             slot_ids = enc.tok_out.slot_ids
@@ -440,6 +453,10 @@ class TestFactoredExactMode:
                 enc.tok_out.net_indices.expand(T, -1),
                 cand.expand(T, -1),
                 torch.arange(T, device=device) == ACT_NET_SELECT,
+                cand_block_idx=torch.empty(T, 0, dtype=torch.long, device=device),
+                net_valid_mask=None,
+                row_block_idx=torch.empty(T, 0, dtype=torch.long, device=device),
+                row_block_gate=torch.zeros(T, dtype=torch.bool, device=device),
             )
 
         assert torch.allclose(out["mode_at_logits"][0], exp_mode_at, atol=1e-5)
@@ -465,7 +482,9 @@ class TestFactoredExactMode:
         T = NUM_ACTION_TYPES
         am = torch.ones(1, T, dtype=torch.bool, device=device)
         am[0, ACT_MAKE_VIA] = False           # prunes the whole make_via branch
-        out = m.factored_action_logits(obs, action_masks=am)
+        out = m.factored_action_logits(
+            obs, dist=replace(permissive_dist(m, obs), action=am),
+        )
         K = out["ptr_logits"].shape[-1]
         assert K >= 2
 
@@ -479,7 +498,8 @@ class TestFactoredExactMode:
         with torch.no_grad():
             ev, _, _ = m.evaluate_actions_and_value(
                 obs * len(acts), actions_t,
-                action_masks=am.expand(len(acts), T),
+                dist=replace(permissive_dist(m, obs * len(acts)),
+                             action=am.expand(len(acts), T)),
             )
         assert torch.allclose(fac, ev, atol=1e-5), (fac - ev).abs().max()
         # the pruned type falls back to the mode_at broadcast, and is -inf in
@@ -493,11 +513,13 @@ class TestFactoredExactMode:
         ``mode_at`` fallback — while unblocked columns stay exact."""
         m = _opened_model(device)
         obs = self._obs()
-        full = m.factored_action_logits(obs)
+        full = m.factored_action_logits(obs, dist=permissive_dist(m, obs))
         K = full["ptr_logits"].shape[-1]
         assert K >= 2
         blocked = torch.tensor([[0]], dtype=torch.int64, device=device)
-        out = m.factored_action_logits(obs, pointer_masks=blocked)
+        out = m.factored_action_logits(
+            obs, dist=replace(permissive_dist(m, obs), pointer=blocked),
+        )
 
         assert torch.isinf(out["ptr_logits"][0, ACT_MAKE_LINE, 0])
         # blocked column -> mode_at broadcast
@@ -518,7 +540,7 @@ class TestFactoredExactMode:
         not a no-op."""
         m = _opened_model(device)     # float32
         obs = self._obs()
-        out = m.factored_action_logits(obs)
+        out = m.factored_action_logits(obs, dist=permissive_dist(m, obs))
         K = out["ptr_logits"].shape[-1]
         acts = [(ACT_MAKE_VIA, ptr, mode)
                 for ptr in range(min(K, 3)) for mode in range(3)]
@@ -528,6 +550,9 @@ class TestFactoredExactMode:
             dtype=torch.int64, device=device,
         )
         with torch.no_grad():
-            ev, _, _ = m.evaluate_actions_and_value(obs * len(acts), actions_t)
+            ev, _, _ = m.evaluate_actions_and_value(
+                obs * len(acts), actions_t,
+                dist=permissive_dist(m, obs * len(acts)),
+            )
         # h_at ≠ h_pt on an ungated model ⇒ the approximation is measurably off.
         assert (approx - ev).abs().max() > 1e-3

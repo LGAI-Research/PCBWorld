@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 import torch
 
-from methods.rl_agent.models.loader import _policy_args_for_checkpoint
+from tests.helpers.ckpt_payload import resolve_state_dict
 from methods.rl_agent.models.v1.embedding import TokenVocabulary
 from methods.rl_agent.models.v1.tokenizer import BatchedStateTokenizer
 from methods.rl_agent.wrappers.augmentation import build_aug_dict
@@ -30,7 +30,7 @@ from tests._mock_obs import make_mock_obs
 
 
 def _vocab(**kw) -> TokenVocabulary:
-    v = TokenVocabulary(d_model=32, n_freq=4, **kw)
+    v = TokenVocabulary(d_model=32, n_freq=4, **{"disable_slot_emb": False, **kw})
     v.eval()
     return v
 
@@ -98,7 +98,7 @@ class TestEncodeEdgeThreePoint:
 _ARGS = {
     "d_model": 32, "n_heads": 4, "n_layers": 1, "d_ff": 64,
     "max_seq_len": 512, "n_freq": 4, "coord_encoding": "fourier",
-    "mlp_hidden": 16, "use_critic": True,
+    "mlp_hidden": 16, "use_critic": True, "policy_net_select": False, "disable_slot_emb": False,
 }
 
 
@@ -114,7 +114,7 @@ class TestCheckpointPresenceDetection:
     def test_legacy_2pt_checkpoint_detected_and_loads(self):
         legacy_sd = _model(legacy_edge_encoding=True).state_dict()
         assert "tokenizer.vocab.edge_mid_proj.weight" not in legacy_sd
-        compat = _policy_args_for_checkpoint(dict(_ARGS), legacy_sd)
+        compat = resolve_state_dict(legacy_sd, **_ARGS)
         assert compat["legacy_edge_encoding"] is True
 
         from configs.loader.schema import RLPolicyConfig
@@ -125,7 +125,7 @@ class TestCheckpointPresenceDetection:
     def test_current_3pt_checkpoint_detected_and_loads(self):
         current_sd = _model(legacy_edge_encoding=False).state_dict()
         assert "tokenizer.vocab.edge_mid_proj.weight" in current_sd
-        compat = _policy_args_for_checkpoint(dict(_ARGS), current_sd)
+        compat = resolve_state_dict(current_sd, **_ARGS)
         assert compat["legacy_edge_encoding"] is False
 
         from configs.loader.schema import RLPolicyConfig
@@ -139,7 +139,7 @@ class TestCheckpointPresenceDetection:
 # ---------------------------------------------------------------------------
 
 def _tok(**kw) -> BatchedStateTokenizer:
-    t = BatchedStateTokenizer(d_model=32, n_freq=4, **kw)
+    t = BatchedStateTokenizer(d_model=32, n_freq=4, **{"disable_slot_emb": False, **kw})
     t.eval()
     return t
 
@@ -216,9 +216,10 @@ class TestLLMSerializerArc:
     def test_sexpr_arc_entry(self):
         from methods.llm_agent.wrappers.state_converter import (
             _board_static_to_sexpr,
+            obs_elements,
         )
 
-        text = _board_static_to_sexpr(self._bs(), 0)
+        text = _board_static_to_sexpr(self._bs(), obs_elements("v7"))
         assert "(edge E0 (p1 " in text
         assert "(arc E1 (p1 " in text and "(mid " in text
         # mid sits between p1 and p2 inside the arc form.
@@ -228,9 +229,10 @@ class TestLLMSerializerArc:
     def test_xml_arc_entry(self):
         from methods.llm_agent.wrappers.state_converter import (
             _board_static_to_xml,
+            obs_elements,
         )
 
-        text = _board_static_to_xml(self._bs(), 0)
+        text = _board_static_to_xml(self._bs(), obs_elements("v7"))
         assert '<edge id="E0">' in text
         assert '<arc id="E1">' in text and "<mid id=" in text
         assert "</arc>" in text
@@ -240,11 +242,12 @@ class TestLLMSerializerArc:
         from methods.llm_agent.wrappers.state_converter import (
             _board_static_to_sexpr,
             _board_static_to_xml,
+            obs_elements,
         )
 
         obs = make_mock_obs(n_edges=4, n_arc_edges=0)
         for render in (_board_static_to_sexpr, _board_static_to_xml):
-            text = render(obs["board_static"], 0)
+            text = render(obs["board_static"], obs_elements("v7"))
             assert "arc" not in text and "mid" not in text
 
 

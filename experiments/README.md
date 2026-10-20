@@ -37,9 +37,9 @@ experiments/
 
 | item | train | eval | figure |
 | --- | --- | --- | --- |
-| Fig5 / Fig6c (D1 grid) — **paper corpus not distributed**; generate a D1-shaped one first, see [kdd/figure5_d1/README.md](kdd/figure5_d1/README.md) | `kdd/figure5_d1/run.sh train [transformer\|jumanji\|sable]` (or `train.py d1-ppo`) | `kdd/figure5_d1/run.sh eval` (eval/pipeline.py, `--check-angle 90`) | `draw_figure.py --figure fig6c` |
-| Fig6 / Fig8 (reward) | `kdd/figure6_reward/run.sh train` (or `train.py reward`) | shared cell path | `draw_figure.py --figure fig8` |
-| Tables 3/22/24/25 (RL) | `kdd/table1_rl/run.sh train` (or `train.py table1 --method …`) | `eval/pipeline.py` (rollout → `--stages eval,aggregate --check-angle 45`) | `draw_figure.py --figure table3\|table22\|table24_25` |
+| Fig5 / Fig6c (D1 grid) — **paper corpus not distributed**; generate a D1-shaped one first, see [kdd/figure5_d1/README.md](kdd/figure5_d1/README.md) | `kdd/figure5_d1/run.sh train [transformer\|jumanji\|sable]` (or `train.py d1-ppo`) | `kdd/figure5_d1/run.sh eval` (eval/pipeline.py, `--check-angle 90`, `policy_iter_300.pt`) | `draw_figure.py --figure fig6c` |
+| Fig6 / Fig8 (reward) | `kdd/figure6_reward/run.sh train` (or `train.py reward`) | `kdd/figure6_reward/run.sh eval` (1 rollout per board) | `draw_figure.py --figure fig8` |
+| Tables 3/22/24/25 (RL) | `kdd/table1_rl/run.sh train` (or `train.py table1 --method …`) | `kdd/table1_rl/run.sh eval` (eval/pipeline.py, `--check-angle 45 --reward-config drc_dense_promoted`) | `draw_figure.py --figure table3\|table22\|table24_25` |
 | Table1(b)/Fig9 (LLM) | — | `kdd/table1_llm/run.sh`, `kdd/table1_llm/baselines/*.sh` | `draw_figure.py --figure fig9` |
 | Table 2 (LLM levels) | — | `kdd/table2/run_{plan_only,engine_free,interactive}.sh` → `kdd/table2/eval.sh` | — |
 | Appendix training curves | — | — | `kdd/appendix_diagnostics/run.sh` |

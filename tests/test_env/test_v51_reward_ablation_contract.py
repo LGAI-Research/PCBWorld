@@ -123,7 +123,6 @@ def test_drc_token_flags_only_control_observation_tokens() -> None:
         [
             "--board",
             "tests/fixtures/simple_routing_board.kicad_pcb",
-            "--no-drc-tokens",
             "--drc-tokens",
         ],
     )

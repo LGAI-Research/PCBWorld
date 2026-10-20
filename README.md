@@ -4,7 +4,7 @@ A reinforcement-learning environment for PCB routing, built on KiCad's interacti
 
 | | |
 |---|---|
-| **Version** | <!--VERSION-->v1.0.1<!--/VERSION--> |
+| **Version** | <!--VERSION-->v1.1.0<!--/VERSION--> |
 | **KiCad** | 9.0.8 (via the engine submodule) |
 | **Python** | 3.12+ |
 | **Platform** | Linux x86_64 (primary), macOS |
@@ -17,7 +17,7 @@ scored by KiCad's own design-rule checker. What routes here routes in KiCad.
 The repository ships the environment, synthetic board generators, the real-board benchmark
 splits, one evaluation pipeline shared by every method, and three families of baselines:
 a decoder-only PPO/GRPO transformer, LLM tool-calling agents, and the rule-based routers
-FreeRouting, OrthoRoute and KRT.
+FreeRouting and KRT.
 
 ## Demo
 
@@ -32,10 +32,12 @@ All supplementary videos: [PCBWorld_media/index.html](PCBWorld_media/index.html)
 ## Using the environment
 
 ```python
+from configs.loader.schema import EnvConfig
 from pcb_world.core.env import PCBWorld
 from pcb_world.core.action_schema import ACT_NET_SELECT, ACT_START_ROUTE, ACT_MAKE_LINE, ACT_NET_END
 
-env = PCBWorld(board_path="tests/fixtures/simple_routing_board.kicad_pcb", max_steps=200)
+# EnvConfig: every env setting (defaults: configs/env.yaml)
+env = PCBWorld("tests/fixtures/simple_routing_board.kicad_pcb", EnvConfig.with_overrides(max_steps=200))
 obs, info = env.reset(seed=0)
 
 src, dst = obs["board_static"]["nets"]["net_1"]["pads"].values()

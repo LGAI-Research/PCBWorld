@@ -14,6 +14,7 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
+from tests.helpers.engine import open_engine
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "build_rl" / "pcbnew" / "python" / "rl"))
@@ -164,23 +165,20 @@ class TestDRCUtils:
 
     def test_cache_matches_run_result(self, board_path: str, dru_path: str) -> None:
         """run_drc()'s return value must match the DRCUtils cache."""
-        from pcb_world.engine.kicad_engine import KiCadEngine
-        engine = KiCadEngine(board_path)
+        engine = open_engine(board_path)
         drc_run = engine.run_drc(dru_path)
         drc_cached = engine.drc_helper.get_violations()
         assert drc_run == drc_cached
 
     def test_violation_count_matches(self, board_path: str, dru_path: str) -> None:
         """get_violation_count() must match the length of the violations list."""
-        from pcb_world.engine.kicad_engine import KiCadEngine
-        engine = KiCadEngine(board_path)
+        engine = open_engine(board_path)
         engine.run_drc(dru_path)
         assert engine.drc_helper.get_violation_count() == EXPECTED_TOTAL
 
     def test_violations_by_net(self, board_path: str, dru_path: str) -> None:
         """get_violations_by_net() must correctly group error types by net."""
-        from pcb_world.engine.kicad_engine import KiCadEngine
-        engine = KiCadEngine(board_path)
+        engine = open_engine(board_path)
         engine.run_drc(dru_path)
         by_net = engine.drc_helper.get_violations_by_net()
         assert isinstance(by_net, dict)
@@ -189,8 +187,7 @@ class TestDRCUtils:
 
     def test_filter_by_severity(self, board_path: str, dru_path: str) -> None:
         """Severity filtering must work correctly."""
-        from pcb_world.engine.kicad_engine import KiCadEngine
-        engine = KiCadEngine(board_path)
+        engine = open_engine(board_path)
         engine.run_drc(dru_path)
         errors = engine.drc_helper.get_filtered_by_severity(0x20)
         warnings = engine.drc_helper.get_filtered_by_severity(0x10)

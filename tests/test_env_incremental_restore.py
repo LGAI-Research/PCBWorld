@@ -19,6 +19,7 @@ the checkpoint was taken.
 
 import pytest
 
+from configs.loader.schema import EnvConfig
 from pcb_world.core.env import PCBWorld
 from pcb_world.core.action_schema import (
     ACT_NET_SELECT, ACT_START_ROUTE, ACT_MAKE_LINE, ACT_MAKE_VIA, ACT_NET_END,
@@ -61,8 +62,6 @@ def _trajectory(env):
     exactly what the policy is trained to emit.
     """
     n1, n2, n3 = _net_at(env, 10, 10), _net_at(env, 10, 20), _net_at(env, 25, 5)
-    env._engine.set_via_diameter(0.6)
-    env._engine.set_via_drill(0.3)
     return [
         {"action_type": ACT_NET_SELECT, "net_id": n1},
         {"action_type": ACT_START_ROUTE, "x_mm": 10.0, "y_mm": 10.0, "layer": 1},
@@ -84,7 +83,7 @@ def _trajectory(env):
 def built():
     """Run the trajectory, checkpointing + recording state after every step.
     Yields (env, [(handle, recorded_state), ...]) including the pre-action state."""
-    env = PCBWorld(board_path=BOARD, max_steps=80)
+    env = PCBWorld(BOARD, EnvConfig.with_overrides(max_steps=80))
     env.reset()
     states = [(env.checkpoint(), _rec(env))]
     for a in _trajectory(env):

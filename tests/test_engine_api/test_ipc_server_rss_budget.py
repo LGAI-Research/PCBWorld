@@ -23,6 +23,7 @@ import pytest
 from pcb_world.engine import engine_available, router_client
 from pcb_world.engine.kicad_engine import KiCadEngine
 from pcb_world.engine.router_client import ipc_enabled
+from tests.helpers.engine import open_engine
 
 BOARD = "tests/fixtures/simple_routing_board.kicad_pcb"
 
@@ -57,7 +58,7 @@ def _server(eng: KiCadEngine) -> router_client._ServerConn:
 
 def test_server_over_budget_is_killed_not_parked(monkeypatch):
     monkeypatch.setattr(router_client, "_MAX_RSS_MB", 1)   # any live server is > 1 MB
-    eng = KiCadEngine(BOARD)
+    eng = open_engine(BOARD)
     conn = _server(eng)
     pid = conn.pid
     assert conn.rss_mb() > 1
@@ -65,7 +66,7 @@ def test_server_over_budget_is_killed_not_parked(monkeypatch):
     assert conn.proc.poll() is not None                    # killed ...
     assert not router_client._IDLE_SERVERS                 # ... not parked
     assert router_client._RSS_RECYCLES == 1
-    eng2 = KiCadEngine(BOARD)
+    eng2 = open_engine(BOARD)
     try:
         assert _server(eng2).pid != pid                    # fresh process
     finally:
@@ -74,11 +75,11 @@ def test_server_over_budget_is_killed_not_parked(monkeypatch):
 
 def test_server_within_budget_is_parked_and_reused(monkeypatch):
     monkeypatch.setattr(router_client, "_MAX_RSS_MB", 1 << 20)   # 1 TB: never exceeded
-    eng = KiCadEngine(BOARD)
+    eng = open_engine(BOARD)
     pid = _server(eng).pid
     eng.close()
     assert [c.pid for c in router_client._IDLE_SERVERS] == [pid]
-    eng2 = KiCadEngine(BOARD)
+    eng2 = open_engine(BOARD)
     try:
         assert _server(eng2).pid == pid
         assert router_client._RSS_RECYCLES == 0
@@ -91,7 +92,7 @@ def test_budget_off_parks_without_reading_rss(monkeypatch):
     monkeypatch.setattr(
         router_client._ServerConn, "rss_mb",
         lambda self: pytest.fail("rss_mb() read with the budget off"))
-    eng = KiCadEngine(BOARD)
+    eng = open_engine(BOARD)
     pid = _server(eng).pid
     eng.close()
     assert [c.pid for c in router_client._IDLE_SERVERS] == [pid]

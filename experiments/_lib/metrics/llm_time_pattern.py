@@ -150,8 +150,9 @@ def _write_fill(cell_rel: str, llm_root: Path) -> int:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    from configs.loader.cli import StrictArgumentParser
+    ap = StrictArgumentParser(description=__doc__,
+                              formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--cell", required=True, help="cell rel path, e.g. d2a/pcbworld_gpt-5.4")
     ap.add_argument("--llm-root", required=True, type=Path,
                     help="root of the original LLM-rollout logs (per_board/summary)")

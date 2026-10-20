@@ -27,9 +27,9 @@ Usage:
 """
 from __future__ import annotations
 
-import argparse
 import math
 import random
+import sys
 import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -1132,7 +1132,11 @@ def _run_d2b(args) -> None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__)
+    repo_dir = str(Path(__file__).resolve().parents[3])  # configs.loader when run as a script
+    if repo_dir not in sys.path:
+        sys.path.insert(0, repo_dir)
+    from configs.loader.cli import StrictArgumentParser
+    p = StrictArgumentParser(description=__doc__)
     p.add_argument("--n", type=int, default=10000)
     p.add_argument("--out-dir", required=True)
     p.add_argument("--seed", type=int, default=0)

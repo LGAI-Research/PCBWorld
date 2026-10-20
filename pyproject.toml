@@ -2,7 +2,7 @@
 name = "pcbworld"
 # Single source of truth = README.md <!--VERSION--> marker; kept in sync by
 # the version tooling.
-version = "1.0.1"
+version = "1.1.0"
 requires-python = ">=3.12"
 license = {file = "LICENSE"}
 
@@ -59,8 +59,12 @@ dependencies = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]   # the public suite; the private test tree is run separately (see the README)
-addopts = "-m 'not deprecated' -n 32 --dist loadfile"   # parallel via pytest-xdist; disable with -n 0 (needed for --pdb/-s). 32 > 16 on the 64-core hosts (26.4s -> 21.3s); -n auto (=64) is SLOWER (29s, worker-startup bound)
+# parallel via pytest-xdist; disable with -n 0 (needed for --pdb/-s). 32 > 16 on the 64-core hosts (26.4s -> 21.3s); -n auto (=64) is SLOWER (29s, worker-startup bound).
+# --no-loadscope-reorder keeps the duration-based file order from tests/conftest.py (xdist would re-sort files by test count,
+# queueing a one-test long pole last).
+addopts = "-m 'not deprecated' -n 32 --dist loadfile --no-loadscope-reorder"
 markers = [
     "visual: visual test scenarios with artifact generation",
     "deprecated: tests for deprecated (v5 low-level) environment — run with pytest -m deprecated",
+    "slow: a test that takes more than a few seconds — deselect with -m 'not deprecated and not slow'",
 ]

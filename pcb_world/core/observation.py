@@ -239,8 +239,8 @@ class NetContext:
     net_name: str = ""
     pads: list[Rectangle] = field(default_factory=list)
     # Resolved per-net DRC constraints (netclass value, KiCad inherit →
-    # Default fallback, BDS global-min clamp) — the values the engine is
-    # actually driven with on net_select. ``None`` (default) keeps the
+    # Default fallback) — the sizes the engine routes that net with.
+    # ``None`` (default) keeps the
     # legacy observation byte-identical; populated by env.py only when
     # ``net_constraint_obs`` is on. Keys: track_width / clearance /
     # via_diameter / via_drill (mm).

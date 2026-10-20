@@ -78,6 +78,7 @@ class LLMRolloutBackend(Protocol):
     """
 
     env_num: int
+    prompt_version: str   # the prompt its text obs is rendered for
 
     def reset(self) -> Tuple[List[str], Any, List[Dict]]: ...
 
@@ -147,6 +148,9 @@ class KiCadLLMRolloutManager:
         self._episode_return: List[float] = []
         self._episode_done: List[bool] = []
         self._episode_rows: List[dict] = []
+        # Per-env ``rules_digest`` / ``rules_substitution`` row columns from the
+        # reset info (an episode ended outside the env has no terminal info).
+        self._episode_rules: List[Dict[str, str]] = []
         # Nested per-env compute_metrics dicts for the current episode (None
         # until that env is scored) — callers that need the un-flattened
         # result (e.g. the eval CLI's {stem}.json dumps) read this.
@@ -154,8 +158,9 @@ class KiCadLLMRolloutManager:
 
         self._state_format: str = getattr(envs, "state_format", "sexpr")
 
-        prompt_version = self._resolve_prompt_version(config)
-        self._prompts = get_pcbworld_prompts(prompt_version)
+        # The env was built for this prompt (its obs elements, checked against its
+        # masking rule) — one source for the version.
+        self._prompts = get_pcbworld_prompts(envs.prompt_version)
 
         # Workers were just built with the scheduler's iter-0 board, so the
         # very first reset() must NOT advance the scheduler. Subsequent
@@ -192,23 +197,11 @@ class KiCadLLMRolloutManager:
                 pass
         return getattr(node, key, default)
 
-    def _resolve_prompt_version(self, config) -> str:
-        """Default schema: ``config.env.pcbworld.prompt_version`` (verl-agent).
-
-        Default sourced from the shared schema (configs/pcbworld.yaml (llm_train:))
-        so the LLM-train defaults live in one place.
-        """
-        from configs.loader.schema import LLMTrainConfig
-
-        env_cfg = self._cfg_get(config, "env", None)
-        cad_cfg = self._cfg_get(env_cfg, "pcbworld", None)
-        return self._cfg_get(cad_cfg, "prompt_version", LLMTrainConfig().prompt_version)
-
     def _resolve_base_max_steps(self, config) -> int:
         from configs.loader.schema import LLMTrainConfig
 
         env_cfg = self._cfg_get(config, "env", None)
-        return int(self._cfg_get(env_cfg, "max_steps", LLMTrainConfig().max_steps))
+        return int(self._cfg_get(env_cfg, "max_steps", LLMTrainConfig().env.max_steps))
 
     def _resolve_history_length(self, config) -> int:
         from configs.loader.schema import LLMTrainConfig
@@ -230,13 +223,17 @@ class KiCadLLMRolloutManager:
         ))
 
     def _resolve_eval_check_angle(self, config) -> int:
-        from configs.loader.schema import LLMTrainConfig
+        """The angle the workers route at (``envs.env_config.corner_mode``); an
+        explicit ``env.pcbworld.eval_check_angle`` may only restate it."""
+        from eval.eval_utils import resolve_check_angle
 
         env_cfg = self._cfg_get(config, "env", None)
         cad_cfg = self._cfg_get(env_cfg, "pcbworld", None)
-        return int(self._cfg_get(
-            cad_cfg, "eval_check_angle", LLMTrainConfig().eval_check_angle,
-        ))
+        return resolve_check_angle(
+            self.envs.env_config.corner_mode,
+            self._cfg_get(cad_cfg, "eval_check_angle", None),
+            flag="env.pcbworld.eval_check_angle",
+        )
 
     # ------------------------------------------------------------------
     # Output-shape hooks (subclass overrides for non-verl-agent contracts)
@@ -282,6 +279,8 @@ class KiCadLLMRolloutManager:
         by :meth:`reset` and exposed for subclasses that need to assemble a
         non-default obs dict shape.
         """
+        from eval.eval_utils import rules_columns
+
         if (
             self._board_scheduler is not None
             and self._board_scheduler.mode != "single"
@@ -309,6 +308,7 @@ class KiCadLLMRolloutManager:
         self._episode_return = [0.0] * len(text_obs)
         self._episode_done = [False] * len(text_obs)
         self._episode_rows = []
+        self._episode_rules = [rules_columns(info) for info in infos]
         self.episode_scored = [None] * len(text_obs)
         self._board_static_cache = [
             split_board_static(obs, self._state_format)[0] for obs in text_obs
@@ -521,6 +521,7 @@ class KiCadLLMRolloutManager:
                 "status": "completed",
                 "steps": int(self._total_steps[i]),
                 "episode_return": float(self._episode_return[i]),
+                **self._episode_rules[i],
             }
             if infos is not None and i < len(infos):
                 if scored is not None:

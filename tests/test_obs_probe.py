@@ -13,10 +13,9 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from methods.rl_agent.models.loader import (
-    _check_obs_probe,
-    _policy_args_for_checkpoint,
-)
+from configs.loader.ckpt import CkptConfigError
+from methods.rl_agent.models.loader import _check_obs_probe
+from tests.helpers.ckpt_payload import ckpt_config
 from methods.rl_agent.models.v1.obs_probe import build_probe_obs, probe_digest
 from methods.rl_agent.models.v1.tokenizer import BatchedStateTokenizer
 
@@ -24,6 +23,7 @@ from methods.rl_agent.models.v1.tokenizer import BatchedStateTokenizer
 def _tok(**kw) -> BatchedStateTokenizer:
     torch.manual_seed(kw.pop("seed", 0))
     kw.setdefault("obstacle_obs", True)
+    kw.setdefault("disable_slot_emb", False)
     return BatchedStateTokenizer(d_model=32, n_freq=4, **kw)
 
 
@@ -145,21 +145,13 @@ class TestShapeObsContradiction:
     _SHAPE_KEY = "tokenizer.vocab.shape_embed.weight"
 
     def test_contradiction_refused(self):
-        with pytest.raises(RuntimeError, match="contradiction"):
-            _policy_args_for_checkpoint({"shape_obs": True}, {})
-        with pytest.raises(RuntimeError, match="contradiction"):
-            _policy_args_for_checkpoint(
-                {"shape_obs": False}, {self._SHAPE_KEY: object()},
-            )
+        with pytest.raises(CkptConfigError, match="contradiction"):
+            ckpt_config(shape_obs=True, shapes={self._SHAPE_KEY: None})
+        with pytest.raises(CkptConfigError, match="contradiction"):
+            ckpt_config(shape_obs=False)   # the fixture's weights carry shape_embed
 
     def test_consistent_and_legacy_pass(self):
-        assert _policy_args_for_checkpoint(
-            {"shape_obs": True}, {self._SHAPE_KEY: object()},
-        )["shape_obs"] is True
-        assert _policy_args_for_checkpoint(
-            {"shape_obs": False}, {},
-        )["shape_obs"] is False
+        assert ckpt_config(shape_obs=True)["shape_obs"] is True
+        assert ckpt_config(shape_obs=False, shapes={self._SHAPE_KEY: None})["shape_obs"] is False
         # Absent key (pre-knob ckpt) → weights verdict, no error.
-        assert _policy_args_for_checkpoint(
-            {}, {self._SHAPE_KEY: object()},
-        )["shape_obs"] is True
+        assert ckpt_config(drop=("shape_obs",))["shape_obs"] is True

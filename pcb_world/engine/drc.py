@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 
 # Canonical ordered DRC violation-keyword taxonomy — the single owner of the
@@ -35,21 +35,6 @@ DRC_SEVERITY_WARNING = 0x10
 # must exclude it; board-level zero-DRV checks must not.
 ORPHAN_NET_KEY = "<orphan>"
 
-# KiCad PCB_DRC_CODE enum values for the warning types we optionally promote
-# into the reward/state DRC set. Source of truth:
-# engine/kicad-python/kicad/pcbnew/drc/drc_item.h (DRCE_FIRST == 1, ordered).
-# If KiCad enum ordering ever changes these must be re-synced.
-DRCE_DANGLING_VIA = 12
-DRCE_DANGLING_TRACK = 13
-DRCE_NET_CONFLICT = 37
-# Warnings that are effectively router-induced critical issues and should be
-# counted alongside errors in the ``errors_and_promoted`` mode.
-_PROMOTED_ERROR_CODES = frozenset({
-    DRCE_DANGLING_VIA,
-    DRCE_DANGLING_TRACK,
-    DRCE_NET_CONFLICT,
-})
-
 # Single source of truth for "which DRC violations count" across reward and
 # state. Selected once in the reward yaml (``drc_severity_mode``) and then
 # threaded into both ``PotentialReward._drc_penalty`` and
@@ -64,13 +49,14 @@ DRC_SEVERITY_MODES = (
 )
 
 
-def violation_matches_severity_mode(v: Any, mode: str) -> bool:
+def violation_matches_severity_mode(v: Any, mode: str, promoted_codes: Tuple[int, ...]) -> bool:
     """Return True if violation *v* should be counted under *mode*.
 
     - ``errors_only``: severity == ERROR.
-    - ``errors_and_promoted``: ERROR, plus router-induced warnings promoted to
-      effective-errors: ``track_dangling``, ``via_dangling``, ``net_conflict``
-      (regardless of their stock KiCad severity).
+    - ``errors_and_promoted``: ERROR, plus the router-induced warnings whose KiCad
+      error code is in *promoted_codes* (``EnvConfig.drc_promoted_codes``: dangling
+      via / dangling track / net conflict by default), counted regardless of their
+      stock KiCad severity.
     - ``errors_and_warnings``: any violation (ERROR or WARNING).
     """
     sev = int(v.severity)
@@ -79,7 +65,7 @@ def violation_matches_severity_mode(v: Any, mode: str) -> bool:
     if sev == DRC_SEVERITY_ERROR:
         return True
     if mode == DRC_SEVERITY_MODE_ERRORS_AND_PROMOTED:
-        return int(getattr(v, "error_code", 0)) in _PROMOTED_ERROR_CODES
+        return int(getattr(v, "error_code", 0)) in promoted_codes
     return False
 
 
@@ -113,7 +99,12 @@ class DRCUtils:
        severity, etc. — derived from the cached results held here.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, promoted_codes: Sequence[int]) -> None:
+        """``promoted_codes``: the warning codes the ``errors_and_promoted`` severity mode
+        counts (``EnvConfig.drc_promoted_codes``)."""
+        if not all(isinstance(c, int) and not isinstance(c, bool) for c in promoted_codes):
+            raise ValueError(f"drc_promoted_codes must be KiCad DRC codes (ints), got {promoted_codes!r}")
+        self.promoted_codes: Tuple[int, ...] = tuple(promoted_codes)
         self._cached_violations: List[Any] = []
         self._cached_violations_dict: List[Any] = []
         # Net-subset (partial routing) DRC filter. When set, only violations
@@ -242,7 +233,7 @@ class DRCUtils:
         if severity_mode is not None:
             source = [
                 v for v in source
-                if violation_matches_severity_mode(v, severity_mode)
+                if violation_matches_severity_mode(v, severity_mode, self.promoted_codes)
             ]
 
         items = [
@@ -312,14 +303,14 @@ class DRCUtils:
         """
         return sum(
             1 for v in self._cached_violations
-            if violation_matches_severity_mode(v, mode)
+            if violation_matches_severity_mode(v, mode, self.promoted_codes)
         )
 
     def get_counts_by_net_by_severity_mode(self, mode: str) -> Dict[str, int]:
         """Per-net violation counts restricted to the severity mode."""
         counts: Dict[str, int] = {}
         for v in self._cached_violations:
-            if not violation_matches_severity_mode(v, mode):
+            if not violation_matches_severity_mode(v, mode, self.promoted_codes):
                 continue
             if not v.net_names:
                 counts[ORPHAN_NET_KEY] = counts.get(ORPHAN_NET_KEY, 0) + 1

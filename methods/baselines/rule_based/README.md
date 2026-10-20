@@ -1,8 +1,8 @@
 # `methods/baselines/rule_based/` — Rule-based PCB routers
 
-Three external rule-based routers — Freerouting, KiCadRoutingTools (KRT) and
-OrthoRoute — behind one runner, so they can be run side-by-side on the project's
-datasets on the same terms. Per board the chain is: raw `.kicad_pcb` plus its
+Two external rule-based routers — Freerouting and KiCadRoutingTools (KRT) — behind
+one runner, so they can be run side-by-side on the project's datasets on the same terms.
+The runner also keeps OrthoRoute for the KDD-era record (its limits: the baseline table below). Per board the chain is: raw `.kicad_pcb` plus its
 pre-made `.dsn`/`.orp` sibling → tool-native output → routed `.kicad_pcb` →
 `eval.metrics` log, all under one output tree per `(dataset, algorithm, seed)`.
 
@@ -28,13 +28,14 @@ tree, fetched pinned and sha256-verified by
 ## Quick start
 
 Everything here runs in the single **`pcbworld`** conda env
-([environment.yml](../../../environment.yml) carries openjdk for Freerouting and
-rust for KRT; cupy/scipy/shapely come from the pip lock).
+([environment.yml](../../../environment.yml) carries openjdk 21 for Freerouting — the
+runner stops before the first board if `java` is missing, older or cannot run — and rust for KRT;
+cupy/scipy/shapely come from the pip lock).
 
 ```bash
 conda activate pcbworld
 bash tools/setup/fetch_baselines.sh
-pip install -e methods/baselines/rule_based/krt -e external/OrthoRoute
+pip install -e methods/baselines/rule_based/krt
 export KRT_ROOT="$PWD/external/KiCadRoutingTools"
 
 # smallest end-to-end smoke run (1 board, deterministic baseline, ~30 s)
@@ -47,17 +48,17 @@ in [`eval/RQ2_TABLE.md`](eval/RQ2_TABLE.md) to confirm the setup reproduces.
 
 For a bare conda env that was **not** created from `environment.yml`,
 [`scripts/setup_env.sh`](scripts/setup_env.sh) installs the same set into the
-active env (openjdk, rust, cupy, the two editable installs, and the Freerouting
-jar if missing) and smoke-tests every step. It is idempotent; a fresh install
+active env (openjdk, rust, cupy, the KRT editable install — plus OrthoRoute's, for the
+KDD-era record — and the Freerouting jar if missing) and smoke-tests every step. It is idempotent; a fresh install
 takes roughly ten minutes and a few GB.
 
 ## What you must provide yourself
 
 | requirement | how | when absent |
 |---|---|---|
-| `KRT_ROOT` | defaults to the pinned `external/KiCadRoutingTools` checkout; `export KRT_ROOT=/path/to/KRT` for another one | falls back to the `krt_tool` entry of [`configs/paths.yaml`](../../../configs/paths.yaml); with neither, `setup_env.sh` aborts with `route.py missing` |
+| `KRT_ROOT` | defaults to the pinned `external/KiCadRoutingTools` checkout; `export KRT_ROOT=/path/to/KRT` for another one — a tree not at the pinned commit stops the run unless `KRT_ALLOW_UNPINNED=1` (then recorded in each `krt_run.json`) | the runner stops before routing, pointing to `tools/setup/fetch_baselines.sh`; `setup_env.sh` aborts with `route.py missing` |
 | OrthoRoute source | `git submodule update --init external/OrthoRoute` | the runner does **not** check up front: every board becomes a `status="error"` row (`orthoroute headless rc=2`) in `manifest.json` |
-| `.dsn` / `.orp` siblings | pre-generate them (below) — they are never generated at run time | the runner drops the board before routing and warns with the list of boards and which sibling each one lacks |
+| `.dsn` / `.orp` siblings | for PCBench, [`tools/quickstart/prepare_pcbench.sh`](../../../tools/quickstart/prepare_pcbench.sh) writes them as its last step; otherwise pre-generate them (below) — they are never generated at run time | the runner drops the board before routing and warns with the list of boards and which sibling each one lacks; when the selection is a whole D3 tier it stops instead; a `.kicad_pro` not in KiCad 9's format, or a `.dsn` whose classes (nets, width, clearance, via) are not its `.kicad_pro`'s, or that leaves a rule unstated, is a `status="error"` row for freerouting and krt — regenerate it |
 | dataset roots | `PCBENCH_PCB_ROOT`, `PCBENCH_DSN_ROOT`, `SYNTH2L_PCB_ROOT`, `SYNTH2L_DSN_ROOT`, `SYNTH1L_PCB_ROOT_<grid>`, `SYNTH1L_DSN_ROOT_<grid>` | [`_lib/datasets.py`](_lib/datasets.py) falls back to the matching logical dataset in `configs/paths.yaml` under `PCBWORLD_DATA_ROOT`; with no data root, resolution fails loudly naming the variable |
 
 Routing needs a `.dsn` (Freerouting, KRT) and a `.orp` (OrthoRoute) next to each
@@ -85,7 +86,17 @@ python methods/baselines/rule_based/run_rule_based_routers.py \
 `--no-eval`). The ones that carry a constraint:
 
 * `--grid` — required by, and valid only for, `--dataset synthetic_1l`.
-* `--split` — synthetic sets only.
+* `--difficulty {easy,medium,hard}` — `--dataset pcbench` requires it (or `--all-corpus`): routes
+  one D3 tier (D3-A/B/C), the boards listed under that tier and `--split` (default `test`) of
+  [`configs/datasets/d3.json`](../../../configs/datasets/d3.json). When the selection is the whole
+  tier (no `--limit` / `--sample`, or ones that keep every tier board) it must be routable: a tier
+  board missing any input the baseline needs is an error naming the boards, so a partial corpus
+  or DSN mirror never yields a short tier run.
+* `--all-corpus` — pcbench only, instead of `--difficulty`: routes every board folder of the
+  corpus, including the boards excluded from D3. Not a D3 run; a `--split` other than `test` is an error.
+* `--split` — synthetic sets, and pcbench with `--difficulty`.
+* `--sample` — keeps the boards whose id contains one of the given substrings; a substring that
+  matches no board of the selection (e.g. a corpus board outside the `--difficulty` tier) is an error.
 * `--dataset synthetic_1l` is **freerouting-only** (vias are prohibited and the
   DSN is patched to snap to 90°, so `--check-angle` switches to 90 there);
   `--baseline krt|orthoroute` with it is rejected at parse time.
@@ -107,15 +118,16 @@ python methods/baselines/rule_based/run_rule_based_routers.py \
 entry point for OrthoRoute alone: it takes a directory of board folders instead
 of a registered dataset and generates the `.orp` files itself as Stage 1, so it
 is the one to reach for when investigating OrthoRoute on boards that have no
-pre-made siblings. It produces routed boards, not eval logs.
+pre-made siblings. It produces routed boards, not eval logs. On the PCBench corpus pass
+`--difficulty` (as above) to route one D3 tier; without it every folder is routed.
 
 ## Choosing a baseline
 
 | baseline | invoked as | determinism | raw artifact | its own budget |
 |---|---|---|---|---|
-| freerouting | the pinned jar in a headless JVM (`-de/-do/-mp`); Java env vars injected for the 1-layer no-via case | **stochastic** — the JVM reseeds per process, so the same DSN gives a different SES each run; use `--seeds` to sweep | `.ses` | max passes (`--max-passes`) |
-| krt | `krt-route` → `route.py` in the KRT tree; the runner parses the DSN for per-class track width / clearance / via size and drill and forwards them, with fixed routing knobs set inline in [`run_rule_based_routers.py`](run_rule_based_routers.py) | deterministic | `.metrics.json` | A\* + ripup iteration cap (typically < 15 s/board) |
-| orthoroute | `external/OrthoRoute/main.py headless`, then the in-tree `_converters.ors_to_kicadpcb` injects tracks/vias into the unrouted board; hyperparameters come from upstream's `PathFinderConfig` | deterministic **on CPU** (the default); GPU is faster but per-board DRV / `track_count` can wobble by ±1 from atomic-float ordering | `.ORS` | iteration cap (typically < 60 s/board) |
+| freerouting | the pinned jar in a headless JVM (`-de/-do/-mp`); Java env vars injected for the 1-layer no-via case; the SES → `.kicad_pcb` converter writes the board's canonical layer names for the DSN's aliases, and a run that adds no copper or whose output KiCad cannot load is an error row | **stochastic** — the JVM reseeds per process, so the same DSN gives a different SES each run; use `--seeds` to sweep | `.ses` | max passes (`--max-passes`) |
+| krt | `krt-route` → `route.py` in the pinned KRT tree (561f158, the KDD / CADET papers' KRT). From the DSN classes, checked against the `.kicad_pro`, the runner passes the exact `.kicad_pro` rules: the DSN layers in canonical KiCad names (a DSN carries the board's user aliases such as `Top`), the `Default` class's track width, clearance and via, and other classes' widths per net (`--power-nets`, names escaped as literal patterns). 561f158 takes one clearance and one via size for every net: a board whose classes in use want other ones gets the `Default` class's, with a warning, and `class_clearances_differ` / `class_vias_differ` in `krt_rules`. A run whose log shows fewer per-net widths matched than passed, that adds no copper, or whose output KiCad cannot load is an error row. `krt_rules` (and each board's `.kicad_pro` `warnings`) in `manifest.json` of this runner and [`eval/rollout/rule_based.py`](../../../eval/rollout/rule_based.py) record what KRT got; the routing hyperparameters are the papers', explicit (`KRT_PAPER_ARGS` in [`run_rule_based_routers.py`](run_rule_based_routers.py)) | deterministic | `.krt_run.json` (the runner's record: arguments, KRT commit, return code, wall time) |
+| orthoroute | `external/OrthoRoute/main.py headless`, then the in-tree `_converters.ors_to_kicadpcb` injects tracks/vias into the unrouted board; hyperparameters come from upstream's `PathFinderConfig` | deterministic **on CPU** (the default); GPU is faster but per-board DRV / `track_count` can wobble by ±1 from atomic-float ordering. The pinned commit lays routing tracks on inner layers only, so a 2-layer board — synth_2l and most of PCBench — has no routing graph (`No edges`, an error row) | `.ORS` | iteration cap (typically < 60 s/board) |
 
 Tool stdout always lands in `raw/<board>.routing.log`, whichever baseline ran.
 
@@ -136,18 +148,20 @@ Tool stdout always lands in `raw/<board>.routing.log`, whichever baseline ran.
 
 ```
 <output-root>/<dataset_tag>/<algorithm_tag>/seed<N>/
-├── raw/        board_id.{ses|ORS|metrics.json} + board_id.routing.log
+├── raw/        board_id.{ses|ORS|krt_run.json} + board_id.routing.log
 ├── routed/     board_id_<algorithm>.kicad_pcb
 ├── eval/       logs/board_id_<algorithm>.json  +  summary.json
 └── manifest.json
 ```
 
-`<dataset_tag>` follows the tags used by [`eval/`](eval/README.md) (`d2a` ↔
-`synth_2L_v2_test`, `d3a` ↔ `PCBench`, …) so trees line up side by side.
+`<dataset_tag>` is `synth_2L_v2_test` (`d2a`), `synth_1L_grid<G>_5net_v02_test`, `PCBench_<difficulty>_<split>`
+for a D3 tier (`PCBench_easy_test` = D3-A) and `PCBench_corpus` for `--all-corpus`, so tiers never
+share a tree.
 
 Scoring is built into the runner (`--no-eval` skips it): once a routed board
 exists, `eval.metrics.evaluate_one` runs on it and `eval.aggregation.aggregate`
-writes `summary.json`. There is no standalone eval CLI — to re-score an existing
+writes `summary.json` over this run's boards (the run first clears `eval/logs/`; a board that failed to route or
+score counts in `n_fail`, in the rates' denominator and as routability 0). There is no standalone eval CLI — to re-score an existing
 `routed/` tree, e.g. after changing the reward config, either re-run the routing
 or call those two library functions over the tree yourself; `<board>_<algorithm>`
 is the file-name convention to strip when recovering a board id.
@@ -166,7 +180,6 @@ Re-running the routers reproduces those logs subject to:
 
 | baseline | reproducibility against the canonical logs |
 |---|---|
-| krt, synth_2l | bit-perfect |
-| krt, pcbench | routability / DRV / Φ match; `track_count` and `wirelength_mm` may differ by O(1 segment) from track-segmentation post-processing |
-| orthoroute | bit-perfect on synth_2l under the CPU default; the paper numbers were produced on GPU, which agrees at the table-row level but drifts per board |
+| krt | on pcbench, per-board results differ where the runner now passes other inputs than the canonical logs had: the `Default`-class rule, decimal via sizes, escaped per-net widths and canonical layer names (boards whose DSN uses layer aliases did not route before) |
+| orthoroute | not reproducible with the pinned commit: synth_2l and most PCBench boards are 2-layer and end in `No edges` error rows (baseline table above); the logs stay as the KDD record |
 | freerouting | stochastic — match the paper's seed sweep with `--seeds 4` |

@@ -29,17 +29,15 @@ def test_drc_type_bucket_count_matches_engine() -> None:
 def test_eval_metrics_drc_mirrors_match_canonical() -> None:
     """``eval/metrics.py`` keeps local DRC severity/promoted mirrors on purpose —
     it keeps KiCad imports function-local so importing the module stays cheap
-    (see its module docstring). Pin those mirrors to ``pcb_world/engine/drc`` here."""
-    from pcb_world.engine.drc import (
-        DRC_SEVERITY_ERROR,
-        DRC_SEVERITY_WARNING,
-        _PROMOTED_ERROR_CODES,
-    )
+    (see its module docstring). Pin the severities to ``pcb_world/engine/drc`` and the
+    promoted set to the ``EnvConfig.drc_promoted_codes`` default here."""
+    from configs.loader.schema import EnvConfig
+    from pcb_world.engine.drc import DRC_SEVERITY_ERROR, DRC_SEVERITY_WARNING
     from eval.metrics import _PROMOTED_CODES, _SEV_ERROR, _SEV_WARNING
 
     assert _SEV_ERROR == DRC_SEVERITY_ERROR
     assert _SEV_WARNING == DRC_SEVERITY_WARNING
-    assert _PROMOTED_CODES == set(_PROMOTED_ERROR_CODES)
+    assert _PROMOTED_CODES == set(EnvConfig().drc_promoted_codes)
 
 
 def test_codec_drc_severity_matches_canonical() -> None:

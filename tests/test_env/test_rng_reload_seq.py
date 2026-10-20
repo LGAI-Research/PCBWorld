@@ -39,16 +39,12 @@ def _aug_signature(obs: dict) -> tuple:
 
 def _signatures_across_reloads(*, advance: bool) -> list[tuple]:
     pool = make_decoder_env_pool(
-        str(BOARD), n_envs=1,
+        str(BOARD), n_envs=1, advance_rng_on_reload=advance,
         **full_env_kwargs(
             max_steps=20,
             masking_rule="default_no_finish",
             reward_rule="drc_only_dense",
-            # aug + the reload-advance switch are train-only knobs, so they
-            # travel in the bundle rather than as defaulted parameters.
-            train_extras={"aug_flip": True, "aug_rotate": True,
-                          "aug_trans": True,
-                          "advance_rng_on_reload": advance},
+            aug_flip=True, aug_rotate=True, aug_trans=True,
         ),
     )
     try:

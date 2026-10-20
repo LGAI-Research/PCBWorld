@@ -1,0 +1,2917 @@
+{
+ "EnvConfig": {
+  "action_history_len": 1,
+  "corner_mode": 45,
+  "drc_config_path": null,
+  "drc_incremental": true,
+  "drc_promoted_codes": [
+   12,
+   13,
+   37
+  ],
+  "emit_drc_tokens": true,
+  "engine_seed": 77,
+  "followbranch_iter_limit": 1000000,
+  "keep_routing_fraction": null,
+  "masking_rule": "pcbworld_masking",
+  "max_steps": 1024,
+  "net_constraint_obs": true,
+  "net_reselect": false,
+  "obs_format": "json",
+  "outline_obs": "arc",
+  "reject_if_stuck": true,
+  "reward": {
+   "drc_log_agg_scale": null,
+   "drc_log_offset": null,
+   "drc_log_scale": null,
+   "drc_penalty": null,
+   "reward_step_penalty": null,
+   "via_penalty": null,
+   "wire_via_emission": null,
+   "wirelength_penalty": null
+  },
+  "reward_noise_clip_sigma": 4.0,
+  "reward_noise_std": 0.0,
+  "reward_rule": "pcbworld_reward",
+  "rules_source": "board",
+  "shove_iter_limit": 250,
+  "simplify_outline": true,
+  "trim_at_contact": false
+ },
+ "FINETUNE_DEFAULTS": {
+  "clip_eps": 0.1,
+  "lr": 2e-05
+ },
+ "GRPOConfig": {
+  "group_size": 8,
+  "log_dir": "./logs/tb/grpo_decoder",
+  "n_envs": 64,
+  "n_epochs": 4,
+  "save_dir": "./checkpoints/grpo_decoder"
+ },
+ "LLMConfig": {
+  "api": {
+   "api_disable_thinking": false,
+   "api_itpm": null,
+   "api_key": null,
+   "api_max_retries": 8,
+   "api_model": null,
+   "api_otpm": null,
+   "api_prompt_cache": false,
+   "api_provider": "openai",
+   "api_reasoning_effort": null,
+   "api_rpm": null
+  },
+  "boards": {
+   "boards_difficulty": "easy",
+   "boards_json": null,
+   "boards_order": "single",
+   "boards_split": "test"
+  },
+  "env": {
+   "action_history_len": 1,
+   "corner_mode": 45,
+   "drc_config_path": null,
+   "drc_incremental": true,
+   "drc_promoted_codes": [
+    12,
+    13,
+    37
+   ],
+   "emit_drc_tokens": true,
+   "engine_seed": 77,
+   "followbranch_iter_limit": 1000000,
+   "keep_routing_fraction": null,
+   "masking_rule": "pcbworld_masking",
+   "max_steps": 20,
+   "net_constraint_obs": true,
+   "net_reselect": false,
+   "obs_format": "json",
+   "outline_obs": "arc",
+   "reject_if_stuck": true,
+   "reward": {
+    "drc_log_agg_scale": null,
+    "drc_log_offset": null,
+    "drc_log_scale": null,
+    "drc_penalty": null,
+    "reward_step_penalty": null,
+    "via_penalty": null,
+    "wire_via_emission": null,
+    "wirelength_penalty": null
+   },
+   "reward_noise_clip_sigma": 4.0,
+   "reward_noise_std": 0.0,
+   "reward_rule": "grpo_final",
+   "rules_source": "board",
+   "shove_iter_limit": 250,
+   "simplify_outline": true,
+   "trim_at_contact": false
+  },
+  "llm_env": {
+   "state_format": "sexpr"
+  },
+  "prompt": {
+   "prompt_version": "latest"
+  },
+  "rollout": {
+   "dump_dir": null,
+   "early_stop_no_geometry_progress": 10,
+   "early_stop_no_progress": 0,
+   "env_num": 1,
+   "history_length": 0,
+   "max_new_tokens": 256,
+   "num_cpus_per_worker": 1.0,
+   "rollout_episodes": 5,
+   "seed": 0,
+   "temperature": 0.7
+  },
+  "vllm": {
+   "enable_chunked_prefill": false,
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.95,
+   "guided_grammar": null,
+   "max_model_len": 4096,
+   "model_path": "Qwen/Qwen2.5-VL-3B-Instruct",
+   "tensor_parallel_size": 1
+  }
+ },
+ "LLMTrainConfig": {
+  "board_path": null,
+  "boards_difficulty": "easy",
+  "boards_json": null,
+  "boards_order": "single",
+  "boards_split": "train",
+  "env": {
+   "action_history_len": 1,
+   "corner_mode": 45,
+   "drc_config_path": null,
+   "drc_incremental": true,
+   "drc_promoted_codes": [
+    12,
+    13,
+    37
+   ],
+   "emit_drc_tokens": true,
+   "engine_seed": 77,
+   "followbranch_iter_limit": 1000000,
+   "keep_routing_fraction": null,
+   "masking_rule": "pcbworld_masking",
+   "max_steps": 200,
+   "net_constraint_obs": true,
+   "net_reselect": false,
+   "obs_format": "json",
+   "outline_obs": "arc",
+   "reject_if_stuck": true,
+   "reward": {
+    "drc_log_agg_scale": null,
+    "drc_log_offset": null,
+    "drc_log_scale": null,
+    "drc_penalty": null,
+    "reward_step_penalty": null,
+    "via_penalty": null,
+    "wire_via_emission": null,
+    "wirelength_penalty": null
+   },
+   "reward_noise_clip_sigma": 4.0,
+   "reward_noise_std": 0.0,
+   "reward_rule": "default",
+   "rules_source": "board",
+   "shove_iter_limit": 250,
+   "simplify_outline": true,
+   "trim_at_contact": false
+  },
+  "eval_check_angle": null,
+  "eval_reward_config": "pcbworld_reward",
+  "guided_decoding_grammar": null,
+  "history_length": 0,
+  "prompt_version": "latest",
+  "score_train_episodes": false,
+  "seed": 0,
+  "state_format": "sexpr",
+  "val_boards_order": "single",
+  "val_boards_split": null
+ },
+ "LLMTrainConfig/from_verl_config": {
+  "board_path": null,
+  "boards_difficulty": "easy",
+  "boards_json": null,
+  "boards_order": "single",
+  "boards_split": "train",
+  "env": {
+   "action_history_len": 1,
+   "corner_mode": 45,
+   "drc_config_path": null,
+   "drc_incremental": true,
+   "drc_promoted_codes": [
+    12,
+    13,
+    37
+   ],
+   "emit_drc_tokens": true,
+   "engine_seed": 77,
+   "followbranch_iter_limit": 1000000,
+   "keep_routing_fraction": null,
+   "masking_rule": "pcbworld_masking",
+   "max_steps": 200,
+   "net_constraint_obs": true,
+   "net_reselect": false,
+   "obs_format": "json",
+   "outline_obs": "arc",
+   "reject_if_stuck": true,
+   "reward": {
+    "drc_log_agg_scale": null,
+    "drc_log_offset": null,
+    "drc_log_scale": null,
+    "drc_penalty": null,
+    "reward_step_penalty": null,
+    "via_penalty": null,
+    "wire_via_emission": null,
+    "wirelength_penalty": null
+   },
+   "reward_noise_clip_sigma": 4.0,
+   "reward_noise_std": 0.0,
+   "reward_rule": "default",
+   "rules_source": "board",
+   "shove_iter_limit": 250,
+   "simplify_outline": true,
+   "trim_at_contact": false
+  },
+  "eval_check_angle": null,
+  "eval_reward_config": "pcbworld_reward",
+  "guided_decoding_grammar": null,
+  "history_length": 0,
+  "prompt_version": "latest",
+  "score_train_episodes": false,
+  "seed": 0,
+  "state_format": "sexpr",
+  "val_boards_order": "single",
+  "val_boards_split": null
+ },
+ "PPOConfig": {
+  "critic_warmup_ev_streak": 3,
+  "critic_warmup_iters": 0,
+  "critic_warmup_lr": 0.0001,
+  "critic_warmup_max_iters": 0,
+  "critic_warmup_min_ev": 0.0,
+  "gae_lambda": 0.95,
+  "gamma": 0.995,
+  "init_ckpt": null,
+  "kl_ref_ckpt": null,
+  "kl_ref_coef": 0.0,
+  "kl_ref_mask_unseen_drc": false,
+  "kl_ref_seen_drc_types": "2,4,6",
+  "log_dir": "./logs/tb/ppo_decoder",
+  "n_envs": 64,
+  "n_epochs": 10,
+  "n_steps": 2048,
+  "norm_reward": true,
+  "norm_reward_clip": 10.0,
+  "normalize_adv": true,
+  "save_dir": "./checkpoints/ppo_decoder",
+  "truncation_bootstrap": false,
+  "vf_coef": 0.5
+ },
+ "RLEnvConfig": {
+  "aug_bbox_shifted": false,
+  "aug_flip": false,
+  "aug_rotate": false,
+  "aug_trans": false,
+  "aug_zoom": false,
+  "connectivity_filter": true,
+  "directional_candidates": "multi_resolution",
+  "env": {
+   "action_history_len": 1,
+   "corner_mode": 45,
+   "drc_config_path": null,
+   "drc_incremental": true,
+   "drc_promoted_codes": [
+    12,
+    13,
+    37
+   ],
+   "emit_drc_tokens": true,
+   "engine_seed": 77,
+   "followbranch_iter_limit": 1000000,
+   "keep_routing_fraction": null,
+   "masking_rule": "pcbworld_masking",
+   "max_steps": 1024,
+   "net_constraint_obs": true,
+   "net_reselect": false,
+   "obs_format": "json",
+   "outline_obs": "arc",
+   "reject_if_stuck": true,
+   "reward": {
+    "drc_log_agg_scale": null,
+    "drc_log_offset": null,
+    "drc_log_scale": null,
+    "drc_penalty": null,
+    "reward_step_penalty": null,
+    "via_penalty": null,
+    "wire_via_emission": null,
+    "wirelength_penalty": null
+   },
+   "reward_noise_clip_sigma": 4.0,
+   "reward_noise_std": 0.0,
+   "reward_rule": "pcbworld_reward",
+   "rules_source": "board",
+   "shove_iter_limit": 250,
+   "simplify_outline": true,
+   "trim_at_contact": false
+  },
+  "force_walkaround": false,
+  "mask_start_point": true,
+  "offboard_mask": true,
+  "pad_graze_margin_mm": 0.0,
+  "slot_perm": false
+ },
+ "RLEvalConfig": {
+  "best_metric_key": "val/fp_mean_of_means",
+  "best_metric_mode": "max",
+  "check_angle": 45,
+  "device": "auto",
+  "early_stop_finish_no_progress": 0,
+  "early_stop_no_geometry_progress": 0,
+  "env_drc": null,
+  "inline_drc": "off",
+  "n_envs": 1,
+  "output_root": "outputs/eval_overall",
+  "override_n_max_slots": 1280,
+  "reward_config": "pcbworld_reward",
+  "rollout_mode": "serial",
+  "save_artifacts": "on",
+  "selection_method": "final_potential"
+ },
+ "RLPolicyConfig": {
+  "action_history_len": 1,
+  "coord_encoding": "fourier",
+  "d_ff": 512,
+  "d_model": 128,
+  "detach_critic": false,
+  "disable_slot_emb": true,
+  "legacy_action_history": false,
+  "legacy_edge_encoding": false,
+  "legacy_net_encoding": false,
+  "legacy_pad_layer_encoding": false,
+  "max_seq_len": 10000,
+  "mlp_hidden": 128,
+  "n_freq": 32,
+  "n_heads": 4,
+  "n_layers": 4,
+  "n_max_slots": 512,
+  "obstacle_obs": true,
+  "policy_net_select": true,
+  "same_net_bias": false,
+  "shape_obs": true,
+  "time_feature": "sin_remaining",
+  "time_feature_cap": 10000,
+  "use_critic": true
+ },
+ "RLTrainConfig": {
+  "async_val": false,
+  "batch_size": 256,
+  "boards_dataset_dir": null,
+  "boards_difficulty": "easy",
+  "boards_json": null,
+  "boards_order": "single",
+  "boards_split": "train",
+  "clip_eps": 0.2,
+  "device": "auto",
+  "entropy_coef": 0.01,
+  "entropy_norm": false,
+  "eval2_boards": null,
+  "eval2_prefix": "val_d3b",
+  "eval3_boards": null,
+  "eval3_prefix": "val_d3a",
+  "eval4_boards": null,
+  "eval4_prefix": "val_d2b",
+  "eval5_boards": null,
+  "eval5_prefix": "val_d2a",
+  "eval_at_init": false,
+  "eval_base_seed": 1000,
+  "eval_board_limit": null,
+  "eval_boards_per_batch": null,
+  "eval_diag_masking_rule": null,
+  "eval_diag_max_steps": null,
+  "eval_every": 10,
+  "eval_greedy": true,
+  "eval_n_rollouts": 5,
+  "eval_split": "val",
+  "expect_env_diff": "",
+  "iterations": 1000,
+  "log_every": 1,
+  "lr": 0.0003,
+  "max_grad_norm": 0.5,
+  "mem_budget": false,
+  "resume": null,
+  "save_freq": 50,
+  "seed": 42,
+  "vecenv": true,
+  "wandb": false,
+  "wandb_entity": null,
+  "wandb_group": null,
+  "wandb_project": null,
+  "wandb_run_name": null,
+  "wandb_tags": null,
+  "warmup_iters": 0
+ },
+ "program/async_val_watcher": {
+  "action_history_len": {
+   "source": "ckpt",
+   "value": 1
+  },
+  "async_val": {
+   "source": "defaults",
+   "value": false
+  },
+  "attn": {
+   "source": "defaults",
+   "value": "sdpa"
+  },
+  "aug_bbox_shifted": {
+   "source": "defaults",
+   "value": false
+  },
+  "aug_flip": {
+   "source": "defaults",
+   "value": false
+  },
+  "aug_rotate": {
+   "source": "defaults",
+   "value": false
+  },
+  "aug_trans": {
+   "source": "defaults",
+   "value": false
+  },
+  "aug_zoom": {
+   "source": "defaults",
+   "value": false
+  },
+  "batch_size": {
+   "source": "defaults",
+   "value": 256
+  },
+  "bf16": {
+   "source": "defaults",
+   "value": false
+  },
+  "board": {
+   "source": "defaults",
+   "value": null
+  },
+  "boards_dataset_dir": {
+   "source": "defaults",
+   "value": null
+  },
+  "boards_difficulty": {
+   "source": "defaults",
+   "value": "easy"
+  },
+  "boards_json": {
+   "source": "defaults",
+   "value": null
+  },
+  "boards_order": {
+   "source": "defaults",
+   "value": "single"
+  },
+  "boards_split": {
+   "source": "defaults",
+   "value": "train"
+  },
+  "clip_eps": {
+   "source": "defaults",
+   "value": 0.2
+  },
+  "compile_mode": {
+   "source": "defaults",
+   "value": "default"
+  },
+  "compile_regions": {
+   "source": "defaults",
+   "value": ""
+  },
+  "connectivity_filter": {
+   "source": "ckpt",
+   "value": true
+  },
+  "coord_encoding": {
+   "source": "ckpt",
+   "value": "fourier"
+  },
+  "corner_mode": {
+   "source": "ckpt",
+   "value": 45
+  },
+  "critic_warmup_ev_streak": {
+   "source": "defaults",
+   "value": 3
+  },
+  "critic_warmup_iters": {
+   "source": "defaults",
+   "value": 0
+  },
+  "critic_warmup_lr": {
+   "source": "defaults",
+   "value": 0.0001
+  },
+  "critic_warmup_max_iters": {
+   "source": "defaults",
+   "value": 0
+  },
+  "critic_warmup_min_ev": {
+   "source": "defaults",
+   "value": 0.0
+  },
+  "d_ff": {
+   "source": "ckpt",
+   "value": 1024
+  },
+  "d_model": {
+   "source": "ckpt",
+   "value": 256
+  },
+  "detach_critic": {
+   "source": "ckpt",
+   "value": true
+  },
+  "device": {
+   "source": "defaults",
+   "value": "auto"
+  },
+  "directional_candidates": {
+   "source": "ckpt",
+   "value": "multi_resolution"
+  },
+  "disable_slot_emb": {
+   "source": "ckpt",
+   "value": true
+  },
+  "drc_config_path": {
+   "source": "ckpt",
+   "value": null
+  },
+  "drc_incremental": {
+   "source": "legacy",
+   "value": true
+  },
+  "drc_log_agg_scale": {
+   "source": "ckpt",
+   "value": null
+  },
+  "drc_log_offset": {
+   "source": "ckpt",
+   "value": null
+  },
+  "drc_log_scale": {
+   "source": "ckpt",
+   "value": null
+  },
+  "drc_penalty": {
+   "source": "ckpt",
+   "value": null
+  },
+  "drc_promoted_codes": {
+   "source": "legacy",
+   "value": [
+    12,
+    13,
+    37
+   ]
+  },
+  "dump_config_only": {
+   "source": "defaults",
+   "value": false
+  },
+  "engine_seed": {
+   "source": "ckpt",
+   "value": 77
+  },
+  "entropy_coef": {
+   "source": "defaults",
+   "value": 0.01
+  },
+  "entropy_norm": {
+   "source": "defaults",
+   "value": false
+  },
+  "eval2_boards": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval2_prefix": {
+   "source": "defaults",
+   "value": "val_d3b"
+  },
+  "eval3_boards": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval3_prefix": {
+   "source": "defaults",
+   "value": "val_d3a"
+  },
+  "eval4_boards": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval4_prefix": {
+   "source": "defaults",
+   "value": "val_d2b"
+  },
+  "eval5_boards": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval5_prefix": {
+   "source": "defaults",
+   "value": "val_d2a"
+  },
+  "eval_at_init": {
+   "source": "defaults",
+   "value": false
+  },
+  "eval_base_seed": {
+   "source": "defaults",
+   "value": 1000
+  },
+  "eval_board_limit": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval_boards_per_batch": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval_diag_masking_rule": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval_diag_max_steps": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval_every": {
+   "source": "defaults",
+   "value": 10
+  },
+  "eval_n_rollouts": {
+   "source": "defaults",
+   "value": 5
+  },
+  "eval_split": {
+   "source": "defaults",
+   "value": "val"
+  },
+  "expect": {
+   "source": "defaults",
+   "value": null
+  },
+  "expect_env_diff": {
+   "source": "defaults",
+   "value": ""
+  },
+  "followbranch_iter_limit": {
+   "source": "ckpt",
+   "value": 1000000
+  },
+  "force_walkaround": {
+   "source": "ckpt",
+   "value": false
+  },
+  "gae_lambda": {
+   "source": "defaults",
+   "value": 0.95
+  },
+  "gamma": {
+   "source": "ckpt",
+   "value": 0.995
+  },
+  "init_ckpt": {
+   "source": "defaults",
+   "value": null
+  },
+  "iterations": {
+   "source": "defaults",
+   "value": 1000
+  },
+  "keep_routing_fraction": {
+   "source": "defaults",
+   "value": null
+  },
+  "kl_ref_ckpt": {
+   "source": "defaults",
+   "value": null
+  },
+  "kl_ref_coef": {
+   "source": "defaults",
+   "value": 0.0
+  },
+  "kl_ref_mask_unseen_drc": {
+   "source": "defaults",
+   "value": false
+  },
+  "kl_ref_seen_drc_types": {
+   "source": "defaults",
+   "value": "2,4,6"
+  },
+  "legacy_action_history": {
+   "source": "derived",
+   "value": false
+  },
+  "legacy_edge_encoding": {
+   "source": "ckpt",
+   "value": false
+  },
+  "legacy_net_encoding": {
+   "source": "derived",
+   "value": false
+  },
+  "legacy_pad_layer_encoding": {
+   "source": "derived",
+   "value": false
+  },
+  "log_dir": {
+   "source": "defaults",
+   "value": "./logs/tb/ppo_decoder"
+  },
+  "log_every": {
+   "source": "defaults",
+   "value": 1
+  },
+  "lr": {
+   "source": "defaults",
+   "value": 0.0003
+  },
+  "masking_rule": {
+   "source": "ckpt",
+   "value": "pcbworld_masking"
+  },
+  "max_grad_norm": {
+   "source": "defaults",
+   "value": 0.5
+  },
+  "max_seq_len": {
+   "source": "ckpt",
+   "value": 10000
+  },
+  "max_steps": {
+   "source": "ckpt",
+   "value": 1024
+  },
+  "max_wallclock_sec": {
+   "source": "defaults",
+   "value": null
+  },
+  "mem_budget": {
+   "source": "defaults",
+   "value": false
+  },
+  "mlp_hidden": {
+   "source": "ckpt",
+   "value": 128
+  },
+  "n_envs": {
+   "source": "defaults",
+   "value": 64
+  },
+  "n_epochs": {
+   "source": "defaults",
+   "value": 10
+  },
+  "n_freq": {
+   "source": "ckpt",
+   "value": 32
+  },
+  "n_heads": {
+   "source": "ckpt",
+   "value": 8
+  },
+  "n_layers": {
+   "source": "ckpt",
+   "value": 6
+  },
+  "n_max_slots": {
+   "source": "ckpt",
+   "value": 512
+  },
+  "n_steps": {
+   "source": "defaults",
+   "value": 2048
+  },
+  "net_constraint_obs": {
+   "source": "ckpt",
+   "value": true
+  },
+  "net_reselect": {
+   "source": "legacy",
+   "value": false
+  },
+  "no_drc_tokens": {
+   "source": "ckpt",
+   "value": false
+  },
+  "no_eval_greedy": {
+   "source": "defaults",
+   "value": false
+  },
+  "no_mask_start_point": {
+   "source": "ckpt",
+   "value": false
+  },
+  "no_vecenv": {
+   "source": "defaults",
+   "value": false
+  },
+  "norm_reward": {
+   "source": "defaults",
+   "value": true
+  },
+  "norm_reward_clip": {
+   "source": "defaults",
+   "value": 10.0
+  },
+  "normalize_adv": {
+   "source": "defaults",
+   "value": true
+  },
+  "obs_format": {
+   "source": "defaults",
+   "value": "indexed"
+  },
+  "obstacle_obs": {
+   "source": "ckpt",
+   "value": true
+  },
+  "offboard_mask": {
+   "source": "ckpt",
+   "value": true
+  },
+  "outline_obs": {
+   "source": "ckpt",
+   "value": "arc"
+  },
+  "pad_graze_margin_mm": {
+   "source": "ckpt",
+   "value": 0.0
+  },
+  "policy_net_select": {
+   "source": "ckpt",
+   "value": true
+  },
+  "recipe": {
+   "source": "defaults",
+   "value": null
+  },
+  "reject_if_stuck": {
+   "source": "legacy:proxy",
+   "value": true
+  },
+  "resume": {
+   "source": "defaults",
+   "value": null
+  },
+  "reward_noise_clip_sigma": {
+   "source": "defaults",
+   "value": 4.0
+  },
+  "reward_noise_std": {
+   "source": "defaults",
+   "value": 0.0
+  },
+  "reward_rule": {
+   "source": "ckpt",
+   "value": "pcbworld_reward"
+  },
+  "reward_step_penalty": {
+   "source": "ckpt",
+   "value": null
+  },
+  "rules_source": {
+   "source": "renamed",
+   "value": "board"
+  },
+  "same_net_bias": {
+   "source": "ckpt",
+   "value": true
+  },
+  "save_dir": {
+   "source": "defaults",
+   "value": "./checkpoints/ppo_decoder"
+  },
+  "save_freq": {
+   "source": "defaults",
+   "value": 50
+  },
+  "seed": {
+   "source": "ckpt",
+   "value": 42
+  },
+  "shape_obs": {
+   "source": "ckpt",
+   "value": true
+  },
+  "shove_iter_limit": {
+   "source": "ckpt",
+   "value": 250
+  },
+  "simplify_outline": {
+   "source": "ckpt",
+   "value": true
+  },
+  "slot_perm": {
+   "source": "defaults",
+   "value": false
+  },
+  "strict_ckpt": {
+   "source": "defaults",
+   "value": false
+  },
+  "time_feature": {
+   "source": "ckpt",
+   "value": "sin_remaining"
+  },
+  "time_feature_cap": {
+   "source": "ckpt",
+   "value": 10000
+  },
+  "trim_at_contact": {
+   "source": "legacy",
+   "value": false
+  },
+  "truncation_bootstrap": {
+   "source": "defaults",
+   "value": false
+  },
+  "update_gpus": {
+   "source": "defaults",
+   "value": 1
+  },
+  "vf_coef": {
+   "source": "defaults",
+   "value": 0.5
+  },
+  "via_penalty": {
+   "source": "ckpt",
+   "value": null
+  },
+  "wandb": {
+   "source": "defaults",
+   "value": false
+  },
+  "wandb_entity": {
+   "source": "defaults",
+   "value": null
+  },
+  "wandb_group": {
+   "source": "defaults",
+   "value": null
+  },
+  "wandb_project": {
+   "source": "defaults",
+   "value": null
+  },
+  "wandb_run_name": {
+   "source": "defaults",
+   "value": null
+  },
+  "wandb_tags": {
+   "source": "defaults",
+   "value": null
+  },
+  "warmup_iters": {
+   "source": "defaults",
+   "value": 0
+  },
+  "wire_via_emission": {
+   "source": "ckpt",
+   "value": null
+  },
+  "wirelength_penalty": {
+   "source": "ckpt",
+   "value": null
+  }
+ },
+ "program/eval_llm": {
+  "api_disable_thinking": {
+   "source": "defaults",
+   "value": false
+  },
+  "api_itpm": {
+   "source": "defaults",
+   "value": null
+  },
+  "api_key": {
+   "source": "defaults",
+   "value": null
+  },
+  "api_max_retries": {
+   "source": "defaults",
+   "value": 8
+  },
+  "api_model": {
+   "source": "defaults",
+   "value": null
+  },
+  "api_otpm": {
+   "source": "defaults",
+   "value": null
+  },
+  "api_prompt_cache": {
+   "source": "defaults",
+   "value": false
+  },
+  "api_provider": {
+   "source": "defaults",
+   "value": "openai"
+  },
+  "api_reasoning_effort": {
+   "source": "defaults",
+   "value": null
+  },
+  "api_rpm": {
+   "source": "defaults",
+   "value": null
+  },
+  "board_path": {
+   "source": "defaults",
+   "value": "<repo>/tests/fixtures/simple_routing_board.kicad_pcb"
+  },
+  "boards_difficulty": {
+   "source": "defaults",
+   "value": "easy"
+  },
+  "boards_json": {
+   "source": "defaults",
+   "value": null
+  },
+  "boards_order": {
+   "source": "defaults",
+   "value": "single"
+  },
+  "boards_split": {
+   "source": "defaults",
+   "value": "test"
+  },
+  "corner_mode": {
+   "source": "defaults",
+   "value": 45
+  },
+  "drc_config_path": {
+   "source": "defaults",
+   "value": null
+  },
+  "drc_log_agg_scale": {
+   "source": "defaults",
+   "value": null
+  },
+  "drc_log_offset": {
+   "source": "defaults",
+   "value": null
+  },
+  "drc_log_scale": {
+   "source": "defaults",
+   "value": null
+  },
+  "drc_penalty": {
+   "source": "defaults",
+   "value": null
+  },
+  "dump_dir": {
+   "source": "defaults",
+   "value": null
+  },
+  "early_stop_no_geometry_progress": {
+   "source": "defaults",
+   "value": 10
+  },
+  "early_stop_no_progress": {
+   "source": "defaults",
+   "value": 0
+  },
+  "enable_chunked_prefill": {
+   "source": "defaults",
+   "value": false
+  },
+  "enable_prefix_caching": {
+   "source": "defaults",
+   "value": false
+  },
+  "env_num": {
+   "source": "defaults",
+   "value": 1
+  },
+  "expect": {
+   "source": "defaults",
+   "value": null
+  },
+  "gpu_devices": {
+   "source": "defaults",
+   "value": null
+  },
+  "gpu_memory_utilization": {
+   "source": "defaults",
+   "value": 0.95
+  },
+  "guided_grammar": {
+   "source": "defaults",
+   "value": null
+  },
+  "history_length": {
+   "source": "defaults",
+   "value": 0
+  },
+  "masking_rule": {
+   "source": "defaults",
+   "value": "pcbworld_masking"
+  },
+  "max_model_len": {
+   "source": "defaults",
+   "value": 4096
+  },
+  "max_new_tokens": {
+   "source": "defaults",
+   "value": 256
+  },
+  "max_steps": {
+   "source": "defaults",
+   "value": 20
+  },
+  "mode": {
+   "source": "defaults",
+   "value": "fixed"
+  },
+  "model_path": {
+   "source": "defaults",
+   "value": "Qwen/Qwen2.5-VL-3B-Instruct"
+  },
+  "net_constraint_obs": {
+   "source": "defaults",
+   "value": true
+  },
+  "net_reselect": {
+   "source": "defaults",
+   "value": false
+  },
+  "no_drc_tokens": {
+   "source": "defaults",
+   "value": false
+  },
+  "num_cpus_per_worker": {
+   "source": "defaults",
+   "value": 1.0
+  },
+  "num_gpus": {
+   "source": "defaults",
+   "value": null
+  },
+  "outline_obs": {
+   "source": "defaults",
+   "value": "arc"
+  },
+  "prompt_version": {
+   "source": "defaults",
+   "value": "latest"
+  },
+  "recipe": {
+   "source": "defaults",
+   "value": null
+  },
+  "reward_noise_std": {
+   "source": "defaults",
+   "value": 0.0
+  },
+  "reward_rule": {
+   "source": "defaults",
+   "value": "grpo_final"
+  },
+  "reward_step_penalty": {
+   "source": "defaults",
+   "value": null
+  },
+  "rollout_episodes": {
+   "source": "defaults",
+   "value": 5
+  },
+  "rules_source": {
+   "source": "defaults",
+   "value": "board"
+  },
+  "seed": {
+   "source": "defaults",
+   "value": 0
+  },
+  "silent": {
+   "source": "defaults",
+   "value": false
+  },
+  "simplify_outline": {
+   "source": "defaults",
+   "value": true
+  },
+  "state_format": {
+   "source": "defaults",
+   "value": "sexpr"
+  },
+  "temperature": {
+   "source": "defaults",
+   "value": 0.7
+  },
+  "tensor_parallel_size": {
+   "source": "defaults",
+   "value": 1
+  },
+  "verbose": {
+   "source": "defaults",
+   "value": false
+  },
+  "via_penalty": {
+   "source": "defaults",
+   "value": null
+  },
+  "wire_via_emission": {
+   "source": "defaults",
+   "value": null
+  },
+  "wirelength_penalty": {
+   "source": "defaults",
+   "value": null
+  }
+ },
+ "program/eval_rl_pipeline": {
+  "boards_dir": null,
+  "boards_list": null,
+  "boards_per_batch": null,
+  "check_angle": null,
+  "ckpt": null,
+  "corner_mode": null,
+  "deterministic": false,
+  "device": "auto",
+  "drc_penalty": null,
+  "dry_run": false,
+  "dump_per_board_csv": false,
+  "early_stop_finish_no_progress": 0,
+  "early_stop_no_geometry_progress": 0,
+  "env_drc": null,
+  "expect": null,
+  "inline_drc": "off",
+  "max_steps": null,
+  "n_envs": 1,
+  "n_rollouts": null,
+  "output_dir": null,
+  "override_n_max_slots": 1280,
+  "recipe": null,
+  "reward_config": "pcbworld_reward",
+  "reward_rule": null,
+  "reward_step_penalty": null,
+  "rollout_mode": "serial",
+  "save_artifacts": "on",
+  "seed": null,
+  "selection_method": "final_potential",
+  "skip_aggregate": false,
+  "skip_drc": false,
+  "skip_rollout": false,
+  "stages": null,
+  "strict_ckpt": false,
+  "via_penalty": null,
+  "wirelength_penalty": null
+ },
+ "program/train_grpo": {
+  "action_history_len": {
+   "source": "defaults",
+   "value": 1
+  },
+  "async_val": {
+   "source": "defaults",
+   "value": false
+  },
+  "aug_bbox_shifted": {
+   "source": "defaults",
+   "value": false
+  },
+  "aug_flip": {
+   "source": "defaults",
+   "value": false
+  },
+  "aug_rotate": {
+   "source": "defaults",
+   "value": false
+  },
+  "aug_trans": {
+   "source": "defaults",
+   "value": false
+  },
+  "aug_zoom": {
+   "source": "defaults",
+   "value": false
+  },
+  "batch_size": {
+   "source": "defaults",
+   "value": 256
+  },
+  "board": {
+   "source": "cli",
+   "value": "board.kicad_pcb"
+  },
+  "boards_dataset_dir": {
+   "source": "defaults",
+   "value": null
+  },
+  "boards_difficulty": {
+   "source": "defaults",
+   "value": "easy"
+  },
+  "boards_json": {
+   "source": "defaults",
+   "value": null
+  },
+  "boards_order": {
+   "source": "defaults",
+   "value": "single"
+  },
+  "boards_split": {
+   "source": "defaults",
+   "value": "train"
+  },
+  "clip_eps": {
+   "source": "defaults",
+   "value": 0.2
+  },
+  "connectivity_filter": {
+   "source": "defaults",
+   "value": true
+  },
+  "coord_encoding": {
+   "source": "defaults",
+   "value": "fourier"
+  },
+  "corner_mode": {
+   "source": "defaults",
+   "value": 45
+  },
+  "d_ff": {
+   "source": "defaults",
+   "value": 512
+  },
+  "d_model": {
+   "source": "defaults",
+   "value": 128
+  },
+  "detach_critic": {
+   "source": "defaults",
+   "value": false
+  },
+  "device": {
+   "source": "defaults",
+   "value": "auto"
+  },
+  "directional_candidates": {
+   "source": "defaults",
+   "value": "multi_resolution"
+  },
+  "disable_slot_emb": {
+   "source": "defaults",
+   "value": true
+  },
+  "drc_config_path": {
+   "source": "defaults",
+   "value": null
+  },
+  "drc_incremental": {
+   "source": "defaults",
+   "value": true
+  },
+  "drc_log_agg_scale": {
+   "source": "defaults",
+   "value": null
+  },
+  "drc_log_offset": {
+   "source": "defaults",
+   "value": null
+  },
+  "drc_log_scale": {
+   "source": "defaults",
+   "value": null
+  },
+  "drc_penalty": {
+   "source": "defaults",
+   "value": null
+  },
+  "drc_promoted_codes": {
+   "source": "defaults",
+   "value": [
+    12,
+    13,
+    37
+   ]
+  },
+  "engine_seed": {
+   "source": "defaults",
+   "value": 77
+  },
+  "entropy_coef": {
+   "source": "defaults",
+   "value": 0.01
+  },
+  "entropy_norm": {
+   "source": "defaults",
+   "value": false
+  },
+  "eval2_boards": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval2_prefix": {
+   "source": "defaults",
+   "value": "val_d3b"
+  },
+  "eval3_boards": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval3_prefix": {
+   "source": "defaults",
+   "value": "val_d3a"
+  },
+  "eval4_boards": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval4_prefix": {
+   "source": "defaults",
+   "value": "val_d2b"
+  },
+  "eval5_boards": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval5_prefix": {
+   "source": "defaults",
+   "value": "val_d2a"
+  },
+  "eval_at_init": {
+   "source": "defaults",
+   "value": false
+  },
+  "eval_base_seed": {
+   "source": "defaults",
+   "value": 1000
+  },
+  "eval_board_limit": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval_boards_per_batch": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval_diag_masking_rule": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval_diag_max_steps": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval_every": {
+   "source": "defaults",
+   "value": 10
+  },
+  "eval_n_rollouts": {
+   "source": "defaults",
+   "value": 5
+  },
+  "eval_split": {
+   "source": "defaults",
+   "value": "val"
+  },
+  "expect": {
+   "source": "defaults",
+   "value": null
+  },
+  "expect_env_diff": {
+   "source": "defaults",
+   "value": ""
+  },
+  "followbranch_iter_limit": {
+   "source": "defaults",
+   "value": 1000000
+  },
+  "force_walkaround": {
+   "source": "defaults",
+   "value": false
+  },
+  "group_size": {
+   "source": "defaults",
+   "value": 8
+  },
+  "iterations": {
+   "source": "defaults",
+   "value": 1000
+  },
+  "keep_routing_fraction": {
+   "source": "defaults",
+   "value": null
+  },
+  "legacy_action_history": {
+   "source": "defaults",
+   "value": false
+  },
+  "legacy_edge_encoding": {
+   "source": "defaults",
+   "value": false
+  },
+  "legacy_net_encoding": {
+   "source": "defaults",
+   "value": false
+  },
+  "legacy_pad_layer_encoding": {
+   "source": "defaults",
+   "value": false
+  },
+  "log_dir": {
+   "source": "defaults",
+   "value": "./logs/tb/grpo_decoder"
+  },
+  "log_every": {
+   "source": "defaults",
+   "value": 1
+  },
+  "lr": {
+   "source": "defaults",
+   "value": 0.0003
+  },
+  "masking_rule": {
+   "source": "defaults",
+   "value": "pcbworld_masking"
+  },
+  "max_grad_norm": {
+   "source": "defaults",
+   "value": 0.5
+  },
+  "max_seq_len": {
+   "source": "defaults",
+   "value": 10000
+  },
+  "max_steps": {
+   "source": "defaults",
+   "value": 1024
+  },
+  "mem_budget": {
+   "source": "defaults",
+   "value": false
+  },
+  "mlp_hidden": {
+   "source": "defaults",
+   "value": 128
+  },
+  "n_envs": {
+   "source": "defaults",
+   "value": 64
+  },
+  "n_epochs": {
+   "source": "defaults",
+   "value": 4
+  },
+  "n_freq": {
+   "source": "defaults",
+   "value": 32
+  },
+  "n_heads": {
+   "source": "defaults",
+   "value": 4
+  },
+  "n_layers": {
+   "source": "defaults",
+   "value": 4
+  },
+  "n_max_slots": {
+   "source": "defaults",
+   "value": 512
+  },
+  "net_constraint_obs": {
+   "source": "defaults",
+   "value": true
+  },
+  "net_reselect": {
+   "source": "defaults",
+   "value": false
+  },
+  "no_drc_tokens": {
+   "source": "defaults",
+   "value": false
+  },
+  "no_eval_greedy": {
+   "source": "defaults",
+   "value": false
+  },
+  "no_mask_start_point": {
+   "source": "defaults",
+   "value": false
+  },
+  "no_vecenv": {
+   "source": "defaults",
+   "value": false
+  },
+  "obs_format": {
+   "source": "defaults",
+   "value": "indexed"
+  },
+  "obstacle_obs": {
+   "source": "defaults",
+   "value": true
+  },
+  "offboard_mask": {
+   "source": "defaults",
+   "value": true
+  },
+  "outline_obs": {
+   "source": "defaults",
+   "value": "arc"
+  },
+  "pad_graze_margin_mm": {
+   "source": "defaults",
+   "value": 0.0
+  },
+  "policy_net_select": {
+   "source": "defaults",
+   "value": true
+  },
+  "recipe": {
+   "source": "defaults",
+   "value": null
+  },
+  "reject_if_stuck": {
+   "source": "defaults",
+   "value": true
+  },
+  "resume": {
+   "source": "defaults",
+   "value": null
+  },
+  "reward_noise_clip_sigma": {
+   "source": "defaults",
+   "value": 4.0
+  },
+  "reward_noise_std": {
+   "source": "defaults",
+   "value": 0.0
+  },
+  "reward_rule": {
+   "source": "defaults",
+   "value": "pcbworld_reward"
+  },
+  "reward_step_penalty": {
+   "source": "defaults",
+   "value": null
+  },
+  "rules_source": {
+   "source": "defaults",
+   "value": "board"
+  },
+  "same_net_bias": {
+   "source": "defaults",
+   "value": false
+  },
+  "save_dir": {
+   "source": "defaults",
+   "value": "./checkpoints/grpo_decoder"
+  },
+  "save_freq": {
+   "source": "defaults",
+   "value": 50
+  },
+  "seed": {
+   "source": "defaults",
+   "value": 42
+  },
+  "shape_obs": {
+   "source": "defaults",
+   "value": true
+  },
+  "shove_iter_limit": {
+   "source": "defaults",
+   "value": 250
+  },
+  "simplify_outline": {
+   "source": "defaults",
+   "value": true
+  },
+  "slot_perm": {
+   "source": "defaults",
+   "value": false
+  },
+  "strict_ckpt": {
+   "source": "defaults",
+   "value": false
+  },
+  "time_feature": {
+   "source": "defaults",
+   "value": "sin_remaining"
+  },
+  "time_feature_cap": {
+   "source": "defaults",
+   "value": 10000
+  },
+  "trim_at_contact": {
+   "source": "defaults",
+   "value": false
+  },
+  "via_penalty": {
+   "source": "defaults",
+   "value": null
+  },
+  "wandb": {
+   "source": "defaults",
+   "value": false
+  },
+  "wandb_entity": {
+   "source": "defaults",
+   "value": null
+  },
+  "wandb_group": {
+   "source": "defaults",
+   "value": null
+  },
+  "wandb_project": {
+   "source": "defaults",
+   "value": null
+  },
+  "wandb_run_name": {
+   "source": "defaults",
+   "value": null
+  },
+  "wandb_tags": {
+   "source": "defaults",
+   "value": null
+  },
+  "warmup_iters": {
+   "source": "defaults",
+   "value": 0
+  },
+  "wire_via_emission": {
+   "source": "defaults",
+   "value": null
+  },
+  "wirelength_penalty": {
+   "source": "defaults",
+   "value": null
+  }
+ },
+ "program/train_ppo": {
+  "action_history_len": {
+   "source": "defaults",
+   "value": 1
+  },
+  "async_val": {
+   "source": "defaults",
+   "value": false
+  },
+  "attn": {
+   "source": "defaults",
+   "value": "sdpa"
+  },
+  "aug_bbox_shifted": {
+   "source": "defaults",
+   "value": false
+  },
+  "aug_flip": {
+   "source": "defaults",
+   "value": false
+  },
+  "aug_rotate": {
+   "source": "defaults",
+   "value": false
+  },
+  "aug_trans": {
+   "source": "defaults",
+   "value": false
+  },
+  "aug_zoom": {
+   "source": "defaults",
+   "value": false
+  },
+  "batch_size": {
+   "source": "defaults",
+   "value": 256
+  },
+  "bf16": {
+   "source": "defaults",
+   "value": false
+  },
+  "board": {
+   "source": "cli",
+   "value": "board.kicad_pcb"
+  },
+  "boards_dataset_dir": {
+   "source": "defaults",
+   "value": null
+  },
+  "boards_difficulty": {
+   "source": "defaults",
+   "value": "easy"
+  },
+  "boards_json": {
+   "source": "defaults",
+   "value": null
+  },
+  "boards_order": {
+   "source": "defaults",
+   "value": "single"
+  },
+  "boards_split": {
+   "source": "defaults",
+   "value": "train"
+  },
+  "clip_eps": {
+   "source": "defaults",
+   "value": 0.2
+  },
+  "compile_mode": {
+   "source": "defaults",
+   "value": "default"
+  },
+  "compile_regions": {
+   "source": "defaults",
+   "value": ""
+  },
+  "connectivity_filter": {
+   "source": "defaults",
+   "value": true
+  },
+  "coord_encoding": {
+   "source": "defaults",
+   "value": "fourier"
+  },
+  "corner_mode": {
+   "source": "defaults",
+   "value": 45
+  },
+  "critic_warmup_ev_streak": {
+   "source": "defaults",
+   "value": 3
+  },
+  "critic_warmup_iters": {
+   "source": "defaults",
+   "value": 0
+  },
+  "critic_warmup_lr": {
+   "source": "defaults",
+   "value": 0.0001
+  },
+  "critic_warmup_max_iters": {
+   "source": "defaults",
+   "value": 0
+  },
+  "critic_warmup_min_ev": {
+   "source": "defaults",
+   "value": 0.0
+  },
+  "d_ff": {
+   "source": "defaults",
+   "value": 512
+  },
+  "d_model": {
+   "source": "defaults",
+   "value": 128
+  },
+  "detach_critic": {
+   "source": "defaults",
+   "value": false
+  },
+  "device": {
+   "source": "defaults",
+   "value": "auto"
+  },
+  "directional_candidates": {
+   "source": "defaults",
+   "value": "multi_resolution"
+  },
+  "disable_slot_emb": {
+   "source": "defaults",
+   "value": true
+  },
+  "drc_config_path": {
+   "source": "defaults",
+   "value": null
+  },
+  "drc_incremental": {
+   "source": "defaults",
+   "value": true
+  },
+  "drc_log_agg_scale": {
+   "source": "defaults",
+   "value": null
+  },
+  "drc_log_offset": {
+   "source": "defaults",
+   "value": null
+  },
+  "drc_log_scale": {
+   "source": "defaults",
+   "value": null
+  },
+  "drc_penalty": {
+   "source": "defaults",
+   "value": null
+  },
+  "drc_promoted_codes": {
+   "source": "defaults",
+   "value": [
+    12,
+    13,
+    37
+   ]
+  },
+  "dump_config_only": {
+   "source": "defaults",
+   "value": false
+  },
+  "engine_seed": {
+   "source": "defaults",
+   "value": 77
+  },
+  "entropy_coef": {
+   "source": "defaults",
+   "value": 0.01
+  },
+  "entropy_norm": {
+   "source": "defaults",
+   "value": false
+  },
+  "eval2_boards": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval2_prefix": {
+   "source": "defaults",
+   "value": "val_d3b"
+  },
+  "eval3_boards": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval3_prefix": {
+   "source": "defaults",
+   "value": "val_d3a"
+  },
+  "eval4_boards": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval4_prefix": {
+   "source": "defaults",
+   "value": "val_d2b"
+  },
+  "eval5_boards": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval5_prefix": {
+   "source": "defaults",
+   "value": "val_d2a"
+  },
+  "eval_at_init": {
+   "source": "defaults",
+   "value": false
+  },
+  "eval_base_seed": {
+   "source": "defaults",
+   "value": 1000
+  },
+  "eval_board_limit": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval_boards_per_batch": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval_diag_masking_rule": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval_diag_max_steps": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval_every": {
+   "source": "defaults",
+   "value": 10
+  },
+  "eval_n_rollouts": {
+   "source": "defaults",
+   "value": 5
+  },
+  "eval_split": {
+   "source": "defaults",
+   "value": "val"
+  },
+  "expect": {
+   "source": "defaults",
+   "value": null
+  },
+  "expect_env_diff": {
+   "source": "defaults",
+   "value": ""
+  },
+  "followbranch_iter_limit": {
+   "source": "defaults",
+   "value": 1000000
+  },
+  "force_walkaround": {
+   "source": "defaults",
+   "value": false
+  },
+  "gae_lambda": {
+   "source": "defaults",
+   "value": 0.95
+  },
+  "gamma": {
+   "source": "defaults",
+   "value": 0.995
+  },
+  "init_ckpt": {
+   "source": "defaults",
+   "value": null
+  },
+  "iterations": {
+   "source": "defaults",
+   "value": 1000
+  },
+  "keep_routing_fraction": {
+   "source": "defaults",
+   "value": null
+  },
+  "kl_ref_ckpt": {
+   "source": "defaults",
+   "value": null
+  },
+  "kl_ref_coef": {
+   "source": "defaults",
+   "value": 0.0
+  },
+  "kl_ref_mask_unseen_drc": {
+   "source": "defaults",
+   "value": false
+  },
+  "kl_ref_seen_drc_types": {
+   "source": "defaults",
+   "value": "2,4,6"
+  },
+  "legacy_action_history": {
+   "source": "defaults",
+   "value": false
+  },
+  "legacy_edge_encoding": {
+   "source": "defaults",
+   "value": false
+  },
+  "legacy_net_encoding": {
+   "source": "defaults",
+   "value": false
+  },
+  "legacy_pad_layer_encoding": {
+   "source": "defaults",
+   "value": false
+  },
+  "log_dir": {
+   "source": "defaults",
+   "value": "./logs/tb/ppo_decoder"
+  },
+  "log_every": {
+   "source": "defaults",
+   "value": 1
+  },
+  "lr": {
+   "source": "defaults",
+   "value": 0.0003
+  },
+  "masking_rule": {
+   "source": "defaults",
+   "value": "pcbworld_masking"
+  },
+  "max_grad_norm": {
+   "source": "defaults",
+   "value": 0.5
+  },
+  "max_seq_len": {
+   "source": "defaults",
+   "value": 10000
+  },
+  "max_steps": {
+   "source": "defaults",
+   "value": 1024
+  },
+  "max_wallclock_sec": {
+   "source": "defaults",
+   "value": null
+  },
+  "mem_budget": {
+   "source": "defaults",
+   "value": false
+  },
+  "mlp_hidden": {
+   "source": "defaults",
+   "value": 128
+  },
+  "n_envs": {
+   "source": "defaults",
+   "value": 64
+  },
+  "n_epochs": {
+   "source": "defaults",
+   "value": 10
+  },
+  "n_freq": {
+   "source": "defaults",
+   "value": 32
+  },
+  "n_heads": {
+   "source": "defaults",
+   "value": 4
+  },
+  "n_layers": {
+   "source": "defaults",
+   "value": 4
+  },
+  "n_max_slots": {
+   "source": "defaults",
+   "value": 512
+  },
+  "n_steps": {
+   "source": "defaults",
+   "value": 2048
+  },
+  "net_constraint_obs": {
+   "source": "defaults",
+   "value": true
+  },
+  "net_reselect": {
+   "source": "defaults",
+   "value": false
+  },
+  "no_drc_tokens": {
+   "source": "defaults",
+   "value": false
+  },
+  "no_eval_greedy": {
+   "source": "defaults",
+   "value": false
+  },
+  "no_mask_start_point": {
+   "source": "defaults",
+   "value": false
+  },
+  "no_vecenv": {
+   "source": "defaults",
+   "value": false
+  },
+  "norm_reward": {
+   "source": "defaults",
+   "value": true
+  },
+  "norm_reward_clip": {
+   "source": "defaults",
+   "value": 10.0
+  },
+  "normalize_adv": {
+   "source": "defaults",
+   "value": true
+  },
+  "obs_format": {
+   "source": "defaults",
+   "value": "indexed"
+  },
+  "obstacle_obs": {
+   "source": "defaults",
+   "value": true
+  },
+  "offboard_mask": {
+   "source": "defaults",
+   "value": true
+  },
+  "outline_obs": {
+   "source": "defaults",
+   "value": "arc"
+  },
+  "pad_graze_margin_mm": {
+   "source": "defaults",
+   "value": 0.0
+  },
+  "policy_net_select": {
+   "source": "defaults",
+   "value": true
+  },
+  "recipe": {
+   "source": "defaults",
+   "value": null
+  },
+  "reject_if_stuck": {
+   "source": "defaults",
+   "value": true
+  },
+  "resume": {
+   "source": "defaults",
+   "value": null
+  },
+  "reward_noise_clip_sigma": {
+   "source": "defaults",
+   "value": 4.0
+  },
+  "reward_noise_std": {
+   "source": "defaults",
+   "value": 0.0
+  },
+  "reward_rule": {
+   "source": "defaults",
+   "value": "pcbworld_reward"
+  },
+  "reward_step_penalty": {
+   "source": "defaults",
+   "value": null
+  },
+  "rules_source": {
+   "source": "defaults",
+   "value": "board"
+  },
+  "same_net_bias": {
+   "source": "defaults",
+   "value": false
+  },
+  "save_dir": {
+   "source": "defaults",
+   "value": "./checkpoints/ppo_decoder"
+  },
+  "save_freq": {
+   "source": "defaults",
+   "value": 50
+  },
+  "seed": {
+   "source": "defaults",
+   "value": 42
+  },
+  "shape_obs": {
+   "source": "defaults",
+   "value": true
+  },
+  "shove_iter_limit": {
+   "source": "defaults",
+   "value": 250
+  },
+  "simplify_outline": {
+   "source": "defaults",
+   "value": true
+  },
+  "slot_perm": {
+   "source": "defaults",
+   "value": false
+  },
+  "strict_ckpt": {
+   "source": "defaults",
+   "value": false
+  },
+  "time_feature": {
+   "source": "defaults",
+   "value": "sin_remaining"
+  },
+  "time_feature_cap": {
+   "source": "defaults",
+   "value": 10000
+  },
+  "trim_at_contact": {
+   "source": "defaults",
+   "value": false
+  },
+  "truncation_bootstrap": {
+   "source": "defaults",
+   "value": false
+  },
+  "update_gpus": {
+   "source": "defaults",
+   "value": 1
+  },
+  "vf_coef": {
+   "source": "defaults",
+   "value": 0.5
+  },
+  "via_penalty": {
+   "source": "defaults",
+   "value": null
+  },
+  "wandb": {
+   "source": "defaults",
+   "value": false
+  },
+  "wandb_entity": {
+   "source": "defaults",
+   "value": null
+  },
+  "wandb_group": {
+   "source": "defaults",
+   "value": null
+  },
+  "wandb_project": {
+   "source": "defaults",
+   "value": null
+  },
+  "wandb_run_name": {
+   "source": "defaults",
+   "value": null
+  },
+  "wandb_tags": {
+   "source": "defaults",
+   "value": null
+  },
+  "warmup_iters": {
+   "source": "defaults",
+   "value": 0
+  },
+  "wire_via_emission": {
+   "source": "defaults",
+   "value": null
+  },
+  "wirelength_penalty": {
+   "source": "defaults",
+   "value": null
+  }
+ },
+ "program/train_ppo_init_ckpt": {
+  "action_history_len": {
+   "source": "defaults",
+   "value": 1
+  },
+  "async_val": {
+   "source": "defaults",
+   "value": false
+  },
+  "attn": {
+   "source": "defaults",
+   "value": "sdpa"
+  },
+  "aug_bbox_shifted": {
+   "source": "defaults",
+   "value": false
+  },
+  "aug_flip": {
+   "source": "defaults",
+   "value": false
+  },
+  "aug_rotate": {
+   "source": "defaults",
+   "value": false
+  },
+  "aug_trans": {
+   "source": "defaults",
+   "value": false
+  },
+  "aug_zoom": {
+   "source": "defaults",
+   "value": false
+  },
+  "batch_size": {
+   "source": "defaults",
+   "value": 256
+  },
+  "bf16": {
+   "source": "defaults",
+   "value": false
+  },
+  "board": {
+   "source": "cli",
+   "value": "board.kicad_pcb"
+  },
+  "boards_dataset_dir": {
+   "source": "defaults",
+   "value": null
+  },
+  "boards_difficulty": {
+   "source": "defaults",
+   "value": "easy"
+  },
+  "boards_json": {
+   "source": "defaults",
+   "value": null
+  },
+  "boards_order": {
+   "source": "defaults",
+   "value": "single"
+  },
+  "boards_split": {
+   "source": "defaults",
+   "value": "train"
+  },
+  "clip_eps": {
+   "source": "defaults",
+   "value": 0.1
+  },
+  "compile_mode": {
+   "source": "defaults",
+   "value": "default"
+  },
+  "compile_regions": {
+   "source": "defaults",
+   "value": ""
+  },
+  "connectivity_filter": {
+   "source": "defaults",
+   "value": true
+  },
+  "coord_encoding": {
+   "source": "defaults",
+   "value": "fourier"
+  },
+  "corner_mode": {
+   "source": "defaults",
+   "value": 45
+  },
+  "critic_warmup_ev_streak": {
+   "source": "defaults",
+   "value": 3
+  },
+  "critic_warmup_iters": {
+   "source": "defaults",
+   "value": 0
+  },
+  "critic_warmup_lr": {
+   "source": "defaults",
+   "value": 0.0001
+  },
+  "critic_warmup_max_iters": {
+   "source": "defaults",
+   "value": 0
+  },
+  "critic_warmup_min_ev": {
+   "source": "defaults",
+   "value": 0.0
+  },
+  "d_ff": {
+   "source": "defaults",
+   "value": 512
+  },
+  "d_model": {
+   "source": "defaults",
+   "value": 128
+  },
+  "detach_critic": {
+   "source": "defaults",
+   "value": false
+  },
+  "device": {
+   "source": "defaults",
+   "value": "auto"
+  },
+  "directional_candidates": {
+   "source": "defaults",
+   "value": "multi_resolution"
+  },
+  "disable_slot_emb": {
+   "source": "defaults",
+   "value": true
+  },
+  "drc_config_path": {
+   "source": "defaults",
+   "value": null
+  },
+  "drc_incremental": {
+   "source": "defaults",
+   "value": true
+  },
+  "drc_log_agg_scale": {
+   "source": "defaults",
+   "value": null
+  },
+  "drc_log_offset": {
+   "source": "defaults",
+   "value": null
+  },
+  "drc_log_scale": {
+   "source": "defaults",
+   "value": null
+  },
+  "drc_penalty": {
+   "source": "defaults",
+   "value": null
+  },
+  "drc_promoted_codes": {
+   "source": "defaults",
+   "value": [
+    12,
+    13,
+    37
+   ]
+  },
+  "dump_config_only": {
+   "source": "defaults",
+   "value": false
+  },
+  "engine_seed": {
+   "source": "defaults",
+   "value": 77
+  },
+  "entropy_coef": {
+   "source": "defaults",
+   "value": 0.01
+  },
+  "entropy_norm": {
+   "source": "defaults",
+   "value": false
+  },
+  "eval2_boards": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval2_prefix": {
+   "source": "defaults",
+   "value": "val_d3b"
+  },
+  "eval3_boards": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval3_prefix": {
+   "source": "defaults",
+   "value": "val_d3a"
+  },
+  "eval4_boards": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval4_prefix": {
+   "source": "defaults",
+   "value": "val_d2b"
+  },
+  "eval5_boards": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval5_prefix": {
+   "source": "defaults",
+   "value": "val_d2a"
+  },
+  "eval_at_init": {
+   "source": "defaults",
+   "value": false
+  },
+  "eval_base_seed": {
+   "source": "defaults",
+   "value": 1000
+  },
+  "eval_board_limit": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval_boards_per_batch": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval_diag_masking_rule": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval_diag_max_steps": {
+   "source": "defaults",
+   "value": null
+  },
+  "eval_every": {
+   "source": "defaults",
+   "value": 10
+  },
+  "eval_n_rollouts": {
+   "source": "defaults",
+   "value": 5
+  },
+  "eval_split": {
+   "source": "defaults",
+   "value": "val"
+  },
+  "expect": {
+   "source": "defaults",
+   "value": null
+  },
+  "expect_env_diff": {
+   "source": "defaults",
+   "value": ""
+  },
+  "followbranch_iter_limit": {
+   "source": "defaults",
+   "value": 1000000
+  },
+  "force_walkaround": {
+   "source": "defaults",
+   "value": false
+  },
+  "gae_lambda": {
+   "source": "defaults",
+   "value": 0.95
+  },
+  "gamma": {
+   "source": "defaults",
+   "value": 0.995
+  },
+  "init_ckpt": {
+   "source": "cli",
+   "value": "init.pt"
+  },
+  "iterations": {
+   "source": "defaults",
+   "value": 1000
+  },
+  "keep_routing_fraction": {
+   "source": "defaults",
+   "value": null
+  },
+  "kl_ref_ckpt": {
+   "source": "defaults",
+   "value": null
+  },
+  "kl_ref_coef": {
+   "source": "defaults",
+   "value": 0.0
+  },
+  "kl_ref_mask_unseen_drc": {
+   "source": "defaults",
+   "value": false
+  },
+  "kl_ref_seen_drc_types": {
+   "source": "defaults",
+   "value": "2,4,6"
+  },
+  "legacy_action_history": {
+   "source": "defaults",
+   "value": false
+  },
+  "legacy_edge_encoding": {
+   "source": "defaults",
+   "value": false
+  },
+  "legacy_net_encoding": {
+   "source": "defaults",
+   "value": false
+  },
+  "legacy_pad_layer_encoding": {
+   "source": "defaults",
+   "value": false
+  },
+  "log_dir": {
+   "source": "defaults",
+   "value": "./logs/tb/ppo_decoder"
+  },
+  "log_every": {
+   "source": "defaults",
+   "value": 1
+  },
+  "lr": {
+   "source": "defaults",
+   "value": 2e-05
+  },
+  "masking_rule": {
+   "source": "defaults",
+   "value": "pcbworld_masking"
+  },
+  "max_grad_norm": {
+   "source": "defaults",
+   "value": 0.5
+  },
+  "max_seq_len": {
+   "source": "defaults",
+   "value": 10000
+  },
+  "max_steps": {
+   "source": "defaults",
+   "value": 1024
+  },
+  "max_wallclock_sec": {
+   "source": "defaults",
+   "value": null
+  },
+  "mem_budget": {
+   "source": "defaults",
+   "value": false
+  },
+  "mlp_hidden": {
+   "source": "defaults",
+   "value": 128
+  },
+  "n_envs": {
+   "source": "defaults",
+   "value": 64
+  },
+  "n_epochs": {
+   "source": "defaults",
+   "value": 10
+  },
+  "n_freq": {
+   "source": "defaults",
+   "value": 32
+  },
+  "n_heads": {
+   "source": "defaults",
+   "value": 4
+  },
+  "n_layers": {
+   "source": "defaults",
+   "value": 4
+  },
+  "n_max_slots": {
+   "source": "defaults",
+   "value": 512
+  },
+  "n_steps": {
+   "source": "defaults",
+   "value": 2048
+  },
+  "net_constraint_obs": {
+   "source": "defaults",
+   "value": true
+  },
+  "net_reselect": {
+   "source": "defaults",
+   "value": false
+  },
+  "no_drc_tokens": {
+   "source": "defaults",
+   "value": false
+  },
+  "no_eval_greedy": {
+   "source": "defaults",
+   "value": false
+  },
+  "no_mask_start_point": {
+   "source": "defaults",
+   "value": false
+  },
+  "no_vecenv": {
+   "source": "defaults",
+   "value": false
+  },
+  "norm_reward": {
+   "source": "defaults",
+   "value": true
+  },
+  "norm_reward_clip": {
+   "source": "defaults",
+   "value": 10.0
+  },
+  "normalize_adv": {
+   "source": "defaults",
+   "value": true
+  },
+  "obs_format": {
+   "source": "defaults",
+   "value": "indexed"
+  },
+  "obstacle_obs": {
+   "source": "defaults",
+   "value": true
+  },
+  "offboard_mask": {
+   "source": "defaults",
+   "value": true
+  },
+  "outline_obs": {
+   "source": "defaults",
+   "value": "arc"
+  },
+  "pad_graze_margin_mm": {
+   "source": "defaults",
+   "value": 0.0
+  },
+  "policy_net_select": {
+   "source": "defaults",
+   "value": true
+  },
+  "recipe": {
+   "source": "defaults",
+   "value": null
+  },
+  "reject_if_stuck": {
+   "source": "defaults",
+   "value": true
+  },
+  "resume": {
+   "source": "defaults",
+   "value": null
+  },
+  "reward_noise_clip_sigma": {
+   "source": "defaults",
+   "value": 4.0
+  },
+  "reward_noise_std": {
+   "source": "defaults",
+   "value": 0.0
+  },
+  "reward_rule": {
+   "source": "defaults",
+   "value": "pcbworld_reward"
+  },
+  "reward_step_penalty": {
+   "source": "defaults",
+   "value": null
+  },
+  "rules_source": {
+   "source": "defaults",
+   "value": "board"
+  },
+  "same_net_bias": {
+   "source": "defaults",
+   "value": false
+  },
+  "save_dir": {
+   "source": "defaults",
+   "value": "./checkpoints/ppo_decoder"
+  },
+  "save_freq": {
+   "source": "defaults",
+   "value": 50
+  },
+  "seed": {
+   "source": "defaults",
+   "value": 42
+  },
+  "shape_obs": {
+   "source": "defaults",
+   "value": true
+  },
+  "shove_iter_limit": {
+   "source": "defaults",
+   "value": 250
+  },
+  "simplify_outline": {
+   "source": "defaults",
+   "value": true
+  },
+  "slot_perm": {
+   "source": "defaults",
+   "value": false
+  },
+  "strict_ckpt": {
+   "source": "defaults",
+   "value": false
+  },
+  "time_feature": {
+   "source": "defaults",
+   "value": "sin_remaining"
+  },
+  "time_feature_cap": {
+   "source": "defaults",
+   "value": 10000
+  },
+  "trim_at_contact": {
+   "source": "defaults",
+   "value": false
+  },
+  "truncation_bootstrap": {
+   "source": "defaults",
+   "value": false
+  },
+  "update_gpus": {
+   "source": "defaults",
+   "value": 1
+  },
+  "vf_coef": {
+   "source": "defaults",
+   "value": 0.5
+  },
+  "via_penalty": {
+   "source": "defaults",
+   "value": null
+  },
+  "wandb": {
+   "source": "defaults",
+   "value": false
+  },
+  "wandb_entity": {
+   "source": "defaults",
+   "value": null
+  },
+  "wandb_group": {
+   "source": "defaults",
+   "value": null
+  },
+  "wandb_project": {
+   "source": "defaults",
+   "value": null
+  },
+  "wandb_run_name": {
+   "source": "defaults",
+   "value": null
+  },
+  "wandb_tags": {
+   "source": "defaults",
+   "value": null
+  },
+  "warmup_iters": {
+   "source": "defaults",
+   "value": 0
+  },
+  "wire_via_emission": {
+   "source": "defaults",
+   "value": null
+  },
+  "wirelength_penalty": {
+   "source": "defaults",
+   "value": null
+  }
+ }
+}

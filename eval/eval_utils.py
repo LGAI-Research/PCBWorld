@@ -19,6 +19,7 @@ Three sections, each documented at its banner:
 from __future__ import annotations
 
 import csv
+import json
 import math
 import re
 import shutil
@@ -43,7 +44,18 @@ from configs.loader.schema import DEFAULTS
 ROLLOUT_ID_FIELDS: tuple[str, ...] = (
     "board_index", "board_id", "board_path",
     "rollout_idx", "seed", "deterministic",
+    "ckpt",                  # the s<SS> of the cell grammar; set on every row, so a
+                             # failed attempt (no artifact name) keeps its ckpt
 )
+
+# Stage 2's per-cell record of the bare-board potential Φ₀ of every board with a
+# failed attempt (board_id, board_path, initial_potential, reward_config, ...);
+# Stage 3 prices those attempts with it.
+BARE_BOARD_POTENTIALS_CSV = "initial_potentials.csv"
+# The run record of the standalone Stage-3 CLI (``python -m eval.aggregation``) over an
+# existing cell, beside the rollout's run_record.yaml (configs.loader.record.record_tool_run);
+# it names the cell's other records by hash.
+AGGREGATE_RUN_RECORD = "run_record.aggregate.yaml"
 
 
 ROLLOUT_STATUS_FIELDS: tuple[str, ...] = (
@@ -97,6 +109,15 @@ ROLLOUT_ARTIFACT_FIELDS: tuple[str, ...] = (
     "rollout_finish_time",
     "artifact_path",
     "error",
+    # Design rules the board was routed under (:func:`rules_columns`), from the
+    # env's terminal info (RL) or reset info (LLM — so early-stopped episodes keep
+    # them). Blank for producers without a live env and crashed rollouts.
+    # ``rules_digest`` = ``PCBWorld.rules_digest``; ``rules_substitution`` =
+    # JSON of ``PCBWorld.rules_substitution`` (the YAML minima that replaced a
+    # board without rules under ``rules_source=board_or_yaml``), blank when the
+    # board's own rules applied.
+    "rules_digest",
+    "rules_substitution",
 )
 
 
@@ -111,6 +132,33 @@ DRC_METADATA_FIELDS: tuple[str, ...] = (
     "eval_status",           # ok | error  (blank when DRC not run)
     "eval_error",
     "reward_config", "check_angle",
+    # Inline scoring only (blank otherwise): the env's own Φ₀ is the scorer's Φ₀
+    # (same Φ definition), so failed attempts may be priced with it.
+    "env_phi0_matches",
+)
+
+
+GIVEUP_FIELDS: tuple[str, ...] = (
+    # ---- Give-up record (diagnostic; RL rollout producers only) ----
+    # A give-up = a successful ``net_end`` on a net that still has ratsnest
+    # edges. JSON-encoded so a rollout stays one CSV line; blank = not
+    # recorded (a crash, a producer that does not track it). Aggregated by
+    # :func:`eval.aggregation.giveup_quality`, never into the value metrics.
+    "giveup_count",          # give-up events this rollout left standing (all, if unrouted_nets blank)
+    "giveup_events",         # [[net_id, step, ratsnest_edges_left], ...] (same events)
+    "unrouted_nets",         # sorted routable net ids with ratsnest edges at episode end
+)
+
+
+LLM_CALL_FIELDS: tuple[str, ...] = (
+    # ---- LLM provider-call record (diagnostic; LLM rollout producers only) ----
+    # Steps of THIS rollout whose provider call failed after its retries and was
+    # replaced by the idle fallback. They stay in the episode and are scored like
+    # any step (an idle step spends max_steps); this column only makes them
+    # visible. Blank = not recorded (RL / rule-based rows, a provider that keeps
+    # no failure record, crashed episodes, dumps from before the column), which
+    # is distinct from 0. Summed by :func:`eval.aggregation.api_failure_summary`.
+    "api_failed_calls",
 )
 
 
@@ -120,7 +168,42 @@ PER_ROLLOUT_FIELDS: list[str] = [
     *PCBWORLD_VALUE_METRIC_FIELDS,
     *ROLLOUT_ARTIFACT_FIELDS,
     *DRC_METADATA_FIELDS,
+    *GIVEUP_FIELDS,
+    *LLM_CALL_FIELDS,
 ]
+
+
+def giveup_columns(
+    events: Sequence[Sequence[int]], unrouted_nets: Iterable[int] | None,
+) -> dict[str, Any]:
+    """The :data:`GIVEUP_FIELDS` of one rollout. With the end state read, an
+    event whose net the rollout finished by the end (reopened with
+    ``net_reselect``) was undone and is dropped. ``unrouted_nets=None`` (the
+    end state could not be read) keeps every event and leaves ``unrouted_nets``
+    blank, which keeps the rollout out of the ``giveup_*`` metrics."""
+    compact = (",", ":")
+    final = None if unrouted_nets is None else {int(n) for n in unrouted_nets}
+    if final is not None:
+        events = [e for e in events if int(e[0]) in final]
+    return {
+        "giveup_count": len(events),
+        "giveup_events": json.dumps([list(map(int, e)) for e in events], separators=compact),
+        "unrouted_nets": "" if final is None else json.dumps(sorted(final), separators=compact),
+    }
+
+
+def parse_json_list(value: object) -> list | None:
+    """A :data:`GIVEUP_FIELDS` list cell (JSON text, or the list itself on an
+    in-memory row) -> list; blank or malformed -> ``None`` (not recorded)."""
+    if isinstance(value, list):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = json.loads(value)
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, list) else None
 
 
 PER_BOARD_FIELDS: list[str] = [
@@ -141,6 +224,7 @@ PER_BOARD_FIELDS: list[str] = [
     "track_count_mean",
     "selected_by_mode_rollout_idx",
     "selection_mode_table1",
+    *LLM_CALL_FIELDS,        # summed over the board's rollouts; blank = none recorded
 ]
 
 
@@ -288,6 +372,24 @@ def select_best_per_board(
 # ============================================================================
 
 
+def resolve_check_angle(env_corner: int, explicit: int | None,
+                        flag: str = "--check-angle") -> int:
+    """The post-hoc track-angle check mode for a board routed by an env.
+
+    It is the angle the env actually routes with (its final ``corner_mode``).
+    An explicit angle (given through ``flag``, the knob named in the error) may
+    only restate that angle: scoring a board against another angle's geometry
+    rule is a silent mismatch, so it raises.
+    """
+    if explicit is not None and int(explicit) != int(env_corner):
+        raise ValueError(
+            f"{flag} {int(explicit)} differs from the env corner_mode "
+            f"{int(env_corner)}: the board is routed at {int(env_corner)} degrees "
+            f"and is scored at that angle (omit {flag}, or route at "
+            f"{int(explicit)} degrees with corner_mode {int(explicit)})")
+    return int(env_corner)
+
+
 # ---------------------------------------------------------------------------
 # Runtime (live-env) metric semantics — the single derivation point
 # ---------------------------------------------------------------------------
@@ -421,7 +523,17 @@ def runtime_metrics_from_info(
             "no_geometry_progress_since_progress", "",
         ),
         "error": str(info.get("error", "")),
+        **rules_columns(info),
     }
+
+
+def rules_columns(info: dict[str, Any]) -> dict[str, str]:
+    """The ``rules_digest`` / ``rules_substitution`` row columns of a live-env
+    ``info`` — blank when it is not a reset or terminal ``PCBWorld`` info (or the
+    board's own rules applied, for ``rules_substitution``)."""
+    sub = info.get("rules_substitution")
+    return {"rules_digest": str(info.get("rules_digest", "")),
+            "rules_substitution": "" if sub is None else json.dumps(sub, sort_keys=True)}
 
 
 def flatten_scored_result(
@@ -471,15 +583,15 @@ def flatten_scored_result(
         # Source result may override reward_config; otherwise stick with the
         # caller-supplied value.
         "reward_config": str(result.get("reward_config", reward_config)),
+        # Inline scoring only (compute_metrics_inline); a post-hoc result has no env.
+        "env_phi0_matches": result.get("env_phi0_matches", ""),
     }
-    # Only emit the bare-board baseline when this eval actually computed it
-    # (post-hoc path resets the engine; the inline path supplies u_0 and does
-    # not, leaving it None). Omitting the keys avoids clobbering the value the
-    # rollout already wrote from the env's reset-time potential.
-    if result.get("initial_potential") is not None:
-        out["initial_potential"] = float(result["initial_potential"])
-    if result.get("potential_gain") is not None:
-        out["potential_gain"] = float(result["potential_gain"])
+    # The bare-board baseline as THIS scoring config prices it (post-hoc: the
+    # stripped board; inline: the env's reset-time state). It replaces the env's
+    # reset-time Φ₀ (the training rule) the rollout wrote; NaN when the scorer
+    # could not price it, never the training rule's value beside a scored Φ.
+    for key in ("initial_potential", "potential_gain"):
+        out[key] = math.nan if result[key] is None else float(result[key])
     return out
 
 

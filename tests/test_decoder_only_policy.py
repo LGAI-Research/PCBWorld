@@ -5,6 +5,8 @@ No C++ dependency — pure PyTorch tests.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 import torch
 import torch.nn as nn
@@ -29,6 +31,7 @@ from methods.rl_agent.models.v1.blocks import (
     init_weights,
 )
 from tests._mock_obs import make_mock_obs
+from tests.helpers.dist_inputs import permissive_dist
 
 
 # ===================================================================
@@ -309,6 +312,8 @@ class TestInitWeights:
 def _tiny_policy() -> KiCadRLModel:
     """Small policy suitable for fast tests."""
     return KiCadRLModel(
+        disable_slot_emb=False,
+        policy_net_select=False,
         d_model=32,
         n_heads=4,
         n_layers=2,
@@ -406,8 +411,8 @@ class TestKiCadRLModelDrcTokens:
                 self._drc(125.0, 65.0, type_id=2, severity=0x10, nets=[]),
             ]
         # Both should forward without error.
-        a_no, _ = policy.act(obs_no)
-        a_yes, _ = policy.act(obs_yes)
+        a_no, _ = policy.act(obs_no, dist=permissive_dist(policy, obs_no))
+        a_yes, _ = policy.act(obs_yes, dist=permissive_dist(policy, obs_yes))
         assert a_no.shape == a_yes.shape
 
     def test_backward_with_drc(self):
@@ -465,7 +470,7 @@ class TestKiCadRLModelAct:
     def test_act_output_shape_and_types(self):
         policy = _tiny_policy()
         obs_list = _batch_obs(current_net_phase=1, is_routing=False)
-        actions, log_probs = policy.act(obs_list)
+        actions, log_probs = policy.act(obs_list, dist=permissive_dist(policy, obs_list))
         assert actions.shape == (2, 3)
         assert actions.dtype == torch.int64
         assert log_probs.shape == (2,)
@@ -488,10 +493,10 @@ class TestKiCadRLModelAct:
         obs_list = _batch_obs(current_net_phase=0, is_routing=False)
         mask = torch.zeros(2, NUM_ACTION_TYPES, dtype=torch.bool)
         mask[:, ACT_NET_SELECT] = True
-        actions, _ = policy.act(obs_list, action_masks=mask)
+        actions, _ = policy.act(obs_list, dist=replace(permissive_dist(policy, obs_list), action=mask))
         assert (actions[:, 0] == ACT_NET_SELECT).all()
-        # net_select needs pointer, not mode
-        assert (actions[:, 1] >= 0).all()
+        # The env picks the net (policy_net_select off): no pointer, no mode
+        assert (actions[:, 1] == -1).all()
         assert (actions[:, 2] == -1).all()
 
     def test_act_forces_make_line(self):
@@ -500,7 +505,7 @@ class TestKiCadRLModelAct:
         obs_list = _batch_obs(current_net_phase=2, is_routing=True)
         mask = torch.zeros(2, NUM_ACTION_TYPES, dtype=torch.bool)
         mask[:, ACT_MAKE_LINE] = True
-        actions, _ = policy.act(obs_list, action_masks=mask)
+        actions, _ = policy.act(obs_list, dist=replace(permissive_dist(policy, obs_list), action=mask))
         assert (actions[:, 0] == ACT_MAKE_LINE).all()
         assert (actions[:, 1] >= 0).all()
         assert ((actions[:, 2] >= 0) & (actions[:, 2] < 3)).all()
@@ -511,7 +516,7 @@ class TestKiCadRLModelAct:
         obs_list = _batch_obs(current_net_phase=1, is_routing=False)
         mask = torch.zeros(2, NUM_ACTION_TYPES, dtype=torch.bool)
         mask[:, ACT_NET_END] = True
-        actions, _ = policy.act(obs_list, action_masks=mask)
+        actions, _ = policy.act(obs_list, dist=replace(permissive_dist(policy, obs_list), action=mask))
         assert (actions[:, 0] == ACT_NET_END).all()
         assert (actions[:, 1] == -1).all()
         assert (actions[:, 2] == -1).all()
@@ -522,7 +527,7 @@ class TestKiCadRLModelAct:
         obs_list = _batch_obs(current_net_phase=2, is_routing=True)
         mask = torch.zeros(2, NUM_ACTION_TYPES, dtype=torch.bool)
         mask[:, ACT_FINISH] = True
-        actions, _ = policy.act(obs_list, action_masks=mask)
+        actions, _ = policy.act(obs_list, dist=replace(permissive_dist(policy, obs_list), action=mask))
         assert (actions[:, 0] == ACT_FINISH).all()
         assert (actions[:, 1] == -1).all()
         assert ((actions[:, 2] >= 0) & (actions[:, 2] < 3)).all()
@@ -531,15 +536,15 @@ class TestKiCadRLModelAct:
         policy = _tiny_policy()
         policy.eval()
         obs_list = _batch_obs(current_net_phase=1)
-        a1, lp1 = policy.act(obs_list, deterministic=True)
-        a2, lp2 = policy.act(obs_list, deterministic=True)
+        a1, lp1 = policy.act(obs_list, dist=permissive_dist(policy, obs_list), deterministic=True)
+        a2, lp2 = policy.act(obs_list, dist=permissive_dist(policy, obs_list), deterministic=True)
         assert torch.equal(a1, a2)
         assert torch.allclose(lp1, lp2)
 
     def test_act_log_prob_finite(self):
         policy = _tiny_policy()
         obs_list = _batch_obs(current_net_phase=1)
-        _, log_probs = policy.act(obs_list)
+        _, log_probs = policy.act(obs_list, dist=permissive_dist(policy, obs_list))
         assert torch.isfinite(log_probs).all()
         # log_prob of discrete action must be <= 0
         assert (log_probs <= 1e-5).all()
@@ -549,8 +554,10 @@ class TestKiCadRLModelEvaluate:
     def test_evaluate_output_shape_and_types(self):
         policy = _tiny_policy()
         obs_list = _batch_obs(current_net_phase=1)
-        actions, _ = policy.act(obs_list)
-        log_probs, entropy = policy.evaluate(obs_list, actions)
+        actions, _ = policy.act(obs_list, dist=permissive_dist(policy, obs_list))
+        log_probs, entropy, _ = policy.evaluate_actions_and_value(
+            obs_list, actions, dist=permissive_dist(policy, obs_list),
+        )
         assert log_probs.shape == (2,)
         assert entropy.shape == (2,)
         assert log_probs.dtype == torch.float32
@@ -559,8 +566,10 @@ class TestKiCadRLModelEvaluate:
     def test_evaluate_finite_and_entropy_nonneg(self):
         policy = _tiny_policy()
         obs_list = _batch_obs(current_net_phase=1)
-        actions, _ = policy.act(obs_list)
-        log_probs, entropy = policy.evaluate(obs_list, actions)
+        actions, _ = policy.act(obs_list, dist=permissive_dist(policy, obs_list))
+        log_probs, entropy, _ = policy.evaluate_actions_and_value(
+            obs_list, actions, dist=permissive_dist(policy, obs_list),
+        )
         assert torch.isfinite(log_probs).all()
         assert torch.isfinite(entropy).all()
         assert (entropy >= -1e-5).all()
@@ -569,8 +578,10 @@ class TestKiCadRLModelEvaluate:
     def test_evaluate_gradient_flow(self):
         policy = _tiny_policy()
         obs_list = _batch_obs(current_net_phase=1)
-        actions, _ = policy.act(obs_list)
-        log_probs, entropy = policy.evaluate(obs_list, actions)
+        actions, _ = policy.act(obs_list, dist=permissive_dist(policy, obs_list))
+        log_probs, entropy, _ = policy.evaluate_actions_and_value(
+            obs_list, actions, dist=permissive_dist(policy, obs_list),
+        )
         loss = -(log_probs.mean()) - 0.01 * entropy.mean()
         loss.backward()
         # action_type_head must have a gradient
@@ -591,7 +602,9 @@ class TestKiCadRLModelEvaluate:
         actions = torch.tensor(
             [[ACT_NET_END, -1, -1], [ACT_NET_END, -1, -1]], dtype=torch.int64,
         )
-        log_probs, entropy = policy.evaluate(obs_list, actions)
+        log_probs, entropy, _ = policy.evaluate_actions_and_value(
+            obs_list, actions, dist=permissive_dist(policy, obs_list),
+        )
         assert torch.isfinite(log_probs).all()
         assert torch.isfinite(entropy).all()
 
@@ -602,7 +615,9 @@ class TestKiCadRLModelEvaluate:
         actions = torch.tensor(
             [[ACT_FINISH, -1, 0], [ACT_FINISH, -1, 2]], dtype=torch.int64,
         )
-        log_probs, entropy = policy.evaluate(obs_list, actions)
+        log_probs, entropy, _ = policy.evaluate_actions_and_value(
+            obs_list, actions, dist=permissive_dist(policy, obs_list),
+        )
         assert torch.isfinite(log_probs).all()
         assert torch.isfinite(entropy).all()
 
@@ -613,17 +628,21 @@ class TestKiCadRLModelEvaluate:
         actions = torch.tensor(
             [[ACT_MAKE_LINE, 0, 1], [ACT_MAKE_LINE, 0, 2]], dtype=torch.int64,
         )
-        log_probs, entropy = policy.evaluate(obs_list, actions)
+        log_probs, entropy, _ = policy.evaluate_actions_and_value(
+            obs_list, actions, dist=permissive_dist(policy, obs_list),
+        )
         assert torch.isfinite(log_probs).all()
         assert torch.isfinite(entropy).all()
 
     def test_act_evaluate_log_prob_consistency(self):
-        """act() deterministic + evaluate() with the same action → log_probs match."""
+        """act() deterministic + evaluate_actions_and_value() with the same action → log_probs match."""
         policy = _tiny_policy()
         policy.eval()
         obs_list = _batch_obs(current_net_phase=2, is_routing=True)
-        actions, act_log_probs = policy.act(obs_list, deterministic=True)
-        eval_log_probs, _ = policy.evaluate(obs_list, actions)
+        actions, act_log_probs = policy.act(obs_list, dist=permissive_dist(policy, obs_list), deterministic=True)
+        eval_log_probs, _, _ = policy.evaluate_actions_and_value(
+            obs_list, actions, dist=permissive_dist(policy, obs_list),
+        )
         assert torch.allclose(act_log_probs, eval_log_probs, atol=1e-5), (
             f"act log_probs {act_log_probs} vs evaluate {eval_log_probs}"
         )
@@ -636,7 +655,7 @@ class TestKiCadRLModelIdle:
         obs_list = _batch_obs(current_net_phase=0, is_routing=False)
         mask = torch.zeros(2, NUM_ACTION_TYPES, dtype=torch.bool)
         mask[:, ACT_NET_SELECT] = True
-        actions, log_probs = policy.act(obs_list, action_masks=mask)
+        actions, log_probs = policy.act(obs_list, dist=replace(permissive_dist(policy, obs_list), action=mask))
         assert (actions[:, 0] == ACT_NET_SELECT).all()
         assert torch.isfinite(log_probs).all()
 
@@ -647,7 +666,9 @@ class TestKiCadRLModelIdle:
         actions = torch.tensor(
             [[ACT_NET_SELECT, 0, -1], [ACT_NET_SELECT, 0, -1]], dtype=torch.int64,
         )
-        log_probs, entropy = policy.evaluate(obs_list, actions)
+        log_probs, entropy, _ = policy.evaluate_actions_and_value(
+            obs_list, actions, dist=permissive_dist(policy, obs_list),
+        )
         assert torch.isfinite(log_probs).all()
         assert torch.isfinite(entropy).all()
 
@@ -658,6 +679,8 @@ class TestKiCadRLModelIdle:
 def _tiny_policy_with_critic() -> KiCadRLModel:
     """Small policy with PPO critic head enabled."""
     return KiCadRLModel(
+        disable_slot_emb=False,
+        policy_net_select=False,
         d_model=32,
         n_heads=4,
         n_layers=2,
@@ -707,7 +730,7 @@ class TestActAndValue:
     def test_act_and_value_shapes_no_critic(self):
         policy = _tiny_policy()
         obs_list = _batch_obs(current_net_phase=2, is_routing=True)
-        actions, log_probs, values = policy.act_and_value(obs_list)
+        actions, log_probs, values = policy.act_and_value(obs_list, dist=permissive_dist(policy, obs_list))
         assert actions.shape == (2, 3)
         assert log_probs.shape == (2,)
         assert values.shape == (2,)
@@ -717,7 +740,7 @@ class TestActAndValue:
     def test_act_and_value_shapes_with_critic(self):
         policy = _tiny_policy_with_critic()
         obs_list = _batch_obs(current_net_phase=2, is_routing=True)
-        actions, log_probs, values = policy.act_and_value(obs_list)
+        actions, log_probs, values = policy.act_and_value(obs_list, dist=permissive_dist(policy, obs_list))
         assert actions.shape == (2, 3)
         assert log_probs.shape == (2,)
         assert values.shape == (2,)
@@ -731,9 +754,9 @@ class TestActAndValue:
         obs_list = _batch_obs(current_net_phase=2, is_routing=True)
 
         torch.manual_seed(123)
-        a1, lp1 = policy.act(obs_list, deterministic=True)
+        a1, lp1 = policy.act(obs_list, dist=permissive_dist(policy, obs_list), deterministic=True)
         torch.manual_seed(123)
-        a2, lp2, _ = policy.act_and_value(obs_list, deterministic=True)
+        a2, lp2, _ = policy.act_and_value(obs_list, dist=permissive_dist(policy, obs_list), deterministic=True)
 
         assert torch.equal(a1, a2)
         assert torch.allclose(lp1, lp2)
@@ -747,7 +770,7 @@ class TestEvaluateActionsAndValue:
             [[ACT_MAKE_LINE, 0, 1], [ACT_MAKE_LINE, 0, 2]], dtype=torch.int64,
         )
         log_probs, entropy, values = policy.evaluate_actions_and_value(
-            obs_list, actions,
+            obs_list, actions, dist=permissive_dist(policy, obs_list),
         )
         assert log_probs.shape == (2,)
         assert entropy.shape == (2,)
@@ -761,30 +784,21 @@ class TestEvaluateActionsAndValue:
             [[ACT_MAKE_LINE, 0, 1], [ACT_MAKE_LINE, 0, 2]], dtype=torch.int64,
         )
         log_probs, entropy, values = policy.evaluate_actions_and_value(
-            obs_list, actions,
+            obs_list, actions, dist=permissive_dist(policy, obs_list),
         )
         assert log_probs.shape == (2,)
         assert entropy.shape == (2,)
         assert values.shape == (2,)
         assert torch.isfinite(values).all()
 
-    def test_evaluate_wrapper_matches_evaluate_and_value(self):
-        policy = _tiny_policy()
-        obs_list = _batch_obs(current_net_phase=2, is_routing=True)
-        actions = torch.tensor(
-            [[ACT_MAKE_LINE, 0, 1], [ACT_MAKE_LINE, 0, 2]], dtype=torch.int64,
-        )
-        lp1, ent1 = policy.evaluate(obs_list, actions)
-        lp2, ent2, _ = policy.evaluate_actions_and_value(obs_list, actions)
-        assert torch.allclose(lp1, lp2)
-        assert torch.allclose(ent1, ent2)
-
 
 class TestEntropyNorm:
     """--entropy-norm: joint entropy / max achievable entropy (ln N_valid)."""
 
     def _eval(self, policy, obs_list, actions, **kw):
-        return policy.evaluate_actions_and_value(obs_list, actions, **kw)
+        return policy.evaluate_actions_and_value(
+            obs_list, actions, dist=permissive_dist(policy, obs_list), **kw,
+        )
 
     def test_normalized_in_unit_interval_and_lp_values_unchanged(self):
         policy = _tiny_policy_with_critic()
@@ -817,8 +831,10 @@ class TestEntropyNorm:
         )
         masks = torch.zeros(2, NUM_ACTION_TYPES, dtype=torch.bool)
         masks[:, ACT_NET_END] = True
-        _, ent_n, _ = self._eval(
-            policy, obs_list, actions, action_masks=masks, entropy_norm=True,
+        _, ent_n, _ = policy.evaluate_actions_and_value(
+            obs_list, actions,
+            dist=replace(permissive_dist(policy, obs_list), action=masks),
+            entropy_norm=True,
         )
         assert torch.isfinite(ent_n).all()
         assert torch.allclose(ent_n, torch.zeros_like(ent_n), atol=1e-6)
@@ -840,7 +856,9 @@ class TestEntropyNorm:
         policy.zero_grad(set_to_none=True)
         with torch.autocast("cpu", dtype=torch.bfloat16):
             _, ent_n, _ = policy.evaluate_actions_and_value(
-                obs_list, actions, action_masks=masks, entropy_norm=True,
+                obs_list, actions,
+                dist=replace(permissive_dist(policy, obs_list), action=masks),
+                entropy_norm=True,
             )
         assert torch.isfinite(ent_n).all()
         assert ent_n[0].item() == pytest.approx(0.0, abs=1e-5)
@@ -883,7 +901,7 @@ class TestCriticGradientFlow:
         """act_and_value is decorated @torch.no_grad — used for rollouts."""
         policy = _tiny_policy_with_critic()
         obs_list = _batch_obs(current_net_phase=2, is_routing=True)
-        _, log_probs, values = policy.act_and_value(obs_list)
+        _, log_probs, values = policy.act_and_value(obs_list, dist=permissive_dist(policy, obs_list))
         # Both should be detached — they're stored as old_log_probs / old_values
         # in the rollout buffer and re-evaluated under the current policy later.
         assert log_probs.requires_grad is False
@@ -898,7 +916,9 @@ class TestCriticGradientFlow:
         )
 
         policy.zero_grad(set_to_none=True)
-        _, _, values = policy.evaluate_actions_and_value(obs_list, actions)
+        _, _, values = policy.evaluate_actions_and_value(
+            obs_list, actions, dist=permissive_dist(policy, obs_list),
+        )
         values.sum().backward()
 
         # Critic head should have grads.
@@ -928,7 +948,9 @@ class TestCriticGradientFlow:
         )
 
         policy.zero_grad(set_to_none=True)
-        log_probs, _, _ = policy.evaluate_actions_and_value(obs_list, actions)
+        log_probs, _, _ = policy.evaluate_actions_and_value(
+            obs_list, actions, dist=permissive_dist(policy, obs_list),
+        )
         log_probs.sum().backward()
 
         # At least some backbone params should now have grads.
@@ -997,7 +1019,7 @@ class TestVariableSeqLenBatch:
         policy = _tiny_policy()
         policy.eval()
         obs_list = _batch_obs_varying_seq_lens()
-        actions, log_probs, values = policy.act_and_value(obs_list)
+        actions, log_probs, values = policy.act_and_value(obs_list, dist=permissive_dist(policy, obs_list))
         assert actions.shape == (2, 3)
         assert log_probs.shape == (2,)
         assert values.shape == (2,)
@@ -1007,7 +1029,7 @@ class TestVariableSeqLenBatch:
         policy = _tiny_policy_with_critic()
         policy.eval()
         obs_list = _batch_obs_varying_seq_lens()
-        actions, log_probs, values = policy.act_and_value(obs_list)
+        actions, log_probs, values = policy.act_and_value(obs_list, dist=permissive_dist(policy, obs_list))
         assert actions.shape == (2, 3)
         assert torch.isfinite(values).all()
 
@@ -1018,7 +1040,7 @@ class TestVariableSeqLenBatch:
             [[ACT_MAKE_LINE, 0, 1], [ACT_MAKE_LINE, 0, 2]], dtype=torch.int64,
         )
         log_probs, entropy, values = policy.evaluate_actions_and_value(
-            obs_list, actions,
+            obs_list, actions, dist=permissive_dist(policy, obs_list),
         )
         assert log_probs.shape == (2,)
         assert entropy.shape == (2,)
@@ -1036,14 +1058,16 @@ class TestVariableSeqLenBatch:
         obs_list = _batch_obs_varying_seq_lens()
 
         a_batch, lp_batch, v_batch = policy.act_and_value(
-            obs_list, deterministic=True,
+            obs_list, dist=permissive_dist(policy, obs_list), deterministic=True,
         )
 
         a_single_0, lp_single_0, v_single_0 = policy.act_and_value(
-            [obs_list[0]], deterministic=True,
+            [obs_list[0]], dist=permissive_dist(policy, [obs_list[0]]),
+            deterministic=True,
         )
         a_single_1, lp_single_1, v_single_1 = policy.act_and_value(
-            [obs_list[1]], deterministic=True,
+            [obs_list[1]], dist=permissive_dist(policy, [obs_list[1]]),
+            deterministic=True,
         )
 
         # Argmax actions must be identical (the network sees the same
@@ -1085,7 +1109,8 @@ def test_dead_end_rows_raise_with_context(tmp_path, monkeypatch):
         actions = torch.tensor([[at, 0, 1], [at, 0, 1]], dtype=torch.int64)
         with pytest.raises(RuntimeError, match="cand pointer row") as exc_info:
             policy.evaluate_actions_and_value(
-                obs_list, actions, pointer_masks=blocked,
+                obs_list, actions,
+                dist=replace(permissive_dist(policy, obs_list), pointer=blocked),
             )
         # dump= path round-trip: the tensor context must actually be loadable.
         dump_path = str(exc_info.value).rsplit("dump=", 1)[1]
@@ -1101,7 +1126,8 @@ def test_dead_end_rows_raise_with_context(tmp_path, monkeypatch):
         [[ACT_NET_END, -1, -1], [ACT_NET_END, -1, -1]], dtype=torch.int64,
     )
     lp, ent, _ = policy.evaluate_actions_and_value(
-        obs_list, actions_ok, pointer_masks=partial,
+        obs_list, actions_ok,
+        dist=replace(permissive_dist(policy, obs_list), pointer=partial),
     )
     assert torch.isfinite(lp).all()
     assert torch.isfinite(ent).all()

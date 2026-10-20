@@ -30,9 +30,10 @@ from methods._shared.agent import PromptPair, TokenCounts
 # Substrings that mark a transient (retryable) API failure. Matched against
 # the exception's type name + message, case-insensitively, so it works across
 # provider SDKs (OpenAI / Anthropic / Google / Together) without importing
-# each one's exception classes. Permanent errors (bad request, auth, context
-# length, model-not-found) are intentionally absent → they fall straight
-# through to the idle fallback rather than wasting retries.
+# each one's exception classes. Permanent errors are intentionally absent:
+# credit / auth / model-access errors end the run (``_is_fatal_api_error``
+# below, checked first); the rest (bad request, context length) fall straight through to the
+# idle fallback rather than wasting retries.
 _TRANSIENT_API_MARKERS = (
     "rate limit", "ratelimit", "429",
     "timeout", "timed out",
@@ -47,6 +48,47 @@ def _is_transient_api_error(exc: Exception) -> bool:
     """True if ``exc`` looks like a transient API error worth retrying."""
     blob = f"{type(exc).__name__} {exc}".lower()
     return any(m in blob for m in _TRANSIENT_API_MARKERS)
+
+
+# HTTP statuses no retry or idle step can fix: 401 bad key, 402 payment
+# required, 403 no permission, 404 unknown model (every APIProvider call is a
+# model call, so a 404 means the model is not available to the key).
+_FATAL_API_STATUSES = frozenset({401, 402, 403, 404})
+
+# Error bodies that end the run although their status alone would not: the
+# account is out of credit (OpenAI sends it as a 429 that is otherwise a
+# retryable rate limit; Anthropic as a 400), or the key is invalid (Google
+# sends it as a 400 INVALID_ARGUMENT). Matched like the transient markers.
+# Not "exceeded your current quota": Google's retryable per-minute 429
+# RESOURCE_EXHAUSTED carries the same words.
+_FATAL_API_MARKERS = (
+    "insufficient_quota", "billing_hard_limit",   # OpenAI credit
+    "credit balance is too low",                  # Anthropic credit
+    "api_key_invalid",                            # Google invalid key
+    "invalid_api_key", "model_not_found",         # OpenAI codes, any status
+)
+
+
+class FatalAPIError(RuntimeError):
+    """API failure that ends the run (credit / auth / model access)."""
+
+
+def _api_status(exc: Exception) -> int | None:
+    """HTTP status of a provider SDK error: ``status_code`` (openai /
+    anthropic, incl. Together via openai) or the int ``code`` (google-genai)."""
+    for name in ("status_code", "code"):
+        value = getattr(exc, name, None)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return None
+
+
+def _is_fatal_api_error(exc: Exception) -> bool:
+    """True if ``exc`` is an API failure that retrying cannot fix."""
+    if _api_status(exc) in _FATAL_API_STATUSES:
+        return True
+    blob = f"{type(exc).__name__} {exc}".lower()
+    return any(m in blob for m in _FATAL_API_MARKERS)
 
 
 # ---------------------------------------------------------------------------
@@ -146,8 +188,29 @@ _DEFAULT_API_MODELS = {
 }
 
 
+def _usage_details(usage) -> dict:
+    """Pull the optional per-call usage breakdown out of an OpenAI usage object.
+
+    ``cached_tokens`` are the prompt-prefix tokens served from the provider's
+    prompt cache and ``cache_write_tokens`` the tokens written into it on a
+    miss — complementary across consecutive calls that share a prefix (the
+    first call writes, later calls read), and each billed at its own rate.
+    ``reasoning_tokens`` are the hidden chain-of-thought tokens a reasoning
+    model bills as output but does not return in the message body. Every field
+    is optional — non-reasoning models and non-OpenAI providers omit them — so
+    each lookup degrades to 0.
+    """
+    prompt_det = getattr(usage, "prompt_tokens_details", None)
+    completion_det = getattr(usage, "completion_tokens_details", None)
+    return {
+        "cached_input_tokens": int(getattr(prompt_det, "cached_tokens", 0) or 0),
+        "cache_write_tokens": int(getattr(prompt_det, "cache_write_tokens", 0) or 0),
+        "reasoning_tokens": int(getattr(completion_det, "reasoning_tokens", 0) or 0),
+    }
+
+
 def _call_openai(system_prompt, user_prompt, model, temperature, max_tokens,
-                 api_key=None, base_url=None):
+                 api_key=None, base_url=None, reasoning_effort=None):
     from openai import OpenAI
     client_kwargs = {}
     if api_key:
@@ -158,7 +221,9 @@ def _call_openai(system_prompt, user_prompt, model, temperature, max_tokens,
         client_kwargs["base_url"] = base_url
     client = OpenAI(**client_kwargs)
 
-    is_reasoning = any(model.startswith(p) for p in ("o1", "o3", "o4", "gpt-5"))
+    is_reasoning = any(
+        model.startswith(p) for p in ("o1", "o3", "o4", "gpt-5", "gpt-6")
+    )
     token_param = (
         {"max_completion_tokens": max_tokens} if is_reasoning
         else {"max_tokens": max_tokens}
@@ -169,7 +234,12 @@ def _call_openai(system_prompt, user_prompt, model, temperature, max_tokens,
             {"role": "developer", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-        extra = {}
+        # Reasoning models reject a non-default temperature; ``reasoning_effort``
+        # is the knob that trades chain-of-thought length for cost/latency.
+        # Supported values differ per model ('minimal' is gpt-5-only, gpt-6
+        # accepts low|medium|high), so an unsupported value surfaces as the
+        # provider's own 400 rather than being silently dropped here.
+        extra = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
     else:
         messages = [
             {"role": "system", "content": system_prompt},
@@ -184,10 +254,15 @@ def _call_openai(system_prompt, user_prompt, model, temperature, max_tokens,
         **token_param,
     )
     choice = resp.choices[0]
-    return choice.message.content, (resp.usage.prompt_tokens, resp.usage.completion_tokens)
+    return (
+        choice.message.content,
+        (resp.usage.prompt_tokens, resp.usage.completion_tokens),
+        _usage_details(resp.usage),
+    )
 
 
-def _call_anthropic(system_prompt, user_prompt, model, temperature, max_tokens, api_key=None):
+def _call_anthropic(system_prompt, user_prompt, model, temperature, max_tokens, api_key=None, reasoning_effort=None):
+    del reasoning_effort  # not a parameter of this provider's API
     from anthropic import Anthropic
     client = Anthropic(**({"api_key": api_key} if api_key else {}))
     resp = client.messages.create(
@@ -198,10 +273,11 @@ def _call_anthropic(system_prompt, user_prompt, model, temperature, max_tokens, 
         max_tokens=max_tokens,
     )
     text = resp.content[0].text
-    return text, (resp.usage.input_tokens, resp.usage.output_tokens)
+    return text, (resp.usage.input_tokens, resp.usage.output_tokens), {}
 
 
-def _call_google(system_prompt, user_prompt, model, temperature, max_tokens, api_key=None):
+def _call_google(system_prompt, user_prompt, model, temperature, max_tokens, api_key=None, reasoning_effort=None):
+    del reasoning_effort  # not a parameter of this provider's API
     from google import genai
     client = genai.Client(**({"api_key": api_key} if api_key else {}))
     resp = client.models.generate_content(
@@ -216,11 +292,11 @@ def _call_google(system_prompt, user_prompt, model, temperature, max_tokens, api
     text = resp.text
     in_tok = resp.usage_metadata.prompt_token_count
     out_tok = resp.usage_metadata.candidates_token_count
-    return text, (in_tok, out_tok)
+    return text, (in_tok, out_tok), {}
 
 
 def _call_together(system_prompt, user_prompt, model, temperature, max_tokens,
-                   api_key=None, base_url=None):
+                   api_key=None, base_url=None, reasoning_effort=None):
     """Together AI — OpenAI-compatible chat completions.
 
     Defaults to disabling thinking mode (Qwen3-thinking, etc.) so the response
@@ -230,6 +306,7 @@ def _call_together(system_prompt, user_prompt, model, temperature, max_tokens,
     """
     import os
     from openai import OpenAI
+    del reasoning_effort  # Together exposes thinking via enable_thinking, below
     key = api_key or os.environ.get("TOGETHER_API_KEY")
     client = OpenAI(api_key=key, base_url=base_url or "https://api.together.xyz/v1")
     enable_think = os.environ.get("TOGETHER_ENABLE_THINKING", "0") == "1"
@@ -252,7 +329,8 @@ def _call_together(system_prompt, user_prompt, model, temperature, max_tokens,
     # pass through unchanged.
     if not enable_think and "<think>" not in text:
         text = "<think>(thinking disabled)</think>" + text
-    return text, (resp.usage.prompt_tokens, resp.usage.completion_tokens)
+    return text, (resp.usage.prompt_tokens, resp.usage.completion_tokens), \
+        _usage_details(resp.usage)
 
 
 _API_CALLERS = {
@@ -277,22 +355,48 @@ class APIProvider:
         self.temperature = args.temperature
         self.max_new_tokens = args.max_new_tokens
         self.api_key = args.api_key
+        self.reasoning_effort = getattr(args, "api_reasoning_effort", None)
+        # Running per-provider usage totals. ``input_tokens`` is the provider's
+        # own aggregate (not the char-ratio system/user split reported per
+        # prompt-pair), ``cached_input_tokens`` / ``cache_write_tokens`` the
+        # prompt-cache reads and writes inside it, and ``reasoning_tokens`` the
+        # hidden chain-of-thought counted inside ``output_tokens``. Each is
+        # priced differently, so a run is costed from these rather than from
+        # the two totals alone. Cumulative over the provider's lifetime; the
+        # rollout writes per-board differences as token_usage.json.
+        self.usage_totals = {
+            "calls": 0, "failed_calls": 0,
+            "input_tokens": 0, "cached_input_tokens": 0,
+            "cache_write_tokens": 0,
+            "output_tokens": 0, "reasoning_tokens": 0,
+        }
+        # Per prompt pair of the latest ``generate``: True where the call
+        # failed and was replaced by the idle fallback. The rollout counts
+        # these per env into the ``api_failed_calls`` row column.
+        self.last_call_failed: list[bool] = []
 
     def generate(self, prompt_pairs, observations=None, **_kw):
         del observations, _kw  # see VLLMProvider.generate docstring
         responses: list[str] = []
         token_counts: list[TokenCounts] = []
+        self.last_call_failed = []
         for system_prompt, user_prompt in prompt_pairs:
+            failed = False
             max_retries = 6
             for attempt in range(max_retries):
                 try:
-                    text, counts = self.caller(
+                    text, counts, details = self.caller(
                         system_prompt, user_prompt, self.model,
                         self.temperature, self.max_new_tokens,
                         api_key=self.api_key,
+                        reasoning_effort=self.reasoning_effort,
                     )
                     break
                 except Exception as e:  # noqa: BLE001
+                    if _is_fatal_api_error(e):
+                        # Every later call fails the same way: stop the run
+                        # instead of burning retries and idle steps.
+                        raise FatalAPIError(f"{type(e).__name__}: {e}") from e
                     # Two retry classes:
                     #  - transient (rate limit / timeout / connection / 5xx):
                     #    full exponential backoff up to ``max_retries``.
@@ -318,12 +422,27 @@ class APIProvider:
                     # ``_FALLBACK_ACTION`` (action_type=6, idle) so the env
                     # applies a no-op step rather than an arbitrary
                     # ``net_select 1``. See wrappers/action_converter.py.
-                    text, counts = (
+                    text, counts, details = (
                         "<think>API error — falling back to idle.</think>",
                         (0, 0),
+                        {},
                     )
+                    self.usage_totals["failed_calls"] += 1
+                    failed = True
                     break
             in_tok, out_tok = counts
+            self.usage_totals["calls"] += 1
+            self.usage_totals["input_tokens"] += int(in_tok)
+            self.usage_totals["output_tokens"] += int(out_tok)
+            self.usage_totals["cached_input_tokens"] += int(
+                details.get("cached_input_tokens", 0)
+            )
+            self.usage_totals["cache_write_tokens"] += int(
+                details.get("cache_write_tokens", 0)
+            )
+            self.usage_totals["reasoning_tokens"] += int(
+                details.get("reasoning_tokens", 0)
+            )
             sys_chars = len(system_prompt)
             usr_chars = len(user_prompt)
             total_chars = sys_chars + usr_chars
@@ -334,6 +453,7 @@ class APIProvider:
                 sys_tok, usr_tok = 0, 0
             responses.append(text)
             token_counts.append((sys_tok, usr_tok, out_tok))
+            self.last_call_failed.append(failed)
 
         return responses, token_counts
 
@@ -414,6 +534,8 @@ class RemoteLLMProvider:
         # ``_call_openai`` to share the reasoning-model / token-accounting
         # branches with APIProvider.
         self._client = OpenAI(base_url=self.base_url, api_key=self.api_key)
+        # Same per-pair idle-fallback record as APIProvider.last_call_failed.
+        self.last_call_failed: list[bool] = []
 
         print("\n" + "=" * 60)
         print(f"  Remote LLM endpoint: {self.base_url}  model={self.model!r}")
@@ -423,11 +545,13 @@ class RemoteLLMProvider:
         del observations, _kw  # ignored — text-prompt provider
         responses: list[str] = []
         token_counts: list[TokenCounts] = []
+        self.last_call_failed = []
         for system_prompt, user_prompt in prompt_pairs:
+            failed = False
             max_retries = 3
             for attempt in range(max_retries):
                 try:
-                    text, counts = _call_openai(
+                    text, counts, _details = _call_openai(
                         system_prompt, user_prompt, self.model,
                         self.temperature, self.max_new_tokens,
                         api_key=self.api_key,
@@ -448,6 +572,7 @@ class RemoteLLMProvider:
                         "<think>remote LLM error — falling back to idle.</think>",
                         (0, 0),
                     )
+                    failed = True
                     break
             in_tok, out_tok = counts
             sys_chars = len(system_prompt)
@@ -460,6 +585,7 @@ class RemoteLLMProvider:
                 sys_tok, usr_tok = 0, 0
             responses.append(text)
             token_counts.append((sys_tok, usr_tok, out_tok))
+            self.last_call_failed.append(failed)
         return responses, token_counts
 
     def close(self) -> None:

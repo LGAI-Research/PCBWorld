@@ -39,8 +39,8 @@ pytestmark = [
 
 _CHILD = textwrap.dedent("""
     import os, sys
-    from pcb_world.engine.kicad_engine import KiCadEngine
-    eng = KiCadEngine("tests/fixtures/simple_routing_board.kicad_pcb")
+    from tests.helpers.engine import open_engine
+    eng = open_engine("tests/fixtures/simple_routing_board.kicad_pcb")
     conn = eng._r._conn
     print("TMPDIR=" + conn.tmpdir)
     print("SRV=%d" % conn.pid)

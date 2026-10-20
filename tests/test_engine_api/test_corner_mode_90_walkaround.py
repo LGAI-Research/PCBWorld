@@ -15,8 +15,8 @@ from __future__ import annotations
 import os
 
 import pytest
+from tests.helpers.engine import open_engine
 
-from pcb_world.engine.kicad_engine import KiCadEngine
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "..", "fixtures",
                        "corner_mode_90_walkaround.kicad_pcb")
@@ -28,7 +28,7 @@ MITERED_45, MITERED_90 = 0, 2
 
 
 def _route_across(routing_mode: int, corner_mode: int):
-    eng = KiCadEngine(FIXTURE, allow_default_rules=True)
+    eng = open_engine(FIXTURE, allow_default_rules=True)
     try:
         eng.build_connectivity()
         eng.set_routing_mode(routing_mode)

@@ -18,18 +18,20 @@ set -euo pipefail
 _self="$(cd "$(dirname "$0")" && pwd)"
 source "$_self/../../_lib/env.sh"
 source "$_self/cases.sh"
+source "$_self/../configs/paper_train_flags.sh"
 cd "$PCBWORLD_REPO_ROOT"
 
 GRIDS="${L1_GRIDS:-10 50 100 200 500}"
 SEEDS="${SEEDS:-42 43 44 45}"
 GPU="${GPU:-0}"
+TRAIN_ROOT="${TRAIN_ROOT:-${LOCAL_OUT}/training_logs/d1_grid/transformer_ppo}"
 
 train() {
   local method="${1:-transformer}"
   for grid in $GRIDS; do for seed in $SEEDS; do
     # baselines (jumanji/sable) pin the GPU via CUDA_VISIBLE_DEVICES, not a --gpu flag
     local args=(--grid-size "$grid" --seed "$seed")
-    [[ "$method" == transformer || "$method" == ppo ]] && args+=(--gpu "$GPU")
+    [[ "$method" == transformer || "$method" == ppo ]] && args+=(--gpu "$GPU" --output-root "$TRAIN_ROOT/grid${grid}/seed${seed}")
     [[ "${DRY_RUN:-0}" == "1" ]] && args+=(--dry-run)
     [[ "${SMOKE:-0}" == "1" ]] && args+=(--smoke)
     case "$method" in
@@ -41,28 +43,35 @@ train() {
   done; done
 }
 
-# Held-out grid test eval: resolve ckpt/boards under the var/ roots and run the
-# canonical 3-stage eval/pipeline.py per (grid, seed). (folded from the former
-# eval_transformer_1L.sh; absolute dataset defaults dropped — roots come from _lib/env.sh.)
+# Held-out grid test eval: per grid, roll out each seed's checkpoint, pool them into
+# $EXPR_ROOT/d1/d1_grid<G>/transformer_pcbworld — where draw_figure.py reads them — and score it
+# with the paper cells' settings (configs/paper_train_flags.sh PAPER_*_FLAGS, 5 rollouts, the
+# 90-degree angle the grid routes with). The checkpoint defaults to the staged paper one,
+# $CKPT_ROOT/Transformer_1L_300 — the run's LAST checkpoint policy_iter_300.pt (its
+# policy_best.pt was picked far too early, around iteration 25); a run trained here is
+# $TRAIN_ROOT/grid<G>/seed<S>/checkpoints/policy_iter_300.pt, given by CKPT_ROOT=... or CKPT=<file>.
 eval_t1() {
-  local n_rollouts="${N_ROLLOUTS:-5}" n_envs="${N_ENVS:-64}" mode="${ROLLOUT_MODE:-parallel}"
+  if [[ -n "${CKPT:-}" && "$SEEDS" == *" "* ]]; then
+    echo "[eval] CKPT=<file> scores one checkpoint: give a single SEEDS" >&2
+    exit 2
+  fi
   local ran=0
-  for grid in $GRIDS; do for seed in $SEEDS; do
-    local ckpt="${CKPT:-$CKPT_ROOT/Transformer_1L/grid${grid}/seed${seed}/policy_best.pt}"
-    local boards="${BOARDS_DIR:-$(d1_generated_boards_dir "$grid")}"
-    local out="$LOCAL_OUT/rollouts/d1_grid/transformer_ppo/grid${grid}_seed${seed}"
-    local skip=0
-    [[ -f "$ckpt" ]]   || { d1_absent "D1 checkpoint (grid ${grid}, seed ${seed})" "$ckpt"; skip=1; }
+  for grid in $GRIDS; do
+    paper_repro_load_d1_grid_case "$grid"
+    local boards="${BOARDS_DIR:-$(d1_generated_boards_dir "$grid")}" ckpts=() skip=0
+    for seed in $SEEDS; do
+      ckpts+=("${CKPT:-$CKPT_ROOT/Transformer_1L_300/grid${grid}/seed${seed}/policy_iter_300.pt}")
+      [[ -f "${ckpts[-1]}" ]] || { d1_absent "D1 checkpoint (grid ${grid}, seed ${seed})" "${ckpts[-1]}"; skip=1; }
+    done
     [[ -d "$boards" ]] || { d1_absent "D1 test boards (grid ${grid})" "$boards"; skip=1; }
     if (( skip )); then continue; fi
     ran=$((ran + 1))
-    echo "[eval] grid=$grid seed=$seed -> $out"
-    [[ "${DRY_RUN:-0}" == "1" ]] && { echo "[eval] --dry-run (eval/pipeline.py)"; continue; }
-    CUDA_VISIBLE_DEVICES="$GPU" "$PYTHON_BIN" eval/pipeline.py \
-      --ckpt "$ckpt" --boards-dir "$boards" --seed "$seed" \
-      --n-rollouts "$n_rollouts" --n-envs "$n_envs" --rollout-mode "$mode" \
-      --check-angle 90 --reward-config drc_dense_errors_only_eval --output-dir "$out"
-  done; done
+    local list="$LOCAL_OUT/rollouts/d1_grid/grid${grid}_boards.txt"
+    mkdir -p "$(dirname "$list")"
+    find "$boards" -maxdepth 1 -name '*.kicad_pcb' | sort > "$list"
+    kdd_eval_cell "$EXPR_ROOT/d1/d1_grid${grid}/transformer_pcbworld" "$list" \
+      "$LOCAL_OUT/rollouts/d1_grid/grid${grid}" "$T1_TRANSFORMER_CORNER_MODE" "${ckpts[@]}" -- --n-rollouts 5
+  done
   # No cell had both a checkpoint and its boards -> report and fail, rather than
   # exiting 0 having done nothing.
   (( ran )) || d1_preflight

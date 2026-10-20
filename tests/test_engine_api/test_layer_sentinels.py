@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests.helpers.engine import open_engine
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "build_rl" / "pcbnew" / "python" / "rl"))
@@ -42,9 +43,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture
 def eng():
-    from pcb_world.engine.kicad_engine import KiCadEngine
-
-    e = KiCadEngine(board_path=str(BOARD))
+    e = open_engine(board_path=str(BOARD))
     e.build_connectivity()
     yield e
     e.close()

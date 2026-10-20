@@ -6,9 +6,10 @@ iter_rollout` (which owns act-time mask gathering, the forward, and stepping):
 :func:`collect_n_steps_ppo` (fixed ``n_steps``, auto-reset with reset-obs
 re-injection, truncation bootstrap → :class:`PPOCollectorOutput`) and
 :func:`collect_group_episodes` (full-episode group rollout → per-env
-:class:`GroupStepRecord` trajectories). The mask helpers kept here serve the
-adapter-side forwards only (truncation bootstrap + final values). Both feed
-:mod:`methods.rl_agent.training.buffer`. Carved from ``decoder_common`` (C1-b).
+:class:`GroupStepRecord` trajectories). Both feed
+:mod:`methods.rl_agent.training.buffer` with one :class:`Transition` bundle per
+step (the act-time ``DistInputs`` + action, log-prob, value). Carved from
+``decoder_common`` (C1-b).
 """
 from __future__ import annotations
 
@@ -18,10 +19,10 @@ from typing import TYPE_CHECKING, TypedDict
 import numpy as np
 import torch
 
-from pcb_world.core.masking import NUM_ACTIONS
 from pcb_world.vec.backends.base import VecBackend
-from methods.rl_agent.policy.agent import gather_mask_arrays, mask_arrays_to_tensors
-from methods.rl_agent.rollout.primitive import budgeted_forward, iter_rollout
+from methods.rl_agent.models.v1.spec import Transition
+from methods.rl_agent.policy.agent import gather_dist
+from methods.rl_agent.rollout.primitive import StepBatch, budgeted_forward, iter_rollout
 
 if TYPE_CHECKING:
     from pcb_world.vec.backends.subproc import SubprocDecoderVecEnv
@@ -32,38 +33,23 @@ if TYPE_CHECKING:
     from methods.rl_agent.wrappers.adapter import KiCadRLWrapper
 
 
-def _pad_pointer_mask_steps(
-    per_step: list[np.ndarray],
-) -> np.ndarray:
-    """Pad a per-step list of ``(N, K_t) int64`` arrays into ``(T, N, K_max)``
-    right-padded with ``-1``. Returns ``(T, N, 0)`` when no step has any
-    match.
-    """
-    T = len(per_step)
-    if T == 0:
-        return np.zeros((0, 0, 0), dtype=np.int64)
-    N = per_step[0].shape[0]
-    K_max = max((p.shape[1] for p in per_step), default=0)
-    if K_max == 0:
-        return np.full((T, N, 0), -1, dtype=np.int64)
-    out = np.full((T, N, K_max), -1, dtype=np.int64)
-    for t, p in enumerate(per_step):
-        if p.shape[1]:
-            out[t, :, : p.shape[1]] = p
-    return out
+def _step_transition(batch: StepBatch) -> Transition:
+    """The collect-path step batch as a buffer bundle (row = live slot)."""
+    return Transition(
+        dist=batch.dist,
+        actions=batch.actions.astype(np.int64),
+        old_log_probs=batch.log_probs.astype(np.float32),
+        old_values=batch.values.astype(np.float32),
+        kl_mask=None,
+    )
 
 
-class GroupStepRecord(TypedDict, total=False):
+class GroupStepRecord(TypedDict):
     obs: dict
-    action: np.ndarray         # (3,) int64
-    log_prob: float
-    action_mask: np.ndarray    # (NUM_ACTIONS,) bool
-    pointer_mask: int          # start_route cand idx or -1 (same-point mask)
-    mode_mask: np.ndarray      # (3,) bool — routing-mode mask
+    transition: Transition     # one row: dist inputs + action/log_prob/value
     reward: float
     terminated: bool
     truncated: bool
-    net_valid_mask: np.ndarray  # (M,) bool — policy-driven net_select only
 
 
 def collect_group_episodes(
@@ -132,21 +118,15 @@ def collect_group_episodes(
         envs, policy, device, obs_by_slot, list(range(group_size)), done,
         want_value=True, max_steps=max_steps, mem_budget=mem_budget,
     ):
+        step = _step_transition(batch)
         for k, i in enumerate(batch.live):
-            rec: GroupStepRecord = {
+            trajectories[i].append({
                 "obs": batch.obs[k],
-                "action": batch.actions[k].copy(),
-                "log_prob": float(batch.log_probs[k]),
-                "action_mask": batch.action_masks[k].copy(),
-                "pointer_mask": batch.pointer_masks[k].copy(),
-                "mode_mask": batch.mode_masks[k].copy(),
+                "transition": step.select([k]),
                 "reward": float(batch.rewards[k]),
                 "terminated": bool(batch.terminateds[k]),
                 "truncated": bool(batch.truncateds[k]),
-            }
-            if batch.net_valid_masks is not None:
-                rec["net_valid_mask"] = batch.net_valid_masks[k].copy()
-            trajectories[i].append(rec)
+            })
             cumulative_rewards[i] += float(batch.rewards[k])
             if batch.terminateds[k] or batch.truncateds[k]:
                 done[i] = True
@@ -195,16 +175,12 @@ class PPOCollectorOutput:
     """Output of :func:`collect_n_steps_ppo`. Mirrors SB3 RolloutBuffer.
 
     All arrays have shape ``(T, N)`` where ``T = n_steps`` and
-    ``N = n_envs``, except ``obs_list`` (Python list of length ``T*N`` in
+    ``N = n_envs``, except ``obs_list`` / ``transition`` (``T*N`` rows in
     row-major order with ``buffer[t*N + n]`` for env n at step t) and
     ``final_values`` ``(N,)``.
     """
     obs_list: list[dict]                  # length T * N (row-major)
-    actions: np.ndarray                   # (T, N, 3) int64
-    log_probs: np.ndarray                 # (T, N)    float32
-    action_masks: np.ndarray              # (T, N, NUM_ACTIONS) bool
-    pointer_masks: np.ndarray             # (T, N, K) int64 — start_route cand idxs (-1 pad)
-    mode_masks: np.ndarray                # (T, N, 3) bool — routing-mode mask
+    transition: Transition                # T * N rows (row-major, like obs_list)
     rewards: np.ndarray                   # (T, N)    float32 — possibly normalized
     raw_rewards: np.ndarray               # (T, N)    float32 — env reward, never normalized
     values: np.ndarray                    # (T, N)    float32
@@ -230,8 +206,6 @@ class PPOCollectorOutput:
     # routed, negative when the board grew islands). Progress proxy, not the
     # pad-group routability metric — that one is eval-stage only.
     episode_ratsnest_reduction: list[float] = field(default_factory=list)
-    # Policy-driven net_select only: (T, N, M_max) bool; None when disabled.
-    net_valid_masks: np.ndarray | None = None
     # Fraction of steps the engine rejected the (mask-passing) action
     # (info["action_success"] is False) — the invalid_action_penalty rate.
     invalid_action_ratio: float = 0.0
@@ -322,15 +296,10 @@ def collect_n_steps_ppo(
     # None tokenizer (scripted/mock policy) → no cache; the update re-walks.
     step_walks: list[dict] = []
     tokenizer = getattr(getattr(policy, "model", policy), "tokenizer", None)
-    actions_buf = np.zeros((n_steps, n_envs, 3), dtype=np.int64)
-    log_probs_buf = np.zeros((n_steps, n_envs), dtype=np.float32)
-    masks_buf = np.zeros((n_steps, n_envs, NUM_ACTIONS), dtype=bool)
-    # Per-step variable-K (B, K_t) arrays; padded to (T, N, K_max) at end.
-    ptr_masks_steps: list[np.ndarray] = []
-    mode_masks_buf = np.ones((n_steps, n_envs, 3), dtype=bool)
-    # Per-step net_valid_masks list (variable M); padded at end if policy_net_select.
+    # Per-step bundles (each B == n_envs, env-index order), concatenated
+    # once at the end → row-major t*N + n.
+    step_transitions: list[Transition] = []
     policy_ns = getattr(policy, "policy_net_select", False)
-    nvm_steps: list[np.ndarray] = []
     rewards_buf = np.zeros((n_steps, n_envs), dtype=np.float32)
     raw_rewards_buf = np.zeros((n_steps, n_envs), dtype=np.float32)
     values_buf = np.zeros((n_steps, n_envs), dtype=np.float32)
@@ -358,11 +327,7 @@ def collect_n_steps_ppo(
         # Record episode_start at THIS step (set by previous iteration's done).
         episode_starts_buf[t] = next_episode_start
 
-        # Per-step net_valid_masks (policy-driven net_select only).
-        if policy_ns:
-            nvm_steps.append(batch.net_valid_masks)
-
-        # Record act-time obs + the exact act-time masks (§3.4: stored, never
+        # Record act-time obs + the exact act-time bundle (§3.4: stored, never
         # regenerated at update time). live == all envs, so batch arrays are
         # aligned with env index.
         for i in range(n_envs):
@@ -372,11 +337,7 @@ def collect_n_steps_ppo(
         # was the 260714 rollout regression). The forward already computed it.
         if batch.walk is not None:
             step_walks.append(batch.walk)
-        actions_buf[t] = batch.actions
-        log_probs_buf[t] = batch.log_probs
-        masks_buf[t] = batch.action_masks
-        ptr_masks_steps.append(batch.pointer_masks)
-        mode_masks_buf[t] = batch.mode_masks
+        step_transitions.append(_step_transition(batch))
         values_buf[t] = batch.values
 
         # Reset next_episode_start
@@ -409,25 +370,14 @@ def collect_n_steps_ppo(
                 if truncated and not terminated and bootstrap_truncation:
                     # Truncation: bootstrap V(true_next_obs) from the yielded
                     # obs_next (not-yet-reset state — our custom worker does
-                    # NOT auto-reset). Masks come from obs_next's embedded
-                    # "_masks" via the shared gather glue; envs without the
-                    # payload (stubs) fall through to the query path.
-                    t_masks, t_ptr, t_mode, t_nvm, t_off = gather_mask_arrays(
+                    # NOT auto-reset). The bundle comes from obs_next's
+                    # embedded "_masks" via the shared gather.
+                    trunc_dist = gather_dist(
                         envs, [i], policy_net_select=policy_ns,
                         obs_list=[batch.obs_next[i]],
                     )
-                    trunc_mask_t, trunc_ptr_t, trunc_mode_t, trunc_nvm_kwargs = (
-                        mask_arrays_to_tensors(
-                            t_masks, t_ptr, t_mode, t_nvm, device, off_masks=t_off,
-                            mode_none_if_all_true=True,
-                        )
-                    )
                     _, _, trunc_val = policy.act_and_value(
-                        [batch.obs_next[i]],
-                        action_masks=trunc_mask_t,
-                        pointer_masks=trunc_ptr_t,
-                        mode_mask=trunc_mode_t,
-                        **trunc_nvm_kwargs,
+                        [batch.obs_next[i]], dist=trunc_dist.to(device),
                     )
                     terminal_values_buf[t, i] = trunc_val.item()
                 else:
@@ -498,33 +448,20 @@ def collect_n_steps_ppo(
 
     # Compute final values for bootstrap of the last step in non-terminal
     # envs (terminal envs at t=n_steps-1 are handled via terminal_values).
-    # Masks via the shared gather glue (obs-embedded "_masks" first, query
-    # fallback otherwise); mode_none_if_all_true=True keeps the previous
-    # None-if-all-True training convention.
+    # Bundle via the shared gather (obs-embedded "_masks" first).
     obs_list_per_env = [obs_by_slot[i] for i in range(n_envs)]
-    f_masks, f_ptr, f_mode, f_nvm, f_off = gather_mask_arrays(
+    final_dist = gather_dist(
         envs, list(range(n_envs)), policy_net_select=policy_ns,
         obs_list=obs_list_per_env,
-    )
-    final_mask_t, final_ptr_mask_t, final_mode_mask_t, final_nvm_kwargs = (
-        mask_arrays_to_tensors(
-            f_masks, f_ptr, f_mode, f_nvm, device, mode_none_if_all_true=True,
-            off_masks=f_off,
-        )
-    )
+    ).to(device)
     if mem_budget is not None and mem_budget.ready:
         # Same budget-split as the per-step forward (B = n_envs here too).
         _, _, final_values = budgeted_forward(
-            policy, obs_list_per_env, final_mask_t, final_ptr_mask_t,
-            final_mode_mask_t, final_nvm_kwargs, mem_budget, want_value=True,
+            policy, obs_list_per_env, final_dist, mem_budget, want_value=True,
         )
     else:
         _, _, final_values = policy.act_and_value(
-            obs_list_per_env,
-            action_masks=final_mask_t,
-            pointer_masks=final_ptr_mask_t,
-            mode_mask=final_mode_mask_t,
-            **final_nvm_kwargs,
+            obs_list_per_env, dist=final_dist,
         )
 
     # Merge the per-step batched walks (t order == row-major obs_buffer order)
@@ -535,24 +472,9 @@ def collect_n_steps_ppo(
     if step_walks and len(step_walks) == n_steps:
         walk_flat = tokenizer.merge_walked(step_walks)
 
-    # Stack + pad per-step pointer_masks into (T, N, K_max).
-    ptr_masks_buf = _pad_pointer_mask_steps(ptr_masks_steps)
-
-    # Stack + pad per-step net_valid_masks to (T, N, M_max). None when disabled.
-    nvm_buf: np.ndarray | None = None
-    if policy_ns and nvm_steps:
-        M_max = max(m.shape[1] for m in nvm_steps)
-        nvm_buf = np.zeros((n_steps, n_envs, M_max), dtype=bool)
-        for t_i, m in enumerate(nvm_steps):
-            nvm_buf[t_i, :, : m.shape[1]] = m
-
     return PPOCollectorOutput(
         obs_list=obs_buffer,
-        actions=actions_buf,
-        log_probs=log_probs_buf,
-        action_masks=masks_buf,
-        pointer_masks=ptr_masks_buf,
-        mode_masks=mode_masks_buf,
+        transition=Transition.concat(step_transitions),
         rewards=rewards_buf,
         raw_rewards=raw_rewards_buf,
         values=values_buf,
@@ -570,7 +492,6 @@ def collect_n_steps_ppo(
         episode_track_counts=episode_track_counts,
         episode_terminated=episode_terminated,
         episode_ratsnest_reduction=episode_ratsnest_reduction,
-        net_valid_masks=nvm_buf,
         invalid_action_ratio=float(invalid_steps) / float(max(n_steps * n_envs, 1)),
         engine_crash_count=engine_crashes,
         step_times=step_times,

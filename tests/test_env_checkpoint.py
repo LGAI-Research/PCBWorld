@@ -10,6 +10,7 @@ import json
 
 import pytest
 
+from configs.loader.schema import EnvConfig
 from pcb_world.core.env import PCBWorld
 from pcb_world.core.action_schema import (
     ACT_NET_SELECT,
@@ -48,7 +49,7 @@ def _record(env):
 def env():
     # action_history_len > 1 (default is 1) so the multi-entry history
     # round-trip / edge-override assertions below have depth to check.
-    e = PCBWorld(board_path=BOARD, max_steps=20, action_history_len=3)
+    e = PCBWorld(BOARD, EnvConfig.with_overrides(max_steps=20, action_history_len=3))
     e.reset()
     yield e
     if e._engine is not None and e._engine.is_routing():

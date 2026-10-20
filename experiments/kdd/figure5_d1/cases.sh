@@ -4,7 +4,7 @@
 set -euo pipefail
 
 # --- D1 corpus: where a locally generated one lives -------------------------
-# The paper corpus (synth_1L_grid<G>_5net_v02 under a staged DATASET_ROOT) is not
+# The paper corpus (synth_1L/grid<G>_5net_v15 under a staged DATASET_ROOT) is not
 # distributed. `make_grid_dataset.sh <G>` builds a D1-shaped grid corpus instead,
 # and these three name exactly what it writes — the stage defaults and the
 # preflight notice both read them, so the recipe and the generator cannot drift.

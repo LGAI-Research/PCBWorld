@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from configs.loader.schema import EnvConfig
 from pcb_world.engine.kicad_engine import allow_router_coexistence
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -94,10 +95,8 @@ def _make_decoder_env_orthogonal(
         pytest.skip(f"Board fixture missing: {BOARD}")
 
     env = PCBWorld(
-        board_path=BOARD,
-        max_steps=200,
-        masking_rule="strict_no_finish",
-        reward_rule="shaped",
+        BOARD,
+        EnvConfig.with_overrides(max_steps=200, masking_rule="strict_no_finish", reward_rule="shaped"),
     )
     return KiCadRLWrapper(
         env, seed=42,
@@ -548,9 +547,10 @@ class TestOrthogonalAxesCombine:
             pytest.skip(f"Board fixture missing: {BOARD}")
 
         env = KiCadRLWrapper(
-            PCBWorld(board_path=BOARD, max_steps=200,
-                       masking_rule="strict_no_finish",
-                       reward_rule="shaped"),
+            PCBWorld(
+                BOARD,
+                EnvConfig.with_overrides(max_steps=200, masking_rule="strict_no_finish", reward_rule="shaped"),
+            ),
             seed=7,
             aug_bbox_shifted=True,
             aug_flip=True,

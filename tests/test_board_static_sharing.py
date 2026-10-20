@@ -34,6 +34,7 @@ from methods.rl_agent.training.collect import (
     collect_n_steps_ppo,
 )
 from methods.rl_agent.training.utils import RunningRewardStd
+from tests.helpers.dist_inputs import payload
 from tests.helpers.reference_tokenizer import StateTokenizer
 
 # Reuse mock observation builder from the existing tokenizer tests.
@@ -102,11 +103,10 @@ class _StubDecoderEnv:
             mask[4] = True   # ACT_NET_END
         return mask
 
-    def start_route_pointer_indices(self) -> np.ndarray:
-        return np.zeros((0,), dtype=np.int64)
-
-    def mode_mask(self) -> np.ndarray:
-        return np.ones(3, dtype=bool)
+    def mask_payload(self) -> dict[str, np.ndarray]:
+        """The six-key act-time payload (``KiCadRLWrapper.mask_payload``):
+        only the action-type mask restricts anything."""
+        return payload(action=self.action_masks())
 
     def close(self):
         pass
@@ -134,25 +134,17 @@ class _StubPolicy:
     def train(self):
         pass
 
-    def act_and_value(
-        self,
-        obs_list,
-        action_masks=None,
-        deterministic=False,
-        pointer_masks=None,
-        mode_mask=None,
-        **_kw,          # offlayer_masks / net_valid_mask / … — stub ignores them
-    ):
+    def act_and_value(self, obs_list, *, dist, deterministic=False, walked=None):
         B = len(obs_list)
-        device = action_masks.device if action_masks is not None else torch.device("cpu")
+        device = dist.action.device
 
-        # Pick the first valid action type from masks.
+        # Pick the first valid action type from the mask (the stub ignores
+        # every other DistInputs field).
         actions = torch.zeros(B, 3, dtype=torch.long, device=device)
-        if action_masks is not None:
-            for i in range(B):
-                valid = action_masks[i].nonzero(as_tuple=False)
-                if len(valid) > 0:
-                    actions[i, 0] = valid[0].item()
+        for i in range(B):
+            valid = dist.action[i].nonzero(as_tuple=False)
+            if len(valid) > 0:
+                actions[i, 0] = valid[0].item()
         actions[:, 1] = 0   # pointer
         actions[:, 2] = 0   # mode
 
@@ -471,7 +463,7 @@ class TestPPOPipelineWithSharing:
         )
 
         # Shapes should be correct.
-        assert coll.actions.shape == (n_steps, n_envs, 3)
+        assert coll.transition.actions.shape == (n_steps * n_envs, 3)
         assert coll.values.shape == (n_steps, n_envs)
         assert len(coll.obs_list) == n_steps * n_envs
 

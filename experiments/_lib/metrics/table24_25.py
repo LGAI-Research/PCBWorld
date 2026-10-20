@@ -6,10 +6,9 @@ Table 24 (quality, mean ± std over seeds; best = final_potential winner):
   WL Ratio is computed per seed as (method WL / Freerouting WL on that split),
   then mean ± std over seeds.
 
-Table 25 (serial timing distribution, from per_board_rollout_time):
-  Boards | Mean | Median | P95 | Max  (board-level mean over its rollouts).
-  NOTE: this is the parallel-rollout per-board time available in per_rollout.csv,
-  not the paper's seed42 DRC-disabled serial pass; flagged in the caption.
+Table 25 (timing distribution, from the cells' per_board_rollout_time):
+  Boards | Mean | Median | P95 | Max  (board-level mean over its rollouts; the
+  per-board time of the cells' parallel rollout).
 
 Read-only: consumes per_rollout.csv; writes only under paper_outputs/.
 """
@@ -104,7 +103,7 @@ def main(argv=None) -> None:  # argv unused; uniform signature for draw_figure d
                         "† = single seed.")
     C.write_table("table25_pg_timing", header=t25_header, rows=t25_rows,
                   title="Table 25 -- per-board timing distribution from "
-                        "per_board_rollout_time (parallel-rollout, not seed42 serial).")
+                        "per_board_rollout_time (parallel rollout).")
     print("[table24] rows:");  [print("   ", " | ".join(x)) for x in t24_rows]
     print("[table25] rows:");  [print("   ", " | ".join(x)) for x in t25_rows]
 

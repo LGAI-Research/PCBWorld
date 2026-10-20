@@ -94,7 +94,8 @@ Both default to console-only logging and switch to console+W&B when
 
 ## OrthoRoute
 
-Upstream source for the GPU rule-based router baseline. This repo ships setup
+Upstream source of the OrthoRoute router, kept for the KDD-era baseline record (its limits:
+[methods/baselines/rule_based/README.md](../methods/baselines/rule_based/README.md)). This repo ships setup
 plus a thin wrapper only — the source is not vendored. The runner
 ([methods/baselines/rule_based/README.md](../methods/baselines/rule_based/README.md))
 invokes `external/OrthoRoute/main.py`.
@@ -108,9 +109,9 @@ pip install -e external/OrthoRoute
 
 [tools/setup/fetch_baselines.sh](../tools/setup/fetch_baselines.sh) does the init
 and checks the checkout is at the pinned commit (`f45dc68`), failing if it is
-not. It does **not** install: it prints the editable install above as a next
-step. [methods/baselines/rule_based/scripts/setup_env.sh](../methods/baselines/rule_based/scripts/setup_env.sh)
-performs it (it skips OrthoRoute if `external/OrthoRoute/main.py` is absent).
+not. It does **not** install: run the editable install above by hand, or let
+[methods/baselines/rule_based/scripts/setup_env.sh](../methods/baselines/rule_based/scripts/setup_env.sh)
+perform it (it skips OrthoRoute if `external/OrthoRoute/main.py` is absent).
 
 ---
 
@@ -119,7 +120,8 @@ performs it (it skips OrthoRoute if `external/OrthoRoute/main.py` is absent).
 Upstream source for the KRT rule-based router baseline. It is a plain checkout,
 not a submodule: [tools/setup/fetch_baselines.sh](../tools/setup/fetch_baselines.sh)
 clones it to `external/KiCadRoutingTools` and checks out the pinned commit
-`d9557ad1`, whose `route.py` defaults are the ones the paper reports.
+`561f158`, the KRT the KDD and CADET papers used; the rule-based runner passes the
+routing hyperparameters explicitly.
 `external/KiCadRoutingTools/` is gitignored, so it is absent in a fresh clone.
 
 ### Setup

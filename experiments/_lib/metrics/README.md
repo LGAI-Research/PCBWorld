@@ -47,17 +47,17 @@ provisional until the dispatch completes.
   WL/Via/DRV are averaged over **all** boards (no routed-only filter).
 - **`±`** = sample std (ddof=1) across seeds; `†` marks single-seed cells.
 - **DRV** column = `drv_errors_only_count` (errors-only, same bucket as
-  `clean_pass`). `common.METRIC_COL` also exposes `drv_errors_promoted` and
-  `total_drv` if a stricter count is ever wanted.
+  `clean_pass`) for every row — RL, rule-based and LLM. The LLM scorers
+  (`score_rollouts.py`, the `llm_eval/` evaluators' `drv_count`) and the Table 2
+  level plot (`kdd/table2/plot_gpt_levels.py`) count errors only as well.
+  `common.METRIC_COL` also exposes `drv_errors_promoted` and `total_drv`.
 - **Parse-fail** (Fig 9): generations whose `.kicad_pcb` failed to parse/evaluate
   (`eval_status == 'error'`); surfaced as its own panel + count rows since these
   rollouts have blank metrics and are otherwise dropped (`common.parse_fail_stats`).
 - **`clean_pass`** is the engine column (legacy CSVs call it `clean_success`;
   the loader aliases it), whose current definition is
-  `routed && drv_errors_only == 0` (errors-only). This is why a row can show
-  `clean_pass = 1.00` while the `DRV` (errors+promoted) column is > 0. If the
-  paper wants the stricter Appendix-I.1 definition (`total_drv_count == 0`),
-  switch `METRIC_COL["clean_pass"]` logic in `common.py` — it is the single knob.
+  `routed && drv_errors_only == 0` (errors-only), so a row can show
+  `clean_pass = 1.00` while its `drv_errors_promoted` count is > 0.
 - **Potential is reported as `potential_gain` = final − initial**, where
   `initial_potential` is Φ of the bare board (raw Φ is often negative). This is
   now computed **in the per_rollout pipeline itself**, no side script:

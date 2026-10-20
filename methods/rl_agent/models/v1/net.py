@@ -55,6 +55,7 @@ from methods.rl_agent.models.v1.spec import (  # noqa: F401
     ACT_IDLE,
     NUM_ROUTING_MODES,
     SLOT_USAGE,
+    DistInputs,
 )
 
 
@@ -119,7 +120,7 @@ def _blocked_columns(
 
     Args:
         valid: ``(B, K)`` bool — which ``idx`` entries count.
-        idx: ``(B, K)`` int64 column indices; clamped into range.
+        idx: ``(B, K)`` int32/int64 column indices; clamped into range.
         n_cols: width of the logits tensor being masked.
     """
     B = idx.size(0)
@@ -157,8 +158,6 @@ class KiCadRLModel(nn.Module):
         detach_critic: bool = False,
         coord_encoding: str = "fourier",
         mlp_hidden: int = 128,
-        disable_slot_emb: bool = False,
-        policy_net_select: bool = False,
         same_net_bias: bool = False,
         legacy_pad_layer_encoding: bool = False,
         legacy_net_encoding: bool = False,
@@ -170,6 +169,9 @@ class KiCadRLModel(nn.Module):
         legacy_action_history: bool = False,
         obstacle_obs: bool = False,
         shape_obs: bool = False,
+        *,
+        policy_net_select: bool,
+        disable_slot_emb: bool,
     ) -> None:
         super().__init__()
         assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
@@ -181,10 +183,8 @@ class KiCadRLModel(nn.Module):
         self.use_critic = use_critic
         self.detach_critic = detach_critic
         # When True, the policy's net_select pointer is propagated to the env
-        # (learned net ordering). Default False keeps the behavior where
-        # KiCadRLWrapper overrides it with a random unrouted-net pick.
-        # Training-loop helpers read this to decide whether to fetch
-        # per-env ``net_valid_mask`` from the vec env pool.
+        # (learned net ordering); off, KiCadRLWrapper picks a random unrouted
+        # net. Required (no default) so it cannot disagree with the config.
         self.policy_net_select = bool(policy_net_select)
         # AM-style logit clipping (pointer + action_type heads).
         # Why: scaled dot-product logits can blow up early in training,
@@ -614,14 +614,14 @@ class KiCadRLModel(nn.Module):
 
     @staticmethod
     def _unblocked_cands(
-        pointer_masks: torch.Tensor | None,
+        pointer_masks: torch.Tensor,
         B: int,
         K: int,
         device: torch.device,
     ) -> torch.Tensor:
         """Candidate columns still selectable somewhere in the batch → indices.
 
-        ``pointer_masks`` is the ``(B, K_blk)`` int64 block list (right-padded
+        ``pointer_masks`` is the ``(B, K_blk)`` int block list (right-padded
         with -1) that ``_combined_ptr_logits`` turns into -inf pointer columns.
         A column blocked for EVERY row can never be pointed at, so its
         (type, candidate) mode branch is unreachable and need not be decoded.
@@ -629,9 +629,9 @@ class KiCadRLModel(nn.Module):
         """
         if K == 0:
             return torch.zeros(0, dtype=torch.int64, device=device)
-        if pointer_masks is None or pointer_masks.numel() == 0:
+        if pointer_masks.numel() == 0:
             return torch.arange(K, device=device)
-        pm = pointer_masks.view(B, -1) if pointer_masks.dim() != 2 else pointer_masks
+        pm = pointer_masks
         blocked = torch.zeros(B, K, dtype=torch.bool, device=device)
         valid = (pm >= 0) & (pm < K)
         if bool(valid.any()):
@@ -669,10 +669,11 @@ class KiCadRLModel(nn.Module):
         net_indices: torch.Tensor,  # (B, M)
         cand_indices: torch.Tensor,  # (B, N)
         is_net_select: torch.Tensor,  # (B,) bool
-        cand_block_idx: torch.Tensor | None = None,  # (B, K) int64, -1 pad
-        net_valid_mask: torch.Tensor | None = None,  # (B, M_mask) bool
-        row_block_idx: torch.Tensor | None = None,  # (B, K) int64, -1 pad
-        row_block_gate: torch.Tensor | None = None,  # (B,) bool
+        *,
+        cand_block_idx: torch.Tensor,  # (B, K) int32, -1 pad
+        net_valid_mask: torch.Tensor | None,  # (B, M_mask) bool; None = no net masking
+        row_block_idx: torch.Tensor,  # (B, K) int32, -1 pad
+        row_block_gate: torch.Tensor,  # (B,) bool
     ) -> torch.Tensor:
         """Combine net and cand pointer logits into a single ``(B, max(M, N))`` tensor.
 
@@ -680,18 +681,14 @@ class KiCadRLModel(nn.Module):
         Padded slots are filled with -inf.
 
         Args:
-            cand_block_idx: Optional ``(B, K)`` int64 tensor; every entry
+            cand_block_idx: ``(B, K)`` int32 tensor; every entry
                 ``>= 0`` is a column in ``cand_logits`` to set to ``-inf``
                 before combining. Right-padded with ``-1``. Used by
                 :class:`KiCadRLWrapper` to block the start_route
-                ``(x, y)`` across **all layers** — neither make_line nor
-                make_via nor a follow-up start_route can re-pick the
-                same point. Only affects cand-based rows;
+                ``(x, y, layer)`` and the off-board directional candidates —
+                neither make_line nor make_via nor a follow-up start_route can
+                pick them. Only affects cand-based rows;
                 ``is_net_select`` rows are unchanged.
-
-                A legacy ``(B,)`` tensor is also accepted (auto-promoted
-                to ``(B, 1)``) so older checkpoints / callers keep
-                working.
         """
         net_logits = self._pointer_logits(h_at, H_state, net_indices)   # (B, M)
         cand_logits = self._pointer_logits(h_at, H_state, cand_indices)  # (B, N)
@@ -722,8 +719,7 @@ class KiCadRLModel(nn.Module):
         # design and is left unrestricted. The first (same-layer) candidate is
         # never blocked and directional candidates are generated at the head's
         # layer, so a gated row cannot go all-(-inf) from this.
-        if (row_block_idx is not None and row_block_gate is not None
-                and cand_logits.size(1) > 0 and row_block_idx.numel()):
+        if cand_logits.size(1) > 0 and row_block_idx.numel():
             # reshape, not view: rep()/expand can hand us a non-contiguous
             # tensor and view would raise on it.
             rb = row_block_idx.reshape(cand_logits.size(0), -1)
@@ -735,20 +731,17 @@ class KiCadRLModel(nn.Module):
 
         # Same-point masking: zero out every (row, col) where col >= 0.
         # Must happen BEFORE the net/cand where() so net_select rows stay
-        # untouched. Accepts (B, K) or legacy (B,) shape.
-        if cand_block_idx is not None and cand_logits.size(1) > 0:
-            cbi = cand_block_idx
-            if cbi.dim() == 1:
-                cbi = cbi.unsqueeze(1)  # (B,) → (B, 1)
-            if cbi.size(1) > 0:
-                # NOTE: unlike the row-gated block above, an out-of-range index
-                # IS blocked here (clamped onto the last column) — preserved
-                # from the original indexing form.
-                valid = cbi >= 0  # (B, K) bool
-                N = cand_logits.size(1)
-                cand_logits = cand_logits.masked_fill(
-                    _blocked_columns(valid, cbi, N), float("-inf"),
-                )
+        # untouched.
+        cbi = cand_block_idx
+        if cand_logits.size(1) > 0 and cbi.size(1) > 0:
+            # NOTE: unlike the row-gated block above, an out-of-range index
+            # IS blocked here (clamped onto the last column) — preserved
+            # from the original indexing form.
+            valid = cbi >= 0  # (B, K) bool
+            N = cand_logits.size(1)
+            cand_logits = cand_logits.masked_fill(
+                _blocked_columns(valid, cbi, N), float("-inf"),
+            )
 
         M = net_indices.size(1)
         N = cand_indices.size(1)
@@ -817,11 +810,12 @@ class KiCadRLModel(nn.Module):
         obs_list: list[dict],
         walked: dict | None = None,
         *,
-        action_masks: torch.Tensor | None = None,
+        action_masks: torch.Tensor | None,
         return_cache: bool = True,
     ) -> _StateEnc:
         """Pass-0 shared core: tokenize → state-only pass → VAL critic +
-        SOD action-type logits (through mask application).
+        SOD action-type logits (through mask application; ``action_masks=None``
+        only for a value-only read that samples nothing).
 
         When ``return_cache=True``, also returns the state pass's per-layer
         K/V cache so the following action-token decode
@@ -907,11 +901,20 @@ class KiCadRLModel(nn.Module):
     def _mode_logits(
         self, h: torch.Tensor, mode_mask: torch.Tensor | None,
     ) -> torch.Tensor:
-        """Routing-mode logits (weight-tied to the vocab embedding) + an optional mask."""
+        """Routing-mode logits (weight-tied to the vocab embedding), masked by
+        ``mode_mask`` unless it is None (the factored prior masks per branch)."""
         logits = h @ self.tokenizer.vocab.routing_mode_embed.weight.T / self.scale
         if mode_mask is not None:
             logits = logits.masked_fill(~mode_mask, float("-inf"))
         return logits
+
+    def _check_dist(self, dist: DistInputs) -> None:
+        """``dist.net_valid`` is present exactly when the policy selects nets."""
+        if (dist.net_valid is not None) != self.policy_net_select:
+            raise ValueError(
+                f"DistInputs.net_valid must be {'an array' if self.policy_net_select else 'None'} "
+                f"for a model with policy_net_select={self.policy_net_select}"
+            )
 
     # ------------------------------------------------------------------
     # Sampling (inference)
@@ -920,35 +923,22 @@ class KiCadRLModel(nn.Module):
     def act_and_value(
         self,
         obs_list: list[dict],
-        action_masks: torch.Tensor | None = None,
+        *,
+        dist: DistInputs,
         deterministic: bool = False,
-        pointer_masks: torch.Tensor | None = None,
-        offlayer_masks: torch.Tensor | None = None,
-        mode_mask: torch.Tensor | None = None,
-        net_valid_mask: torch.Tensor | None = None,
-        allow_net_select_lp: bool = False,
         walked: dict | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Sample actions autoregressively and compute state values.
 
         Args:
             obs_list: List of JSON observation dicts.
+            dist: The batch's :class:`DistInputs` (torch, on the model's
+                device) — the masks applied before sampling; the buffer
+                stores the same bundle for the update.
             walked: Optional pre-walked tokenizer dict for this batch
                 (``BatchedStateTokenizer.merge_walked`` output) — skips the
                 CPU walk. Must correspond 1:1 (same order) to ``obs_list``.
-            action_masks: ``(B, 6)`` bool, True = valid action_type.
             deterministic: If True, argmax instead of sampling.
-            pointer_masks: Optional ``(B, K)`` int64 tensor (right-padded
-                with ``-1``). Every non-negative entry is a cand index
-                whose pointer logit is set to ``-inf``. This is how
-                :class:`KiCadRLWrapper` implements strict same-
-                point masking: after ``start_route(x, y, l)`` every cand
-                with the same ``(x, y)`` (any layer) is blocked, so
-                make_line / make_via / next start_route cannot re-pick
-                it. The trainer collects
-                :meth:`KiCadRLWrapper.start_route_pointer_indices`
-                per env and stacks the result. A legacy ``(B,)`` tensor
-                is also accepted (auto-promoted to ``(B, 1)``).
 
         Returns:
             actions: ``(B, 3)`` int64 — [action_type, pointer_idx, routing_mode].
@@ -957,8 +947,9 @@ class KiCadRLModel(nn.Module):
             values: ``(B,)`` float — critic estimate of the state value.
                 Zero tensor (no grad) if ``use_critic`` is False.
         """
+        self._check_dist(dist)
         enc = self._encode_state(
-            obs_list, walked, action_masks=action_masks, return_cache=True,
+            obs_list, walked, action_masks=dist.action, return_cache=True,
         )
         H_state, cache = enc.H_state, enc.cache
         net_indices = enc.tok_out.net_indices          # (B, M)
@@ -986,9 +977,9 @@ class KiCadRLModel(nn.Module):
         # Combined pointer logits (net for net_select, cand otherwise).
         ptr_logits = self._combined_ptr_logits(
             h_at, H_state, net_indices, cand_indices, is_net_select,
-            cand_block_idx=pointer_masks,
-            net_valid_mask=net_valid_mask,
-            row_block_idx=offlayer_masks,
+            cand_block_idx=dist.pointer,
+            net_valid_mask=dist.net_valid,
+            row_block_idx=dist.offlayer,
             row_block_gate=(action_type == ACT_MAKE_LINE),
         )  # (B, K)
         # Diagnostic guard (not a fallback): on the normal path, a
@@ -1015,11 +1006,7 @@ class KiCadRLModel(nn.Module):
                 action_type=action_type,
                 ptr_logits=ptr_logits,
                 dead_rows=dead.nonzero(),
-                pointer_masks=pointer_masks,
-                offlayer_masks=offlayer_masks,
-                net_valid_mask=net_valid_mask,
-                action_masks=action_masks,
-                mode_mask=mode_mask,
+                **vars(dist),
                 net_indices=net_indices,
                 cand_indices=cand_indices,
             )
@@ -1029,17 +1016,15 @@ class KiCadRLModel(nn.Module):
         )
 
         # Mode logits at h_at (used for finish).
-        mode_logits_at = self._mode_logits(h_at, mode_mask)  # (B, 3)
+        mode_logits_at = self._mode_logits(h_at, dist.mode)  # (B, 3)
         mode_at_dist = Categorical(logits=mode_logits_at)
         mode_at_pick = (
             mode_logits_at.argmax(-1) if deterministic else mode_at_dist.sample()
         )
 
-        # When mode_mask is provided (masking active), net_select's pointer
-        # is external/random by default — exclude it from log-prob unless
-        # allow_net_select_lp is set (policy-driven net selection).
-        if mode_mask is not None and not allow_net_select_lp:
-            needs_ptr = needs_ptr & ~is_net_select
+        # net_select's pointer is the policy's choice only when it selects nets;
+        # otherwise the env picks the net and the pointer is not part of the action.
+        needs_ptr = needs_ptr & (~is_net_select | self.policy_net_select)
 
         log_prob = log_prob + needs_ptr.float() * ptr_dist.log_prob(pointer_idx)
         log_prob = log_prob + is_finish.float() * mode_at_dist.log_prob(mode_at_pick)
@@ -1049,7 +1034,7 @@ class KiCadRLModel(nn.Module):
         point_tok = self._point_token(H_state, cand_indices, pointer_idx, arange_B)
         h_pt, cache = self._decode_one_token(cache, point_tok)
 
-        mode_logits_pt = self._mode_logits(h_pt, mode_mask)  # (B, 3)
+        mode_logits_pt = self._mode_logits(h_pt, dist.mode)  # (B, 3)
         mode_pt_dist = Categorical(logits=mode_logits_pt)
         mode_pt_pick = (
             mode_logits_pt.argmax(-1) if deterministic else mode_pt_dist.sample()
@@ -1077,29 +1062,14 @@ class KiCadRLModel(nn.Module):
     def act(
         self,
         obs_list: list[dict],
-        action_masks: torch.Tensor | None = None,
+        *,
+        dist: DistInputs,
         deterministic: bool = False,
-        pointer_masks: torch.Tensor | None = None,
-        offlayer_masks: torch.Tensor | None = None,
-        mode_mask: torch.Tensor | None = None,
-        net_valid_mask: torch.Tensor | None = None,
-        allow_net_select_lp: bool = False,
         walked: dict | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Backwards-compatible wrapper around :meth:`act_and_value`.
-
-        Returns ``(actions, log_probs)`` — drops the value tensor.
-        """
+        """:meth:`act_and_value` without the value: ``(actions, log_probs)``."""
         actions, log_probs, _ = self.act_and_value(
-            obs_list,
-            action_masks=action_masks,
-            deterministic=deterministic,
-            pointer_masks=pointer_masks,
-            offlayer_masks=offlayer_masks,
-            mode_mask=mode_mask,
-            net_valid_mask=net_valid_mask,
-            allow_net_select_lp=allow_net_select_lp,
-            walked=walked,
+            obs_list, dist=dist, deterministic=deterministic, walked=walked,
         )
         return actions, log_probs
 
@@ -1110,12 +1080,8 @@ class KiCadRLModel(nn.Module):
         self,
         obs_list: list[dict],
         actions: torch.Tensor,
-        action_masks: torch.Tensor | None = None,
-        pointer_masks: torch.Tensor | None = None,
-        offlayer_masks: torch.Tensor | None = None,
-        mode_mask: torch.Tensor | None = None,
-        net_valid_mask: torch.Tensor | None = None,
-        allow_net_select_lp: bool = False,
+        *,
+        dist: DistInputs,
         walked: dict | None = None,
         entropy_norm: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -1128,11 +1094,9 @@ class KiCadRLModel(nn.Module):
                 output) — skips the CPU walk and ignores ``obs_list``. Must
                 correspond 1:1 (same order) to the minibatch rows.
             actions: ``(B, 3)`` int64 from a prior :meth:`act` call.
-            action_masks: ``(B, 6)`` bool, True = valid action_type.
-            pointer_masks: Optional ``(B, K)`` int64 tensor — same semantics
-                as in :meth:`act_and_value`. Must match the value used
-                during rollout so the teacher-forced log_prob sees the
-                same (masked) distribution.
+            dist: The :class:`DistInputs` the actions were sampled under
+                (the buffer's stored bundle), so the teacher-forced
+                log_prob sees the same (masked) distribution.
             entropy_norm: If True, divide each sample's joint entropy by its
                 max achievable entropy — sum of ``ln(N_valid)`` over the same
                 ``needs_*``-weighted heads the entropy sums — yielding a
@@ -1145,8 +1109,9 @@ class KiCadRLModel(nn.Module):
             values:    ``(B,)`` float — critic estimate of the state value.
                 Zero tensor (no grad) if ``use_critic`` is False.
         """
+        self._check_dist(dist)
         enc = self._encode_state(
-            obs_list, walked, action_masks=action_masks, return_cache=True,
+            obs_list, walked, action_masks=dist.action, return_cache=True,
         )
         H_state = enc.H_state
         net_indices = enc.tok_out.net_indices
@@ -1182,9 +1147,9 @@ class KiCadRLModel(nn.Module):
         is_net_select = action_type == ACT_NET_SELECT
         ptr_logits = self._combined_ptr_logits(
             h_at, H_state, net_indices, cand_indices, is_net_select,
-            cand_block_idx=pointer_masks,
-            net_valid_mask=net_valid_mask,
-            row_block_idx=offlayer_masks,
+            cand_block_idx=dist.pointer,
+            net_valid_mask=dist.net_valid,
+            row_block_idx=dist.offlayer,
             row_block_gate=(action_type == ACT_MAKE_LINE),
         )
         # Diagnostic guard — same as the act path: an all-(-inf) cand block
@@ -1206,19 +1171,15 @@ class KiCadRLModel(nn.Module):
                 action_type=action_type,
                 ptr_logits=ptr_logits,
                 dead_rows=dead.nonzero(),
-                pointer_masks=pointer_masks,
-                offlayer_masks=offlayer_masks,
-                net_valid_mask=net_valid_mask,
-                action_masks=action_masks,
-                mode_mask=mode_mask,
+                **vars(dist),
                 net_indices=net_indices,
                 cand_indices=cand_indices,
             )
         ptr_dist = Categorical(logits=ptr_logits)
 
         # --- mode logits (both finish and make_line/via branches) ---
-        mode_at_logits = self._mode_logits(h_at, mode_mask)
-        mode_pt_logits = self._mode_logits(h_pt, mode_mask)
+        mode_at_logits = self._mode_logits(h_at, dist.mode)
+        mode_pt_logits = self._mode_logits(h_pt, dist.mode)
         mode_at_dist = Categorical(logits=mode_at_logits)
         mode_pt_dist = Categorical(logits=mode_pt_logits)
 
@@ -1228,17 +1189,13 @@ class KiCadRLModel(nn.Module):
         needs_mode = slot_usage_dev[action_type, 1].float()
         is_finish = (action_type == ACT_FINISH).float()
 
-        # When mode_mask is provided (masking active), net_select's pointer
-        # is external/random by default — exclude it from log-prob unless
-        # allow_net_select_lp is set (policy-driven net selection).
-        if mode_mask is not None and not allow_net_select_lp:
-            needs_ptr = needs_ptr * (~(action_type == ACT_NET_SELECT)).float()
+        needs_ptr = needs_ptr * (~is_net_select | self.policy_net_select).float()   # as in act
 
         # Pointer contribution (log_prob & entropy).
         #
         # For actions that don't use the pointer slot (net_end / finish)
         # ``action_ptr`` is ``-1`` and clamps to ``0``. With same-point
-        # masking (``pointer_masks``) an arbitrary cand index may be
+        # masking (``dist.pointer``) an arbitrary cand index may be
         # ``-inf`` in ``ptr_logits``, so ``ptr_dist.log_prob(0)`` can be
         # ``-inf``. The plain ``needs_ptr * log_prob`` form then produces
         # ``0.0 * -inf = NaN``, which cascades through the loss and
@@ -1253,8 +1210,8 @@ class KiCadRLModel(nn.Module):
         entropy = entropy + needs_ptr * ptr_dist.entropy()
 
         # Mode contribution (finish → h_at, make_line/via → h_pt).
-        # Use torch.where to prevent 0 * -inf = NaN when mode_mask is
-        # active and one branch's log_prob is -inf for the sampled mode.
+        # Use torch.where to prevent 0 * -inf = NaN when the mode mask
+        # restricts and one branch's log_prob is -inf for the sampled mode.
         safe_mode = action_mode.clamp(min=0)
         mode_at_lp = mode_at_dist.log_prob(safe_mode)
         mode_pt_lp = mode_pt_dist.log_prob(safe_mode)
@@ -1312,11 +1269,8 @@ class KiCadRLModel(nn.Module):
     def factored_action_logits(
         self,
         obs_list: list[dict],
-        action_masks: torch.Tensor | None = None,
-        pointer_masks: torch.Tensor | None = None,
-        offlayer_masks: torch.Tensor | None = None,
-        mode_mask: torch.Tensor | None = None,
-        net_valid_mask: torch.Tensor | None = None,
+        *,
+        dist: DistInputs,
         walked: dict | None = None,
     ) -> dict[str, torch.Tensor]:
         """Autoregressive factor logits with the state encoded ONCE.
@@ -1362,8 +1316,9 @@ class KiCadRLModel(nn.Module):
         # Pass 0 (shared core): state only → at_logits + critic value. The K/V cache
         # is what makes the branch decode below cheap — the state prefix is
         # encoded once and every action branch attends to it without recompute.
+        self._check_dist(dist)
         enc = self._encode_state(
-            obs_list, walked, action_masks=action_masks, return_cache=True,
+            obs_list, walked, action_masks=dist.action, return_cache=True,
         )
         tok_out = enc.tok_out
         net_indices = tok_out.net_indices
@@ -1386,14 +1341,12 @@ class KiCadRLModel(nn.Module):
         # fallback below (unreachable under the same masks). Biggest win: at a
         # non-routing node (net_select / start_route) both pointer+mode types
         # are masked, so the whole P·K decode disappears.
-        pt_types = (SLOT_USAGE[:, 0] & SLOT_USAGE[:, 1]).to(device)
-        if action_masks is not None:
-            # union over the batch — a branch survives if ANY row can use it
-            pt_types = pt_types & action_masks.any(dim=0)
+        # union over the batch — a branch survives if ANY row can use it
+        pt_types = (SLOT_USAGE[:, 0] & SLOT_USAGE[:, 1]).to(device) & dist.action.any(dim=0)
         pt_type_ids = torch.nonzero(pt_types, as_tuple=False).flatten()   # (P,)
         P = int(pt_type_ids.numel())
         K = cand_indices.size(1)
-        cand_ids = self._unblocked_cands(pointer_masks, B, K, device)     # (Kk,)
+        cand_ids = self._unblocked_cands(dist.pointer, B, K, device)      # (Kk,)
         Kk = int(cand_ids.numel())
         n_pt = P * Kk
 
@@ -1440,15 +1393,14 @@ class KiCadRLModel(nn.Module):
         is_net_select = (type_ids == ACT_NET_SELECT).repeat(B)             # (B*T,)
         ptr_logits = self._combined_ptr_logits(
             h_at, rep(H_state), rep(net_indices), rep(cand_indices), is_net_select,
-            cand_block_idx=(rep(pointer_masks) if pointer_masks is not None else None),
-            net_valid_mask=(rep(net_valid_mask) if net_valid_mask is not None else None),
-            row_block_idx=(rep(offlayer_masks) if offlayer_masks is not None else None),
+            cand_block_idx=rep(dist.pointer),
+            net_valid_mask=(rep(dist.net_valid) if dist.net_valid is not None else None),
+            row_block_idx=rep(dist.offlayer),
             row_block_gate=(type_ids == ACT_MAKE_LINE).repeat(B),
         ).reshape(B, T, -1)
 
         mode_at = self._mode_logits(h_at, None).reshape(B, T, -1)
-        if mode_mask is not None:
-            mode_at = mode_at.masked_fill(~mode_mask.unsqueeze(1), float("-inf"))
+        mode_at = mode_at.masked_fill(~dist.mode.unsqueeze(1), float("-inf"))
 
         # POST-pointer mode for the pointer+mode types, read off the branch
         # hiddens decoded above. Fallback = the pre-pointer mode broadcast over
@@ -1459,9 +1411,8 @@ class KiCadRLModel(nn.Module):
             mode_pt = self._mode_logits(
                 h_pt.reshape(B * n_pt, d), None,
             ).reshape(B, P, Kk, -1)
-            if mode_mask is not None:
-                mode_pt = mode_pt.masked_fill(
-                    ~mode_mask.view(B, 1, 1, -1), float("-inf"))
+            mode_pt = mode_pt.masked_fill(
+                ~dist.mode.view(B, 1, 1, -1), float("-inf"))
             # scatter the decoded branches back onto the full (T, K) grid; the
             # pruned slots keep the mode_at fallback set above
             ti = pt_type_ids.view(P, 1).expand(P, Kk).reshape(-1)
@@ -1473,30 +1424,3 @@ class KiCadRLModel(nn.Module):
             "mode_at_logits": mode_at, "mode_pt_logits": mode_pt_logits,
             "values": values,
         }
-
-    def evaluate(
-        self,
-        obs_list: list[dict],
-        actions: torch.Tensor,
-        action_masks: torch.Tensor | None = None,
-        pointer_masks: torch.Tensor | None = None,
-        offlayer_masks: torch.Tensor | None = None,
-        mode_mask: torch.Tensor | None = None,
-        net_valid_mask: torch.Tensor | None = None,
-        allow_net_select_lp: bool = False,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Backwards-compatible wrapper around :meth:`evaluate_actions_and_value`.
-
-        Returns ``(log_probs, entropy)`` — drops the value tensor.
-        """
-        log_probs, entropy, _ = self.evaluate_actions_and_value(
-            obs_list,
-            actions,
-            action_masks=action_masks,
-            pointer_masks=pointer_masks,
-            offlayer_masks=offlayer_masks,
-            mode_mask=mode_mask,
-            net_valid_mask=net_valid_mask,
-            allow_net_select_lp=allow_net_select_lp,
-        )
-        return log_probs, entropy

@@ -12,7 +12,7 @@ HL Action -> Low-Level engine composition:
     1: start_route   -> engine.start_route(x, y, layer)
     2: net_end       -> engine.build_connectivity() + ratsnest check
     3: make_line     -> engine.set_routing_mode() + engine.fix_route(x, y, force_finish=True, reject_if_stuck=True)
-    4: make_via      -> engine.set_routing_mode() + engine.toggle_via() + engine.fix_route(x, y)
+    4: make_via      -> engine.set_routing_mode() + engine.set_via_placement(True) + engine.fix_route(x, y)
     5: finish        -> engine.set_routing_mode() + engine.finish(max_attempts)
 """
 
@@ -74,8 +74,12 @@ def net_end(
     is an availability rule owned by the masking rule (default rules require
     ``net_fully_connected``; ``env.step`` enforces the mask before dispatch
     for every caller). A masking rule that exposes net_end early therefore
-    lets the agent give up / skip an unfinished net; it stays re-selectable
-    since its ratsnest edges remain. ``remaining`` is reported for logging.
+    lets the agent give up / skip an unfinished net. ``PCBWorld.step`` records
+    the net as closed for the episode: by default (``net_reselect`` off) the
+    net is retired — the RL net-valid mask drops it and the episode terminates
+    once every routable net is closed; with ``net_reselect`` on, a closed net
+    with ratsnest edges left stays selectable and ``net_select`` reopens it.
+    ``remaining`` is reported for logging.
     """
     engine.build_connectivity()
     ratsnest = engine.get_ratsnest()
@@ -125,25 +129,31 @@ def make_via(
     which had changed the board). The via_count check below is a safety net now,
     not the mechanism.
     """
+    via_radius = engine.route_item_radius_mm(for_via=True)
     blocked = engine.pad_block_reason(
-        x, y, item_radius_mm=engine.route_item_radius_mm(for_via=True),
-        for_via=True)
+        x, y, item_radius_mm=via_radius, for_via=True)
     if blocked:
         return False, {"x": x, "y": y, "routing_mode": routing_mode,
                        "routed": False, "via_placed": False, "rejected": blocked}
 
     engine.set_routing_mode(routing_mode)
     vias_before = engine.get_via_count()
-    engine.toggle_via()
+    engine.set_via_placement(True)
     # Arrival tolerance = the via's own radius: a head that stopped within it
     # puts the via's copper over the requested point, which is what PNS's own
     # reached-test means. Exact-match rejected 71% of make_via calls as stuck
     # (measured on d3b), the single largest sink of the action budget.
     routed = engine.fix_route(
         x, y, force_finish=True,
-        arrive_tol_mm=engine.route_item_radius_mm(for_via=True),
+        arrive_tol_mm=via_radius,
         require_via=True)
     via_placed = engine.get_via_count() > vias_before
+    # A route that did not commit can stay alive with the mode still on (FixRoute
+    # refused, session kept): the next make_line would then try to end on a via.
+    # The action owns the mode, so it turns it off on that exit too
+    # (set_via_placement raises if it cannot; an ended session has no mode).
+    if engine.is_routing():
+        engine.set_via_placement(False)
     return routed and via_placed, {
         "x": x, "y": y, "routing_mode": routing_mode,
         "routed": routed, "via_placed": via_placed,
@@ -153,11 +163,12 @@ def make_via(
 def finish(
     engine: KiCadEngine, routing_mode: int = 2, max_attempts: int = 5
 ) -> tuple[bool, dict[str, Any]]:
-    """Finish routing to the closest unconnected pad.
+    """Finish routing to the nearest unconnected anchor (a pad, or the end of copper
+    already on the net).
 
     Trusts ``ROUTER::Finish()``'s internal Move-convergence loop; ``max_attempts``
-    bounds how many times the engine retries it. Only shove makes incremental
-    progress across retries (see ``PNS_RL_ROUTER::finish``); the old wrapper-level
+    bounds that loop's iterations — there is no outer retry. Only shove makes
+    incremental progress across iterations (see ``PNS_RL_ROUTER::finish``); the old wrapper-level
     ``get_routing_target`` + ``move`` retry used an inconsistent target oracle and
     is gone.
     """

@@ -1,1 +1,1 @@
-"""LLM rollout drivers: pcbworld (vLLM/API) · plan_only (replay)."""
+"""LLM rollout driver: pcbworld (vLLM/API)."""

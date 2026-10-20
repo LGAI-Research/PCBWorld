@@ -46,9 +46,9 @@ from collections import Counter
 from pathlib import Path
 
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent  # llm_eval→paper_repro→scripts→repo
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent  # llm_eval→kdd→experiments→repo
 _KICAD_RL_DIR = _PROJECT_ROOT / "build_rl" / "pcbnew" / "python" / "rl"
-for p in (_PROJECT_ROOT, _KICAD_RL_DIR, _PROJECT_ROOT / "scripts"):
+for p in (_PROJECT_ROOT, _KICAD_RL_DIR):
     s = str(p)
     if s not in sys.path:
         sys.path.insert(0, s)
@@ -83,27 +83,28 @@ def _gather_boards(
 
 def _board_static_for(board_path: Path, state_format: str = "sexpr") -> str:
     """Reset the env on ``board_path`` and return board_static sexpr."""
+    from configs.loader.schema import EnvConfig
     from pcb_world.core.env import PCBWorld
     from pcb_world.engine.drc_config import DEFAULT_DRC_CONFIG_PATH
     from methods.llm_agent.wrappers.state_converter import format_state_split_sexpr, format_state_split
 
-    env = PCBWorld(
-        board_path=str(board_path), state_format=state_format,
-        max_steps=10_000, use_yaml_drc_fallback=True,
+    env = PCBWorld(str(board_path), EnvConfig.with_overrides(
+        max_steps=10_000, rules_source="board_or_yaml",
         drc_config_path=str(DEFAULT_DRC_CONFIG_PATH),
-    )
+        # Paper-era observation (the recipe's values before they were YAML defaults).
+        outline_obs="tess", simplify_outline=False, net_constraint_obs=False,
+        reject_if_stuck=False,   # paper-era make_line (commit the partial stub; before 2026-07-10)
+    ))
     try:
         obs, _ = env.reset()
+        # paper-era (legacy v5) obs elements of this env
         if state_format == "sexpr":
-            static, _ = format_state_split_sexpr(obs)
+            static, _ = format_state_split_sexpr(obs, "v5", net_constraint_obs=env.net_constraint_obs)
         else:
-            static, _ = format_state_split(obs)
+            static, _ = format_state_split(obs, "v5", net_constraint_obs=env.net_constraint_obs)
         return static
     finally:
-        try:
-            env.close()
-        except Exception:
-            pass
+        env.close()
 
 
 def _generate_action_sequences(
@@ -152,30 +153,33 @@ def _replay_and_score(
     """Parse the LLM response, replay through the env, then run the
     same eval.metrics evaluator the actual benchmark uses so the
     quality filter matches the eval-time metric exactly."""
-    from eval_plan_only_llm_v8_standalone import (   # noqa: E402  (deferred for sys.path)
+    from experiments.kdd.llm_eval.eval_plan_only_llm_v8_standalone import (
         extract_action_sequence, replay_actions_and_eval,
     )
     from eval.metrics import evaluate_one as _eval_routed
+    from pcb_world.engine.router_client import EngineServerCrashed
 
     actions = extract_action_sequence(response)
     if not actions:
         return {
             "actions_text": "",
             "n_actions": 0,
-            "success": False, "routability": 0.0, "drv_count": 9999,
+            "success": False, "routability": 0.0, "drv_errors_and_promoted_count": 9999,
             "clean_pass": False, "final_potential": -9999.0,
             "error": "no_actions_parsed",
         }
 
     # 1. Replay through the env so the engine writes a routed PCB to disk.
+    #    A sequence that crashes the engine is a failed sample; any other
+    #    exception is a bug and fails the board (recorded by main()).
     save_pcb_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         replay_metrics = replay_actions_and_eval(board_path, actions, save_pcb_path)
-    except Exception as exc:
+    except EngineServerCrashed as exc:
         return {
             "actions_text": "\n".join(_render_action(a) for a in actions),
             "n_actions": len(actions),
-            "success": False, "routability": 0.0, "drv_count": 9999,
+            "success": False, "routability": 0.0, "drv_errors_and_promoted_count": 9999,
             "clean_pass": False, "final_potential": -9999.0,
             "error": f"replay_failed: {type(exc).__name__}: {exc}",
         }
@@ -196,7 +200,7 @@ def _replay_and_score(
             "n_actions": len(actions),
             "success": replay_metrics.get("success", False),
             "routability": replay_metrics.get("routability", 0.0),
-            "drv_count": 9999, "clean_pass": False, "final_potential": -9999.0,
+            "drv_errors_and_promoted_count": 9999, "clean_pass": False, "final_potential": -9999.0,
             "error": f"eval_failed: {type(exc).__name__}: {exc}",
         }
 
@@ -205,7 +209,8 @@ def _replay_and_score(
         "n_actions": len(actions),
         "success": bool(m.get("success", False)),
         "routability": float(m.get("routability", 0.0)),
-        "drv_count": int(m.get("drv_errors_and_promoted_count", 0)),
+        # Ranks the pool samples only (_quality_key); not a reported DRV.
+        "drv_errors_and_promoted_count": int(m.get("drv_errors_and_promoted_count", 0)),
         "clean_pass": bool(m.get("clean_pass", False)),
         "final_potential": float(m.get("final_potential", 0.0)),
         "track_count": int(m.get("track_count", 0)),
@@ -255,7 +260,7 @@ def _quality_key(s: dict) -> tuple:
         int(s.get("clean_pass", False)),
         int(s.get("success", False)),
         float(s.get("routability", 0.0)),
-        -float(s.get("drv_count", 9999)),
+        -float(s.get("drv_errors_and_promoted_count", 9999)),
         float(s.get("final_potential", -9999.0)),
     )
 
@@ -273,35 +278,30 @@ def _process_board(
     as the candidate few-shot entry for this board. If every completion
     failed the routability filter, returns None.
     """
-    from eval_plan_only_llm_v8_standalone import build_user_prompt, FewShotExample
+    from experiments.kdd.llm_eval.eval_plan_only_llm_v8_standalone import (
+        build_user_prompt, FewShotExample,
+    )
     bid = board_path.stem
     board_dir = out_dir / "_attempts" / bid
     board_dir.mkdir(parents=True, exist_ok=True)
 
-    try:
-        board_static = _board_static_for(board_path)
-    except Exception as exc:
-        traceback.print_exc()
-        return None
+    board_static = _board_static_for(board_path)   # an error fails the board in main()
 
     user_prompt = build_user_prompt(board_static, examples=[])
     (board_dir / "prompt.txt").write_text(
         "==== SYSTEM ====\n" + system_prompt + "\n==== USER ====\n" + user_prompt
     )
 
-    try:
-        responses, usage = _generate_action_sequences(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            api_model=args.api_model,
-            api_key=args.api_key,
-            temperature=args.temperature,
-            n_samples=args.n_samples,
-            max_tokens=args.max_new_tokens,
-        )
-    except Exception as exc:
-        traceback.print_exc()
-        return None
+    # An API error fails the board (recorded by main()), not a quality drop.
+    responses, usage = _generate_action_sequences(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        api_model=args.api_model,
+        api_key=args.api_key,
+        temperature=args.temperature,
+        n_samples=args.n_samples,
+        max_tokens=args.max_new_tokens,
+    )
 
     samples: list[dict] = []
     for i, response in enumerate(responses):
@@ -337,7 +337,7 @@ def _process_board(
         "action_sequence": best["actions_text"],
         "best_pcb_path": best["pcb_path"],
         "stats": {k: best.get(k) for k in (
-            "success", "clean_pass", "routability", "drv_count",
+            "success", "clean_pass", "routability", "drv_errors_and_promoted_count",
             "track_angle_drv_count", "final_potential",
             "track_count", "via_count", "wirelength_mm", "n_actions",
         )},
@@ -350,7 +350,8 @@ def _process_board(
 # ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__)
+    from configs.loader.cli import StrictArgumentParser
+    p = StrictArgumentParser(description=__doc__)
     p.add_argument("--src-dir", type=Path, default=None,
                    help="Directory of unrouted .kicad_pcb (e.g. synth_2L_v2/val).")
     p.add_argument("--src-files", type=Path, nargs="*", default=[],
@@ -388,8 +389,8 @@ def parse_args() -> argparse.Namespace:
 
 def _system_prompt(version: str) -> str:
     if version == "v3":
-        from eval_plan_only_llm_v8_standalone import _SYSTEM_PROMPT_V8 as _SYSTEM_PROMPT_V3   # type: ignore
-        return _SYSTEM_PROMPT_V3
+        from experiments.kdd.llm_eval.eval_plan_only_llm_v8_standalone import _SYSTEM_PROMPT
+        return _SYSTEM_PROMPT
     raise ValueError(f"unknown prompt version: {version}")
 
 
@@ -415,18 +416,20 @@ def main() -> int:
     print()
 
     candidates: list[dict] = []
+    errors: list[str] = []
     for b in boards:
         print(f"=== {b.name} ===")
         try:
             cand = _process_board(b, args.output, args, system_prompt)
         except Exception as exc:
             traceback.print_exc()
+            errors.append(f"{b.name}: {type(exc).__name__}: {exc}")
             cand = None
         if cand is None:
             continue
         s = cand["stats"]
         print(f"  best: success={s['success']}  clean={s['clean_pass']}  "
-              f"rout={s['routability']:.3f}  drv={s['drv_count']}  "
+              f"rout={s['routability']:.3f}  drv={s['drv_errors_and_promoted_count']}  "
               f"actions={s['n_actions']}")
         candidates.append(cand)
 
@@ -458,8 +461,12 @@ def main() -> int:
         }, indent=2))
         s = k["stats"]
         print(f"  -> {json_path.name}  rout={s['routability']:.3f} "
-              f"drv={s['drv_count']} actions={s['n_actions']}")
+              f"drv={s['drv_errors_and_promoted_count']} actions={s['n_actions']}")
 
+    if errors:
+        print(f"[ERROR] {len(errors)} of {len(boards)} boards errored; first: {errors[0]}",
+              file=sys.stderr)
+        return 1
     if not kept:
         print("[ERROR] no candidate met the quality filter — "
               "try lowering --routability-min or sampling more (--n-samples).",

@@ -117,7 +117,8 @@ def _resolve_output_path(src: Path, src_root: Path,
 # ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(
+    from configs.loader.cli import StrictArgumentParser
+    p = StrictArgumentParser(
         description="Round-trip .kicad_pcb files through the local KiCad "
                     "build's loader/saver to normalize them to the router's "
                     "file-format version. Source files are never modified.",

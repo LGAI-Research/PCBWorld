@@ -250,8 +250,12 @@ def parse_csv(s: str | None):
 
 
 def main():
-    ap = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter,
-                                 description=__doc__)
+    repo_dir = str(Path(__file__).resolve().parents[5])  # configs.loader when run as a script
+    if repo_dir not in sys.path:
+        sys.path.insert(0, repo_dir)
+    from configs.loader.cli import StrictArgumentParser
+    ap = StrictArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter,
+                              description=__doc__)
     ap.add_argument("--eval-root", type=Path, required=True,
                     help="Root of the eval-log tree (holds <dataset>/<algo>/ dirs).")
     ap.add_argument("--dataset", required=True,

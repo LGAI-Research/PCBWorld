@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import math
 import warnings
+from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
@@ -153,7 +154,8 @@ class PotentialReward:
         net_bonus_size_linear_scale: Linear twin of
             ``net_bonus_size_log_scale`` — ``w_i = scale * pad_groups_i``
             (no log compression), so closing a big net pays in proportion to
-            its size. Mutually exclusive with the log knob.
+            its size. Either knob > 0 selects the weighted ladder path.
+            Mutually exclusive with the log knob.
         completion_bonus_padgroup_scale /
         clean_completion_bonus_padgroup_scale: Board-bonus twins scaled by the
             board's TOTAL bare-board pad groups instead of ``ln(1+net_count)``
@@ -378,11 +380,15 @@ class PotentialReward:
           CLI ``--wirelength-penalty`` is what gets normalized.
         * **per-reset** — ``pad_groups``, ``net_names``, ``routable_nets``:
           size-weighted ladder weights ``w_i = net_bonus_size_log_scale *
-          ln(1 + pad_groups[i])`` for every routable net (bare-board pad
+          ln(1 + pad_groups[i])`` (or ``net_bonus_size_linear_scale *
+          pad_groups[i]``) for every routable net (bare-board pad
           groups: the routability baseline), keyed by code and by name
-          (:meth:`set_net_size_weights`). Bare-board pad groups are
-          episode-dependent under keep-routing augmentation, so the env
-          rebinds at every reset. No-op unless ``net_bonus_size_log_scale > 0``.
+          (:meth:`set_net_size_weights`), plus the ``*_padgroup_scale``
+          board bonuses. Bare-board pad groups are episode-dependent under
+          keep-routing augmentation, so the env rebinds at every reset.
+          With any per-net ladder term on (size weights or
+          ``net_clean_bonus``) it also checks that every routable net has
+          one distinct name. No-op unless one of those knobs is set.
 
         Args:
             net_count: Board net count (``BoardMeta.net_count``).
@@ -432,16 +438,38 @@ class PotentialReward:
             # Ladder weights (log OR linear shape) and/or the pad-group-scaled
             # board bonuses. Both read the SAME bare-board pad groups, so they
             # share one validation pass.
-            want_weights = (
-                self.net_bonus_size_log_scale > 0
-                or self.net_bonus_size_linear_scale > 0
-            )
+            want_weights = self._size_weighted_ladder
             want_board_pg = (
                 self.completion_bonus_padgroup_scale is not None
                 or self.clean_completion_bonus_padgroup_scale is not None
             )
+            # The per-net terms read DRC counts keyed by net NAME, so every
+            # routable net needs one distinct name — on the weighted path (the
+            # name-keyed weights) and on the flat clean path (dirty nets are
+            # counted by name against target_net_count). Routable nets only:
+            # the env (target-scoped pad nets) and eval (every net) pass
+            # different net_names universes, so a wider check would break
+            # their parity.
+            want_names = want_weights or bool(self.net_clean_bonus)
+            nets = sorted(int(c) for c in routable_nets)
+            if want_names:
+                unnamed = [c for c in nets if c not in net_names]
+                if unnamed:
+                    raise RuntimeError(
+                        f"per-net ladder: routable net(s) {unnamed} have no "
+                        f"net name — cannot key the DRC-side per-net counts."
+                    )
+                codes_by_name: defaultdict[str, list[int]] = defaultdict(list)
+                for c in nets:
+                    codes_by_name[net_names[c]].append(c)
+                dup = {n: cs for n, cs in codes_by_name.items() if len(cs) > 1}
+                if dup:
+                    raise RuntimeError(
+                        f"per-net ladder: routable nets share a net name "
+                        f"{dup} — per-net DRC counts (keyed by name) would "
+                        f"merge them."
+                    )
             if want_weights or want_board_pg:
-                nets = sorted(int(c) for c in routable_nets)
                 missing = [c for c in nets if c not in pad_groups]
                 if missing:
                     raise RuntimeError(
@@ -461,13 +489,6 @@ class PotentialReward:
                             self.clean_completion_bonus_padgroup_scale * total_pg
                         )
                 if want_weights:
-                    unnamed = [c for c in nets if c not in net_names]
-                    if unnamed:
-                        raise RuntimeError(
-                            f"pad-group-scaled ladder: routable net(s) "
-                            f"{unnamed} have no net name — cannot key the "
-                            f"DRC-side weights."
-                        )
                     if self.net_bonus_size_linear_scale > 0:
                         scale = self.net_bonus_size_linear_scale
                         by_code = {c: scale * pad_groups[c] for c in nets}
@@ -478,6 +499,18 @@ class PotentialReward:
                         }
                     by_name = {net_names[c]: by_code[c] for c in nets}
                     self.set_net_size_weights(by_code, by_name)
+
+    @property
+    def _size_weighted_ladder(self) -> bool:
+        """True when the per-net ladder is size-weighted (log OR linear shape).
+
+        The one gate shared by :meth:`bind_board` (resolves the weights) and
+        :meth:`_phi_main` (consumes them), so the two can never disagree.
+        """
+        return (
+            self.net_bonus_size_log_scale > 0
+            or self.net_bonus_size_linear_scale > 0
+        )
 
     def set_net_size_weights(
         self,
@@ -565,12 +598,14 @@ class PotentialReward:
             or self.clean_completion_bonus
         ):
             count, per_net = self._severity_counts(state)
-            weighted = self.net_bonus_size_log_scale > 0
+            weighted = self._size_weighted_ladder
             if weighted and self.net_size_weights_by_code is None:
                 raise ValueError(
-                    "net_bonus_size_log_scale > 0 but per-net size weights are "
-                    "unresolved — PCBWorld resolves them at reset; standalone "
-                    "use must call set_net_size_weights() first."
+                    "size-weighted ladder (net_bonus_size_log_scale or "
+                    "net_bonus_size_linear_scale > 0) but per-net size weights "
+                    "are unresolved — PCBWorld resolves them at reset; "
+                    "standalone use must call bind_board() / "
+                    "set_net_size_weights() first."
                 )
             if self.net_completion_bonus:
                 if weighted:

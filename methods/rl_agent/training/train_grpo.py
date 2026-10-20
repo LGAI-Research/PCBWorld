@@ -27,10 +27,12 @@ from methods.rl_agent.training.args import add_shared_args
 
 def build_arg_parser() -> argparse.ArgumentParser:
     from configs.loader.schema import GRPOConfig
+    from configs.loader.cli import REMOVED_TRAIN_OPTIONS, StrictArgumentParser
 
     _GRPO = GRPOConfig()
-    p = argparse.ArgumentParser(
+    p = StrictArgumentParser(
         description="GRPO training for the decoder-only PCB routing policy",
+        removed=REMOVED_TRAIN_OPTIONS,
     )
     add_shared_args(
         p,
@@ -46,15 +48,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     # PPO-equivalent architecture knobs (ported so v55-winner config is
     # reachable here too).
-    p.add_argument("--disable-slot-emb", action="store_true",
-                   help="Ablation: zero out the slot embedding contribution "
-                        "(no per-net fingerprint added to token embeddings). "
-                        "embed_ln is still applied.")
     p.add_argument("--same-net-bias", action="store_true", default=False,
                    help="Add per-head learnable additive logit bias for "
                         "same-net token pairs (alpha_h * 1[slot_i == slot_j]). "
                         "alpha init 0 (ReZero-style) -> initial forward is "
                         "bit-identical to no-bias SDPA.")
+
+    # GRPO trains no critic: detach_critic has no flag here, but a policy field without a
+    # value would not build (RLPolicyConfig.from_namespace reads every field).
+    p.set_defaults(detach_critic=False)
 
     # --- Resume (preemption-safe) — ported from PPO trainer ---
     p.add_argument("--resume", type=str, default=None,
@@ -65,11 +67,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    from configs.loader.schema import GRPOConfig
+    from methods.rl_agent.training.args import resolve_train_args
     from methods.rl_agent.training.loop import GRPOTrainer
 
-    args = build_arg_parser().parse_args()
+    run = resolve_train_args(build_arg_parser(), GRPOConfig())
     logging.basicConfig(level=logging.WARNING)
-    GRPOTrainer(args).fit()
+    GRPOTrainer(run).fit()
 
 
 if __name__ == "__main__":

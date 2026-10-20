@@ -197,22 +197,23 @@ def _nested_score(*, success, routability, fp, wl=10.0, via=1, tracks=5):
         "wirelength_mm": wl, "drv_errors_only_count": 0,
         "drv_errors_and_promoted_count": 0,
         "track_angle_drv": {"count": 0}, "total_drv_count": 0,
-        "final_potential": fp,
+        "final_potential": fp, "initial_potential": -1.0, "potential_gain": fp + 1.0,
         "extras": {"initial_unrouted_edges": 4, "unrouted_edges_remaining": 0},
     }
 
 
-def test_rows_from_scored_flattens_ok_and_error():
+def test_rows_from_scored_flattens_ok_and_error(tmp_path):
     from eval.evaluator import _rows_from_scored
 
+    a, b = tmp_path / "a.kicad_pcb", tmp_path / "b.kicad_pcb"  # b does not exist
     nested = [_nested_score(success=True, routability=1.0, fp=3.0),
               {"error": "boom"}]
-    pairs = [("/tmp/a.kicad_pcb", None), ("/tmp/b.kicad_pcb", "/tmp/b.kicad_pro")]
+    pairs = [(str(a), None), (str(b), str(b.with_suffix(".kicad_pro")))]
     rows = _rows_from_scored(nested, pairs, reward_config="rc", check_angle=45)
 
     assert rows[0]["board_index"] == 0 and rows[0]["board_id"] == "a"
     assert rows[0]["status"] == "completed" and rows[0]["final_potential"] == 3.0
-    assert rows[0]["routed_pcb"] == "/tmp/a.kicad_pcb"
+    assert rows[0]["routed_pcb"] == str(a)
     assert rows[1]["status"] == "crashed" and rows[1]["board_id"] == "b"
 
 

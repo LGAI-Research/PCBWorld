@@ -62,7 +62,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-_THIS_DIR = Path(__file__).resolve().parent.parent.parent  # llm_eval→paper_repro→scripts→repo
+_THIS_DIR = Path(__file__).resolve().parents[3]  # llm_eval→kdd→experiments→repo
 _KICAD_RL_DIR = _THIS_DIR / "build_rl" / "pcbnew" / "python" / "rl"
 for p in (_THIS_DIR, _KICAD_RL_DIR):
     s = str(p)
@@ -618,16 +618,10 @@ def evaluate_candidate(
         info["error"] = f"eval_failed: {type(exc).__name__}: {exc}"
         return {**_failure_metrics(), **info}
 
-    # evaluate_one's schema lacks ``drv_count`` (it splits the counter).
-    # Backfill the legacy field so BoardResult.aggregate's
-    # ``drv_at_k_min`` and v2's audit can read it. Use
-    # ``errors_and_promoted`` — that's the broader, dataset-default
-    # severity mode.
-    if "drv_count" not in m:
-        m = dict(m)
-        m["drv_count"] = int(m.get("drv_errors_and_promoted_count", 0))
-
-    return {**m, **info}
+    # evaluate_one's schema has no ``drv_count`` (it splits the counter).
+    # Add the legacy field BoardResult.aggregate's ``drv_at_k_min`` and
+    # v2's audit read: errors only, the DRV of every KDD table.
+    return {**m, "drv_count": int(m["drv_errors_only_count"]), **info}
 
 
 def _failure_metrics() -> dict:
@@ -1215,7 +1209,8 @@ def overall_stats(results: list[BoardResult], k: int) -> dict:
 # ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(
+    from configs.loader.cli import StrictArgumentParser
+    p = StrictArgumentParser(
         description="LLM-only CAD-Gen routing eval (zero-shot / few-shot).",
     )
     p.add_argument(
@@ -1314,6 +1309,19 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def _exit_code(results: list[BoardResult]) -> int:
+    """1 when any board errored (unroute / api / unhandled / no samples on disk):
+    the rates leave it out (``boards_failed``), and a 0 exit would read as a
+    finished run."""
+    errored = [r.board_id for r in results if r.error]
+    if errored:
+        print(f"[ERROR] {len(errored)} of {len(results)} boards errored (left out of "
+              f"the rates as boards_failed; see the `error` column of summary.csv): "
+              f"{', '.join(errored)}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main() -> int:
     args = parse_args()
 
@@ -1392,7 +1400,7 @@ def main() -> int:
                 print(f"  {k_:<32} {v}")
         print(f"\n  summary  -> {summary_path}")
         print(f"  overall  -> {args.output / 'overall.json'}")
-        return 0
+        return _exit_code(results)
 
     if not args.inputs:
         print("[ERROR] inputs required (or pass --reaggregate)", file=sys.stderr)
@@ -1537,7 +1545,7 @@ def main() -> int:
             )
         print(f"\n  multi_k -> {args.output / 'overall_multi_k.json'}")
 
-    return 0
+    return _exit_code(results)
 
 
 if __name__ == "__main__":

@@ -31,7 +31,7 @@ from tests.test_indexed_obs import make_canonical_obs
 
 def make_tok(seed: int = 0, **kwargs) -> BatchedStateTokenizer:
     torch.manual_seed(seed)
-    tok = BatchedStateTokenizer(d_model=64, n_freq=8, **kwargs)
+    tok = BatchedStateTokenizer(d_model=64, n_freq=8, **{"disable_slot_emb": False, **kwargs})
     tok.eval()
     return tok
 
@@ -225,6 +225,27 @@ class TestHelperEquivalence:
         assert np.array_equal(m_legacy, m_indexed)
         # closed net 2 must be masked out in both.
         assert not m_legacy[codes.index(2)]
+
+    def test_net_valid_mask_reselect_still_masks_routed_nets(self):
+        """``net_reselect`` (the env knob) reopens only nets that still
+        have ratsnest: a fully routed net stays masked, closed or not."""
+        obs, _ = self._pair(n_nets=3, pads_per_net=2, n_ratsnest_per_net=2)
+        obs["routing_geometry"]["net_1"]["points"] = []    # net 1 fully routed
+        obs["closed_nets"] = [1, 2]                         # 1 closed complete, 2 closed unrouted
+        iobs = dict_to_arrays(obs)
+        codes = sorted_net_codes_from_obs(obs)
+        m_legacy = net_valid_mask(sorted_net_codes=codes, last_obs=obs,
+                                  net_reselect=True)
+        m_indexed = net_valid_mask(sorted_net_codes=codes, last_obs=iobs,
+                                   net_reselect=True)
+        assert np.array_equal(m_legacy, m_indexed)
+        assert not m_legacy[codes.index(1)]    # routed: masked even in reselect mode
+        assert m_legacy[codes.index(2)]        # closed but unrouted: selectable again
+        assert m_legacy[codes.index(3)]        # open and unrouted
+        # Default rule on the same observation: both closed nets are masked.
+        m_off = net_valid_mask(sorted_net_codes=codes, last_obs=iobs)
+        assert not m_off[codes.index(1)] and not m_off[codes.index(2)]
+        assert m_off[codes.index(3)]
 
     def test_net_valid_mask_no_fallback(self):
         """With 0 valid nets, returns all-False as-is — no all-True fallback.

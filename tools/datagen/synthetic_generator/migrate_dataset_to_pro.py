@@ -41,8 +41,9 @@ import sys
 import time
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO))
+REPO = Path(__file__).resolve().parents[3]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
 
 
 # Each preset matches a generator config (see scripts/generate_*).
@@ -116,7 +117,7 @@ def _derive_rules_from_board(src_pcb: Path, work_dir: Path) -> dict[str, float]:
     # round-trip writes the modern pcb + its .kicad_pro sibling), then open
     # the now-contract-clean pair with the wrapper.
     load_and_save_via_engine(work, work)
-    e = KiCadEngine(str(work))
+    e = KiCadEngine.for_board_file(str(work))
     nc = e.get_design_rules().default_netclass
     rules = dict(
         min_clearance_mm=float(nc.clearance_mm),
@@ -147,7 +148,7 @@ def _build_template(src_pcb: Path, rules: dict[str, float],
     shutil.copy(src_pcb, work)
     # Same pro-less normalize as _derive_rules_from_board (strict contract).
     load_and_save_via_engine(work, work)
-    e = KiCadEngine(str(work))
+    e = KiCadEngine.for_board_file(str(work))
     r = e.get_design_rules()
     for k, v in rules.items():
         setattr(r, k, v)
@@ -193,7 +194,7 @@ def _process_one(args: tuple[str, str]) -> tuple[str, bool, str]:
 def _verify_one(dst_pcb: Path, expected: dict[str, float]) -> None:
     """Reload one migrated board and assert rules + flags match."""
     from pcb_world.engine import KiCadEngine
-    e = KiCadEngine(str(dst_pcb))
+    e = KiCadEngine.for_board_file(str(dst_pcb))
     try:
         assert e.was_project_loaded_from_file(), "kicad_pro not detected"
         assert not e.was_legacy_design_settings_loaded(), "legacy block still present"
@@ -207,8 +208,9 @@ def _verify_one(dst_pcb: Path, expected: dict[str, float]) -> None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    from configs.loader.cli import StrictArgumentParser
+    p = StrictArgumentParser(description=__doc__,
+                             formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--src", type=Path, required=True,
                    help="source dataset dir (contains board_*.kicad_pcb)")
     p.add_argument("--dst", type=Path, required=True,

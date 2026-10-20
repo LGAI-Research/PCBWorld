@@ -89,8 +89,12 @@ def run_generator(n: int, seed: int, out_dir: Path, params: dict[str, float],
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    repo_dir = str(Path(__file__).resolve().parents[3])  # configs.loader when run as a script
+    if repo_dir not in sys.path:
+        sys.path.insert(0, repo_dir)
+    from configs.loader.cli import StrictArgumentParser
+    p = StrictArgumentParser(description=__doc__,
+                             formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--grid", type=int, required=True,
                    help="grid size N (cells per side). e.g. 10, 20, 50, 100, 1000.")
     p.add_argument("--n-train", type=int, default=10000)

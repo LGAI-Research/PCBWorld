@@ -19,8 +19,8 @@ import copy
 import pytest
 import torch
 
+from configs.loader.schema import EnvConfig
 from methods.rl_agent.models.loader import (
-    _policy_args_for_checkpoint,
     pad_legacy_entity_type_rows,
     pad_legacy_optimizer_state,
 )
@@ -38,8 +38,9 @@ from tests.helpers.reference_tokenizer import StateTokenizer
 from tests.test_indexed_obs import make_canonical_obs
 from tests.test_indexed_tokenizer import assert_bit_identical
 
-_SMALL = dict(d_model=64, n_freq=8)
-_MODEL_SMALL = dict(d_model=32, n_freq=4, n_layers=1, d_ff=64, n_heads=2)
+_SMALL = dict(d_model=64, n_freq=8, disable_slot_emb=False)
+_MODEL_SMALL = dict(d_model=32, n_freq=4, n_layers=1, d_ff=64, n_heads=2, policy_net_select=False,
+                    disable_slot_emb=False)
 
 
 def _tok(seed: int = 0, **kwargs) -> BatchedStateTokenizer:
@@ -305,11 +306,12 @@ class TestCheckpointCompat:
             pad_legacy_entity_type_rows(sd, model)
 
     def test_loader_detects_shape_obs_presence(self):
-        args = dict(_MODEL_SMALL)
+        from tests.helpers.ckpt_payload import resolve_state_dict
+
         on_sd = KiCadRLModel(**_MODEL_SMALL, shape_obs=True).state_dict()
         off_sd = KiCadRLModel(**_MODEL_SMALL).state_dict()
-        assert _policy_args_for_checkpoint(args, on_sd)["shape_obs"] is True
-        assert _policy_args_for_checkpoint(args, off_sd)["shape_obs"] is False
+        assert resolve_state_dict(on_sd, **_MODEL_SMALL)["shape_obs"] is True
+        assert resolve_state_dict(off_sd, **_MODEL_SMALL)["shape_obs"] is False
 
     def test_legacy_optimizer_moments_pad_and_step(self):
         """Resume twin of the 14-row table pad: Adam moments must be padded
@@ -433,9 +435,11 @@ class TestEndToEndObstacleTokens:
         from pcb_world.core.env import PCBWorld
         path = tmp_path / "npth_slot_nc.kicad_pcb"
         path.write_text(self._BOARD)
+        # The strict YAML sits above KiCad's built-in Default class; the
+        # fallback lifts the Default class to it, so the load is consistent.
         env = PCBWorld(
-            str(path), use_yaml_drc_fallback=True,
-            drc_config_path="experiments/kdd/configs/drc/synth_2L_v2.yaml",
+            str(path),
+            EnvConfig.with_overrides(rules_source="board_or_yaml", drc_config_path="experiments/kdd/configs/drc/synth_2L_v2.yaml"),
         )
         try:
             obs, _ = env.reset(seed=0)

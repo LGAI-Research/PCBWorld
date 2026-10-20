@@ -1,0 +1,353 @@
+{
+ "board_static": {
+  "bbox_x": -0.075,
+  "bbox_y": -0.075,
+  "bbox_w": 40.15,
+  "bbox_h": 40.15,
+  "scale": 40.15,
+  "net_count": 2,
+  "copper_layers": 2,
+  "boardlines": {
+   "edge_0": {
+    "id": "E0",
+    "p1": {
+     "id": "P0",
+     "xy": [
+      0.0,
+      0.0
+     ]
+    },
+    "p2": {
+     "id": "P1",
+     "xy": [
+      40.0,
+      0.0
+     ]
+    },
+    "width": 0.15
+   },
+   "edge_4": {
+    "id": "E4",
+    "p1": {
+     "id": "P4",
+     "xy": [
+      13.0,
+      10.0
+     ]
+    },
+    "p2": {
+     "id": "P5",
+     "xy": [
+      27.0,
+      10.0
+     ]
+    },
+    "width": 0.15
+   },
+   "edge_5": {
+    "id": "E5",
+    "p1": {
+     "id": "P5",
+     "xy": [
+      27.0,
+      10.0
+     ]
+    },
+    "p2": {
+     "id": "P6",
+     "xy": [
+      30.0,
+      13.0
+     ]
+    },
+    "width": 0.15,
+    "mid": {
+     "id": "P7",
+     "xy": [
+      29.121,
+      10.879
+     ]
+    }
+   }
+  },
+  "nets": {
+   "net_1": {
+    "net_name": "NET1",
+    "pads": {
+     "pad_0": {
+      "id": "D0",
+      "center": {
+       "id": "P16",
+       "xy": [
+        20.0,
+        5.0
+       ]
+      },
+      "width": 1.0,
+      "height": 1.0,
+      "layer": 1,
+      "shape": "roundrect"
+     },
+     "pad_1": {
+      "id": "D1",
+      "center": {
+       "id": "P17",
+       "xy": [
+        20.0,
+        35.0
+       ]
+      },
+      "width": 1.0,
+      "height": 1.0,
+      "layer": 1,
+      "shape": "roundrect"
+     }
+    },
+    "constraints": {
+     "track_width": 0.2,
+     "clearance": 0.2,
+     "via_diameter": 0.6,
+     "via_drill": 0.3
+    }
+   },
+   "net_2": {
+    "net_name": "GND",
+    "pads": {
+     "pad_0": {
+      "id": "D2",
+      "center": {
+       "id": "P18",
+       "xy": [
+        5.0,
+        20.0
+       ]
+      },
+      "width": 1.7,
+      "height": 1.7,
+      "layer": 0,
+      "shape": "circle"
+     },
+     "pad_1": {
+      "id": "D3",
+      "center": {
+       "id": "P19",
+       "xy": [
+        35.0,
+        20.0
+       ]
+      },
+      "width": 1.0,
+      "height": 0.6,
+      "layer": 2,
+      "shape": "rect"
+     }
+    },
+    "constraints": {
+     "track_width": 0.4,
+     "clearance": 0.25,
+     "via_diameter": 0.8,
+     "via_drill": 0.4
+    }
+   }
+  },
+  "obstacles": {
+   "obs_0": {
+    "id": "O0",
+    "center": {
+     "id": "P20",
+     "xy": [
+      20.0,
+      20.0
+     ]
+    },
+    "width": 2.0,
+    "height": 1.0,
+    "layer": 1,
+    "shape": "rect"
+   },
+   "obs_1": {
+    "id": "O1",
+    "center": {
+     "id": "P21",
+     "xy": [
+      33.0,
+      33.0
+     ]
+    },
+    "width": 2.0,
+    "height": 2.0,
+    "layer": 2,
+    "shape": "polygon",
+    "pts": [
+     [
+      32.0,
+      32.0
+     ],
+     [
+      34.0,
+      32.0
+     ],
+     [
+      34.0,
+      34.0
+     ],
+     [
+      32.0,
+      34.0
+     ]
+    ]
+   }
+  },
+  "unconnected_pads": {
+   "upad_0": {
+    "id": "U0",
+    "center": {
+     "id": "P22",
+     "xy": [
+      2.0,
+      38.0
+     ]
+    },
+    "width": 0.8,
+    "height": 0.8,
+    "layer": 1,
+    "shape": "rect"
+   }
+  },
+  "board_constraints": {
+   "clearance_mm": 0.2,
+   "track_width_mm": 0.2,
+   "via_diameter_mm": 0.6,
+   "via_drill_mm": 0.3,
+   "uvia_diameter_mm": 0.3,
+   "uvia_drill_mm": 0.1
+  }
+ },
+ "routing_geometry": {
+  "net_1": {
+   "tracks": {
+    "track_0": {
+     "id": "T0",
+     "p1": {
+      "id": "P23",
+      "xy": [
+       20.0,
+       5.0
+      ]
+     },
+     "p2": {
+      "id": "P24",
+      "xy": [
+       20.0,
+       8.5
+      ]
+     },
+     "width": 0.2,
+     "layer": 1
+    }
+   },
+   "vias": {
+    "via_0": {
+     "id": "V0",
+     "center": {
+      "id": "P24",
+      "xy": [
+       20.0,
+       8.5
+      ]
+     },
+     "layer_start": 1,
+     "layer_end": 2,
+     "via_width": 0.6
+    }
+   },
+   "points": [
+    {
+     "id": "Q0",
+     "xy": [
+      20.0,
+      5.0
+     ],
+     "layer": 1
+    },
+    {
+     "id": "Q1",
+     "xy": [
+      20.0,
+      35.0
+     ],
+     "layer": 1
+    }
+   ]
+  },
+  "net_2": {
+   "tracks": {},
+   "vias": {},
+   "points": [
+    {
+     "id": "Q2",
+     "xy": [
+      5.0,
+      20.0
+     ],
+     "layer": 0
+    },
+    {
+     "id": "Q3",
+     "xy": [
+      35.0,
+      20.0
+     ],
+     "layer": 2
+    }
+   ]
+  }
+ },
+ "router_head": {
+  "current_xy": [
+   0.0,
+   0.0
+  ],
+  "current_layer": -1,
+  "current_net": 1,
+  "router_state_code": 0,
+  "via_toggle": false,
+  "is_routing": false,
+  "is_dragging": false,
+  "routing_mode": 2,
+  "current_net_phase": 1,
+  "step": 5,
+  "step_ratio": 0.1,
+  "steps_remaining": 45
+ },
+ "drc_violations": [
+  {
+   "x_mm": 20.0,
+   "y_mm": 5.0,
+   "layer": -1,
+   "error_type": "Missing connection between items",
+   "type_id": 6,
+   "severity": 32,
+   "net_names": [
+    "NET1"
+   ]
+  }
+ ],
+ "action_history": [
+  {
+   "action_type": 3,
+   "pointer_xy": [
+    21.0,
+    6.0
+   ],
+   "pointer_layer": 0,
+   "routing_mode": 2,
+   "has_pointer": true,
+   "success": true,
+   "net_id": 1
+  }
+ ],
+ "closed_nets": [
+  3
+ ]
+}

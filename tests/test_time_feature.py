@@ -65,8 +65,8 @@ class TestObsStepsRemaining:
 def _tokenizer_pair(seed: int = 0, cap: int = 10000):
     """Two tokenizers with identical weights, differing only in mode."""
     torch.manual_seed(seed)
-    legacy = BatchedStateTokenizer(d_model=64, n_freq=8)
-    log_rem = BatchedStateTokenizer(d_model=64, n_freq=8,
+    legacy = BatchedStateTokenizer(disable_slot_emb=False, d_model=64, n_freq=8)
+    log_rem = BatchedStateTokenizer(disable_slot_emb=False, d_model=64, n_freq=8,
                                     time_feature="log_remaining",
                                     time_feature_cap=cap)
     log_rem.load_state_dict(legacy.state_dict())
@@ -78,7 +78,7 @@ def _tokenizer_pair(seed: int = 0, cap: int = 10000):
 class TestTokenizerTimeFeature:
     def test_invalid_mode_rejected(self):
         with pytest.raises(ValueError, match="time_feature"):
-            BatchedStateTokenizer(time_feature="remaining")
+            BatchedStateTokenizer(disable_slot_emb=False, time_feature="remaining")
 
     def test_state_dict_identical_across_modes(self):
         legacy, log_rem = _tokenizer_pair()
@@ -90,8 +90,8 @@ class TestTokenizerTimeFeature:
         embedding — two obs differing only in time must produce
         bit-identical token embeddings."""
         torch.manual_seed(0)
-        legacy = BatchedStateTokenizer(d_model=64, n_freq=8)
-        blind = BatchedStateTokenizer(d_model=64, n_freq=8,
+        legacy = BatchedStateTokenizer(disable_slot_emb=False, d_model=64, n_freq=8)
+        blind = BatchedStateTokenizer(disable_slot_emb=False, d_model=64, n_freq=8,
                                       time_feature="none")
         blind.load_state_dict(legacy.state_dict())  # checkpoint-compatible (identical weight shapes)
         blind.eval()
@@ -158,7 +158,7 @@ class TestTokenizerTimeFeature:
 # ===================================================================
 def _sin_tokenizer(seed: int = 0, cap: int = 10000, n_freq: int = 8):
     torch.manual_seed(seed)
-    tok = BatchedStateTokenizer(d_model=64, n_freq=n_freq,
+    tok = BatchedStateTokenizer(disable_slot_emb=False, d_model=64, n_freq=n_freq,
                                 time_feature="sin_remaining",
                                 time_feature_cap=cap)
     tok.eval()
@@ -226,19 +226,25 @@ class TestSinRemaining:
 # ===================================================================
 class TestPolicyConfigTimeFeature:
     def test_old_checkpoint_defaults_to_step_ratio(self):
-        cfg = RLPolicyConfig.from_checkpoint({})
+        from tests.helpers.ckpt_payload import ckpt_config
+
+        cfg = RLPolicyConfig.from_checkpoint(ckpt_config("kdd_2026_05"))
         assert cfg.time_feature == "step_ratio"
         assert cfg.time_feature_cap == 10000
 
     def test_checkpoint_roundtrip(self):
+        from tests.helpers.ckpt_payload import ckpt_config
+
         cfg = RLPolicyConfig.from_checkpoint(
-            {"time_feature": "log_remaining", "time_feature_cap": 2048})
+            ckpt_config(time_feature="log_remaining", time_feature_cap=2048))
         assert cfg.time_feature == "log_remaining"
         assert cfg.time_feature_cap == 2048
 
     def test_checkpoint_roundtrip_sin_remaining(self):
+        from tests.helpers.ckpt_payload import ckpt_config
+
         cfg = RLPolicyConfig.from_checkpoint(
-            {"time_feature": "sin_remaining", "time_feature_cap": 4096})
+            ckpt_config(time_feature="sin_remaining", time_feature_cap=4096))
         assert cfg.time_feature == "sin_remaining"
         assert cfg.time_feature_cap == 4096
 
@@ -248,7 +254,8 @@ class TestPolicyConfigTimeFeature:
         checkpoints keep working."""
         from methods.rl_agent.models.v1.net import KiCadRLModel
 
-        common = dict(d_model=32, n_heads=4, n_layers=1, d_ff=64, n_freq=4)
+        common = dict(d_model=32, n_heads=4, n_layers=1, d_ff=64, n_freq=4, policy_net_select=False,
+                      disable_slot_emb=False)
         old = KiCadRLModel(**common)
         for mode in ("log_remaining", "sin_remaining"):
             new = KiCadRLModel(time_feature=mode,

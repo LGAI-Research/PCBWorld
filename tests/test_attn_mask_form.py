@@ -35,7 +35,7 @@ def _kpm(seq_lens: list[int], width: int) -> torch.Tensor:
 
 
 def _tiny_policy() -> KiCadRLModel:
-    return KiCadRLModel(d_model=32, n_heads=4, n_layers=2, d_ff=64,
+    return KiCadRLModel(disable_slot_emb=False, policy_net_select=False, d_model=32, n_heads=4, n_layers=2, d_ff=64,
                         max_seq_len=2000, n_freq=4)
 
 
@@ -102,7 +102,7 @@ class TestStatePassEquivalence:
         obs_list = [make_mock_obs(n_nets=2, pads_per_net=2, n_ratsnest_per_net=1),
                     make_mock_obs(n_nets=3, pads_per_net=3, n_ratsnest_per_net=2)]
         with torch.no_grad():
-            enc_new = model._encode_state(obs_list, return_cache=False)
+            enc_new = model._encode_state(obs_list, action_masks=None, return_cache=False)
 
         # Force the legacy dense mask back in and re-encode.
         def _dense(kpm, dtype):
@@ -110,7 +110,7 @@ class TestStatePassEquivalence:
             return combine_masks(build_2zone_mask(L, L), kpm).to(dtype)
         monkeypatch.setattr(net_mod, "padding_attn_mask", _dense)
         with torch.no_grad():
-            enc_ref = model._encode_state(obs_list, return_cache=False)
+            enc_ref = model._encode_state(obs_list, action_masks=None, return_cache=False)
 
         assert torch.equal(enc_new.H_state, enc_ref.H_state)
         assert torch.equal(enc_new.values, enc_ref.values)
@@ -123,7 +123,7 @@ class TestStatePassEquivalence:
         monkeypatch.setattr(net_mod, "combine_masks", _boom)
         model = _tiny_policy()
         with torch.no_grad():
-            model._encode_state([make_mock_obs(n_nets=2)], return_cache=False)
+            model._encode_state([make_mock_obs(n_nets=2)], action_masks=None, return_cache=False)
 
 
 class TestPaddingIsInert:

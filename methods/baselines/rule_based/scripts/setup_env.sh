@@ -135,14 +135,9 @@ echo "  freerouting: jar ok ($((FR_JAR_SIZE / 1024 / 1024)) MB)"
 java -Djava.awt.headless=true -jar "${FR_JAR}" --help 2>&1 | head -3 \
     || echo "  freerouting: warning — --help returned non-zero (some versions exit 1 on help)"
 
-# KRT thin wrapper. Default: the pinned external/ checkout
-# (tools/setup/fetch_baselines.sh); when absent, the krt_tool entry of
-# configs/paths.yaml (resolved under the shared data root).
-KRT_ROOT_DEFAULT="${EXTERNAL_DIR}/KiCadRoutingTools"
-if [ -z "${KRT_ROOT:-}" ] && [ ! -f "${KRT_ROOT_DEFAULT}/route.py" ]; then
-    KRT_ROOT_DEFAULT="$(PYTHONPATH="${REPO_ROOT}" "${PY}" -m configs.loader.paths resolve krt_tool)"
-fi
-KRT_ROOT="${KRT_ROOT:-${KRT_ROOT_DEFAULT}}"
+# KRT thin wrapper: KRT_ROOT, else the pinned external/ checkout
+# (tools/setup/fetch_baselines.sh).
+KRT_ROOT="${KRT_ROOT:-${EXTERNAL_DIR}/KiCadRoutingTools}"
 if [ ! -f "${KRT_ROOT}/route.py" ]; then
     echo "  krt: ERROR — ${KRT_ROOT}/route.py missing (run tools/setup/fetch_baselines.sh or set KRT_ROOT)" >&2
     exit 1
@@ -161,7 +156,6 @@ echo "=== all set ==="
 echo
 echo "Example invocations:"
 echo "  python ${BASELINES_DIR}/run_rule_based_routers.py --baseline freerouting --dataset synthetic_2l --limit 5"
-echo "  python ${BASELINES_DIR}/run_rule_based_routers.py --baseline krt        --dataset pcbench      --limit 5"
-echo "  python ${BASELINES_DIR}/run_rule_based_routers.py --baseline orthoroute --dataset synthetic_2l --limit 5"
+echo "  python ${BASELINES_DIR}/run_rule_based_routers.py --baseline krt        --dataset pcbench --difficulty easy --limit 5"
 echo
 echo "See ${BASELINES_DIR}/README.md for full CLI / env-var documentation."

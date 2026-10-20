@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from tests.helpers.engine import open_engine
 
 # ---------------------------------------------------------------------------
 # 1. pcb_file_parser — engine-backed dict view
@@ -33,9 +34,8 @@ class TestPcbFileParser:
 
     @pytest.fixture
     def parsed(self):
-        from pcb_world.engine.kicad_engine import KiCadEngine
         from pcb_world.engine.pcb_file_parser import parse_pcb_file
-        engine = KiCadEngine(BOARD_PATH)
+        engine = open_engine(BOARD_PATH)
         try:
             return parse_pcb_file(BOARD_PATH, engine)
         finally:

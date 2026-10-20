@@ -89,51 +89,73 @@ class TestSetRoutingMode:
 
 
 class TestSetTrackWidth:
-    """set_track_width() before/after state tests."""
+    """set_track_width() before/after state tests (a session override)."""
 
     def test_set_width_custom(self, router) -> None:
+        router.start_route(START[0], START[1], 0)
         before = capture_state(router)
         router.set_track_width(0.25)
         after = capture_state(router)
-        assert_state_unchanged(before, after)
+        assert_routing_active(after)
+        assert before["track_count"] == after["track_count"]
+        assert router.get_route_sizes()[0] == pytest.approx(0.25)
+        router.cancel_route()
 
-    def test_set_width_zero_uses_design_rules(self, router) -> None:
+    def test_set_width_zero_raises(self, router) -> None:
+        router.start_route(START[0], START[1], 0)
         before = capture_state(router)
-        router.set_track_width(0)
+        with pytest.raises(ValueError, match="track width must be > 0"):
+            router.set_track_width(0)
+        after = capture_state(router)
+        assert_state_unchanged(before, after)
+        router.cancel_route()
+
+    def test_set_width_while_idle_raises(self, router) -> None:
+        before = capture_state(router)
+        with pytest.raises(RuntimeError, match="while a route is in progress"):
+            router.set_track_width(0.25)
         after = capture_state(router)
         assert_state_unchanged(before, after)
 
 
 class TestSetViaDiameter:
-    """set_via_diameter() before/after state tests."""
+    """set_via_diameter() before/after state tests (a session override)."""
 
-    def test_set_via_diameter(self, router) -> None:
+    @pytest.mark.parametrize("diameter_mm", [0.8, 0.4])
+    def test_set_via_diameter(self, router, diameter_mm) -> None:
+        router.start_route(START[0], START[1], 0)
         before = capture_state(router)
-        router.set_via_diameter(0.8)
+        router.set_via_diameter(diameter_mm)
         after = capture_state(router)
-        assert_state_unchanged(before, after)
+        assert before["track_count"] == after["track_count"]
+        assert router.get_route_sizes()[1] == pytest.approx(diameter_mm)
+        router.cancel_route()
 
-    def test_set_via_diameter_small(self, router) -> None:
+    def test_set_via_diameter_while_idle_raises(self, router) -> None:
         before = capture_state(router)
-        router.set_via_diameter(0.4)
-        after = capture_state(router)
-        assert_state_unchanged(before, after)
+        with pytest.raises(RuntimeError, match="while a route is in progress"):
+            router.set_via_diameter(0.8)
+        assert_state_unchanged(before, capture_state(router))
 
 
 class TestSetViaDrill:
-    """set_via_drill() before/after state tests."""
+    """set_via_drill() before/after state tests (a session override)."""
 
-    def test_set_via_drill(self, router) -> None:
+    @pytest.mark.parametrize("drill_mm", [0.4, 0.2])
+    def test_set_via_drill(self, router, drill_mm) -> None:
+        router.start_route(START[0], START[1], 0)
         before = capture_state(router)
-        router.set_via_drill(0.4)
+        router.set_via_drill(drill_mm)
         after = capture_state(router)
-        assert_state_unchanged(before, after)
+        assert before["track_count"] == after["track_count"]
+        assert router.get_route_sizes()[2] == pytest.approx(drill_mm)
+        router.cancel_route()
 
-    def test_set_via_drill_small(self, router) -> None:
+    def test_set_via_drill_while_idle_raises(self, router) -> None:
         before = capture_state(router)
-        router.set_via_drill(0.2)
-        after = capture_state(router)
-        assert_state_unchanged(before, after)
+        with pytest.raises(RuntimeError, match="while a route is in progress"):
+            router.set_via_drill(0.4)
+        assert_state_unchanged(before, capture_state(router))
 
 
 # ──────────────────────────────────────────────
@@ -332,24 +354,42 @@ class TestFlipPosture:
         router.cancel_route()
 
 
-class TestToggleVia:
-    """toggle_via() before/after state tests."""
+class TestSetViaPlacement:
+    """set_via_placement() before/after state tests."""
 
-    def test_toggle_via_flips_placing_via(self, router) -> None:
+    def test_set_via_placement_on_while_routing(self, router) -> None:
         router.start_route(START[0], START[1], 0)
-        before_via = router.is_placing_via()
-        router.toggle_via()
-        after_via = router.is_placing_via()
-        assert before_via != after_via
+        assert router.is_placing_via() is False
+        before = capture_state(router)
+        router.set_via_placement(True)
+        after = capture_state(router)
+        assert router.is_placing_via() is True
+        assert_routing_active(after)
+        assert before["track_count"] == after["track_count"]
         router.cancel_route()
 
-    def test_toggle_via_twice_restores(self, router) -> None:
+    def test_set_via_placement_off_restores(self, router) -> None:
         router.start_route(START[0], START[1], 0)
-        original = router.is_placing_via()
-        router.toggle_via()
-        router.toggle_via()
-        assert router.is_placing_via() == original
+        router.set_via_placement(True)
+        router.set_via_placement(False)
+        assert router.is_placing_via() is False
+        assert_routing_active(capture_state(router))
         router.cancel_route()
+
+    def test_set_via_placement_same_state_is_noop(self, router) -> None:
+        router.start_route(START[0], START[1], 0)
+        router.set_via_placement(True)
+        router.set_via_placement(True)
+        assert router.is_placing_via() is True
+        router.cancel_route()
+
+    def test_set_via_placement_on_without_route_raises(self, router) -> None:
+        before = capture_state(router)
+        with pytest.raises(RuntimeError, match="while a route is in progress"):
+            router.set_via_placement(True)
+        after = capture_state(router)
+        assert_state_unchanged(before, after)
+        assert router.is_placing_via() is False
 
 
 class TestSwitchLayer:

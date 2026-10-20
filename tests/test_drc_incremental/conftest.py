@@ -6,13 +6,13 @@ tests/helpers/drc_keying.py.
 """
 import pytest
 
-from pcb_world.engine.kicad_engine import KiCadEngine
 from tests.helpers.drc_keying import BOARD
+from tests.helpers.engine import open_engine
 
 
 @pytest.fixture
 def engine():
-    e = KiCadEngine(BOARD)
+    e = open_engine(BOARD)
     e.build_connectivity()
     yield e
     e.close()

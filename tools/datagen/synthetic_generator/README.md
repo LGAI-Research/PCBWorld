@@ -15,7 +15,7 @@ One generator; everything else wraps it or post-processes its output.
 | [outline_geometry.py](outline_geometry.py) | `--geo` geometry: 4 outline kinds (rect / corner-fillet arc / rectilinear polygon / circle), internal cutouts, NPTH holes, oval slots, diversified THT pads, placement keepout and capacity derate. Distribution constants come from a census of the real d3a/d3b boards. The board box is `w×h`, so `--aspect-sigma` stretches outline, holes, slots and cutouts together — only circles keep a square bbox (they use the geometric-mean side). |
 | [generate_grid_boards.py](generate_grid_boards.py) | Derives grid spacing / clearance / trace_width / pad_size / min_sep from the single `--grid N` argument. |
 | [migrate_dataset_to_pro.py](migrate_dataset_to_pro.py) | Strips the `(net_class …)` blocks and emits a companion `.kicad_pro` (v2 format): one engine round-trip for a template, then bulk text edits. **Shared-rule datasets only.** |
-| [convert_pernet_to_pro.py](convert_pernet_to_pro.py) | Per-board engine round-trip (`KiCadEngine(board).save()`) emitting a `.kicad_pro` that holds per-net rules — required for D2-B/D2-B-V, and doubling as an engine-load smoke test over every board. Failures that appear at high worker counts get one 4-worker retry pass; anything still failing exits 1. |
+| [convert_pernet_to_pro.py](convert_pernet_to_pro.py) | Per-board engine round-trip (`load_and_save_via_engine`) emitting a `.kicad_pro` that holds per-net rules — required for D2-B/D2-B-V, and doubling as an engine-load smoke test over every board. Failures that appear at high worker counts get one 4-worker retry pass; anything still failing exits 1. |
 
 ## Orchestrators
 

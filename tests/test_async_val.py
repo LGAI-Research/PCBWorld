@@ -8,6 +8,7 @@ W&B-style sinks get one merged row via add_scalars_async).
 """
 import json
 
+import pytest
 import torch
 
 from methods._shared.logger import MultiLogger, _ASYNC_STEP_KEY
@@ -211,7 +212,9 @@ def test_finish_async_val_marks_done_only_when_completed(tmp_path, capsys):
 
 def test_load_recorded_val_env(tmp_path, capsys):
     """Input to the watcher's env-records cross-check: load the record, or return
-    None with a loud skip when it is absent."""
+    None with a loud skip when it is absent; keys it predates are filled and
+    named, and an empty (truncated) record raises."""
+    import yaml
     from methods.rl_agent.training.async_val import load_recorded_val_env
 
     assert load_recorded_val_env(tmp_path) is None      # pre-records save_dir
@@ -220,4 +223,69 @@ def test_load_recorded_val_env(tmp_path, capsys):
     rec = tmp_path / "env_records"
     rec.mkdir()
     (rec / "val_env.yaml").write_text("max_steps: 20\nseed: 7\n")
-    assert load_recorded_val_env(tmp_path) == {"max_steps": 20, "seed": 7}
+    from configs.loader.ckpt import with_legacy_env_defaults
+    got = load_recorded_val_env(tmp_path)
+    assert got == with_legacy_env_defaults({"max_steps": 20, "seed": 7})
+    assert got["max_steps"] == 20 and got["seed"] == 7
+    assert "predates" in (out := capsys.readouterr().out) and "net_reselect" in out
+
+    (rec / "val_env.yaml").write_text(yaml.safe_dump(got))   # complete record: no note
+    assert load_recorded_val_env(tmp_path) == got
+    assert "predates" not in capsys.readouterr().out
+
+    (rec / "val_env.yaml").write_text("")
+    with pytest.raises(ValueError, match="not an env-kwargs mapping"):
+        load_recorded_val_env(tmp_path)
+
+
+def test_val_run_record_missing_a_key_is_filled_at_any_version(tmp_path, capsys):
+    """A run_record.val.yaml written before a knob existed lacks the key: the watcher fills it
+    through the same migration table as an old env_records/ file, whatever version the record
+    names (public and private version lines differ, so the version proves nothing)."""
+    import yaml
+    from configs.loader.record import VAL_RUN_RECORD
+    from methods.rl_agent.training.async_val import load_recorded_val_env
+
+    from configs.loader.schema import RLEnvConfig
+
+    values = {k: v for k, v in RLEnvConfig().to_record().items() if k != "trim_at_contact"}
+    values["max_steps"] = 20
+    for version in ("1.0.1", "1.6.4", "9.9.9"):
+        (tmp_path / VAL_RUN_RECORD).write_text(yaml.safe_dump({
+            "code": {"repo_version": version}, "config": {k: {"value": v} for k, v in values.items()},
+            "extra": {"seed": 7, "policy_net_select": False}}))
+        got = load_recorded_val_env(tmp_path)
+        assert (got["max_steps"], got["seed"], got["trim_at_contact"]) == (20, 7, False)
+        assert "predates" in (out := capsys.readouterr().out) and "trim_at_contact" in out
+
+
+def test_record_predating_a_knob_passes_the_cross_check(tmp_path):
+    """A run recorded before a knob existed (its val_env.yaml lacks the key) is
+    rebuilt with the knob's pre-knob value, so the watcher's cross-check must
+    compare against that value instead of failing on the missing key — and still
+    fail when the rebuilt env really differs."""
+    import yaml
+    from configs.loader.schema import RLEnvConfig
+    from eval.rollout.rl import assert_env_kwargs_as_recorded
+    from methods.rl_agent.training.async_val import load_recorded_val_env
+
+    from tests.helpers.ckpt_payload import ckpt_config
+
+    from methods.rl_agent.wrappers.factory import env_record
+
+    actual = env_record(RLEnvConfig.from_checkpoint(ckpt_config(), max_steps=64),
+                        seed=7, policy_net_select=False)
+    # A record from before net_reselect and before v1.6.4 (no engine knobs, no train layer).
+    old_record = {k: v for k, v in actual.items() if k not in
+                  {"net_reselect", "engine_seed", "shove_iter_limit", "followbranch_iter_limit",
+                   "reject_if_stuck", "trim_at_contact", "reward_noise_std", "aug_bbox_shifted",
+                   "aug_flip", "aug_rotate", "aug_trans", "aug_zoom"}}
+    rec = tmp_path / "env_records"
+    rec.mkdir()
+    (rec / "val_env.yaml").write_text(yaml.safe_dump(old_record))
+
+    recorded = load_recorded_val_env(tmp_path)
+    assert recorded["net_reselect"] is False
+    assert_env_kwargs_as_recorded(actual, recorded)
+    with pytest.raises(RuntimeError, match="startup record"):
+        assert_env_kwargs_as_recorded({**actual, "net_reselect": True}, recorded)

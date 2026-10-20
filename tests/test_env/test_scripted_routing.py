@@ -33,6 +33,7 @@ import os
 
 import pytest
 
+from configs.loader.schema import EnvConfig
 from pcb_world.engine import engine_available
 
 from pcb_world.core.action_schema import (
@@ -102,7 +103,7 @@ def env():
     _skip_if_unavailable()
     from pcb_world.core.env import PCBWorld
 
-    e = PCBWorld(board_path=BOARD_PATH, max_steps=60, masking_rule="default")  # the paper rule: finish available
+    e = PCBWorld(BOARD_PATH, EnvConfig.with_overrides(max_steps=60, masking_rule="default"))  # the paper rule: finish available
     e.reset()
     yield e
     e.close()

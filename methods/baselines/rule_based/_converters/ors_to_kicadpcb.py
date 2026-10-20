@@ -8,7 +8,6 @@ just before the closing ')' of the kicad_pcb root S-expression.
 KiCad 9 PCB files are S-expression text. This is a lossless append: every
 existing token in the source PCB is preserved verbatim.
 """
-import argparse
 import gzip
 import json
 import re
@@ -144,7 +143,8 @@ def convert(ors_path: Path, base_pcb: Path, out_pcb: Path):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    from configs.loader.cli import StrictArgumentParser
+    ap = StrictArgumentParser(description=__doc__)
     ap.add_argument('ors')
     ap.add_argument('base_pcb')
     ap.add_argument('output')

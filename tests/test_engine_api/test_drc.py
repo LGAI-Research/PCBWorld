@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests.helpers.engine import open_engine
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "build_rl" / "pcbnew" / "python" / "rl"))
@@ -83,8 +84,7 @@ class TestRunDRC:
         
 class TestDRCUtils:
     def test_drc(self, board_path: str) -> None:
-        from pcb_world.engine.kicad_engine import KiCadEngine
-        engine = KiCadEngine(board_path)
+        engine = open_engine(board_path)
         drc_run = engine.run_drc(str(BOARD["dru"]))
         drc_cached = engine.drc_helper.get_violations()
         assert drc_run == drc_cached

@@ -16,11 +16,13 @@ from __future__ import annotations
 import os
 import time
 from abc import abstractmethod
+from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
 import torch
 
+from configs.loader.ckpt import ckpt_entries
 from methods.rl_agent.algorithms._common import policy_update_loop
 from methods.rl_agent.wrappers.factory import make_decoder_env, make_decoder_env_pool
 from methods.rl_agent.training.utils import auto_device
@@ -54,92 +56,90 @@ def load_eval_boards(args):
     return eval_boards
 
 
-def build_evaluators(args, agent, device, eval_boards, *, mem_budget=None,
+def val_env_config(args, user=()):
+    """The validation env config of a training config ``args``: the training env (minus the
+    train-only layer) resolved once in mode ``eval`` (``eval.rollout.rl.resolve_eval_env``),
+    ``user`` layers on top. The trainer and the ``--async-val`` watcher build it once and hand
+    it to :func:`build_evaluators` and the validation run record."""
+    from configs.loader.schema import RLEnvConfig
+    from eval.rollout.rl import resolve_eval_env
+
+    return resolve_eval_env(RLEnvConfig.from_namespace(args), step_drc=True,
+                            where="the training run's config", user=user)
+
+
+def diag_env_config(args):
+    """The diagnostic eval sets' (eval2..eval5) env config, or None when the run pins no
+    diagnostic protocol: ``--eval-diag-max-steps`` / ``--eval-diag-masking-rule`` pin it
+    cell-independently (rules/experiments.md §6: inline eval otherwise inherits the TRAIN env
+    config, so cells varying max_steps or masking would silently change their own
+    diagnostics) — an eval-mode override layer of :func:`val_env_config`. Primary val and
+    val_greedy stay native. Shared by :func:`build_evaluators` and the queue watcher."""
+    from configs.loader.resolve import Layer
+
+    diag = {k: v for k, v in (("max_steps", args.eval_diag_max_steps),
+                              ("masking_rule", args.eval_diag_masking_rule)) if v is not None}
+    if not diag:
+        return None
+    return val_env_config(args, user=[Layer("code:methods/rl_agent/training/loop.py", diag,
+                                            where={k: f"--eval-diag-{k.replace('_', '-')}" for k in diag})])
+
+
+def build_evaluators(args, agent, device, eval_boards, *, val_env, mem_budget=None,
                      expect_env_kwargs=None):
     """Primary + diagnostic (eval2..eval5) Evaluators over one shared rollout fn.
 
     The single construction point for in-training validation — used by the
     trainer's ``_setup_evaluator`` AND the ``--async-val`` watcher, so the eval
-    semantics (step_drc, seeds, batching) cannot drift between them. Returns
-    ``(primary_evaluator, [(prefix, evaluator), ...])``.
+    semantics (seeds, batching) cannot drift between them. ``val_env`` is
+    :func:`val_env_config` of ``args`` (resolved once by the caller). Validation always
+    MEASURES DRC (``step_drc=True`` there) so val metrics (drc_violations,
+    final_potential) are comparable across cells; ``--no-drc-tokens`` only suppresses
+    the DRC *observation* tokens. Returns ``(primary_evaluator, [(prefix, evaluator), ...])``.
     """
     from pathlib import Path
 
     from eval.evaluator import Evaluator
-    from eval.rollout.rl import eval_transformer
+    from eval.rollout.rl import eval_env_config, eval_transformer
     from methods._shared.board_loader import load_boards_from_dir_or_list
-    from methods.rl_agent.models.loader import env_kwargs_from_training_args
+
+    env_config = eval_env_config(val_env)
+
+    def _rollout(boards, config, *, n_rollouts=args.eval_n_rollouts, deterministic=False, **kw):
+        return eval_transformer(
+            agent, device, boards, env_config=config,
+            n_rollouts=n_rollouts, n_envs=args.n_envs,
+            base_seed=args.eval_base_seed, max_steps=config.env.max_steps,
+            deterministic=deterministic, boards_per_batch=args.eval_boards_per_batch,
+            final_drc=False, save_artifacts=False, mem_budget=mem_budget, **kw)
 
     def _rollout_fn(boards):
-        return eval_transformer(
-            agent, device, boards,
-            env_kwargs=env_kwargs_from_training_args(args),
-            n_rollouts=args.eval_n_rollouts, n_envs=args.n_envs,
-            base_seed=args.eval_base_seed, max_steps=args.max_steps,
-            boards_per_batch=args.eval_boards_per_batch,
-            # Always MEASURE DRC in validation (step_drc=True) so val metrics
-            # (drc_violations, final_potential) are comparable across cells.
-            # The --no-drc-tokens axis only suppresses DRC *observation* tokens
-            # (env_kwargs handles that via emit_drc_tokens=not no_drc_tokens);
-            # it has no effect on the DRC reward computed here.
-            step_drc=True, final_drc=False,
-            save_artifacts=False,
-            mem_budget=mem_budget,
-            # Cross-check the trainer's startup record against what validation
-            # actually builds — the record is a prediction until a real pool
-            # confirms it.
-            expect_env_kwargs=expect_env_kwargs,
-        )
+        # Cross-check the trainer's startup record against what validation actually
+        # builds — the record is a prediction until a real pool confirms it.
+        return _rollout(boards, env_config, expect_env_kwargs=expect_env_kwargs)
 
     evaluator = Evaluator(_rollout_fn, eval_boards)
 
     # Optional diagnostic eval sets (eval2..eval5): fixed board-lists (e.g.
-    # real d3-b / d3-a) evaluated each cadence under <prefix>/*. Reuse
-    # _rollout_fn (same agent / env_kwargs), only the board list differs;
-    # do NOT drive best-ckpt. Disabled (backward-compatible) when unset.
-    #
-    # --eval-diag-max-steps / --eval-diag-masking-rule pin the diagnostic
-    # protocol cell-independently (rules/experiments.md §6: inline eval
-    # otherwise inherits the TRAIN env_kwargs, so cells varying max_steps or
-    # masking would silently change their own diagnostics). Primary val and
-    # val_greedy stay native — they drive/read best-ckpt under the run's own
-    # protocol.
-    diag_max_steps = getattr(args, "eval_diag_max_steps", None)
-    diag_masking = getattr(args, "eval_diag_masking_rule", None)
-    if diag_max_steps is None and diag_masking is None:
+    # real d3-b / d3-a) evaluated each cadence under <prefix>/*. Same agent, only the
+    # board list and (with --eval-diag-*) the protocol differ; they do NOT drive best-ckpt.
+    diag_run = diag_env_config(args)
+    if diag_run is None:
         _rollout_fn_diag = _rollout_fn
     else:
-        diag_env_kwargs = env_kwargs_from_training_args(args)
-        eff_max_steps = (
-            int(diag_max_steps) if diag_max_steps is not None else args.max_steps
-        )
-        diag_env_kwargs["max_steps"] = eff_max_steps
-        if diag_masking is not None:
-            diag_env_kwargs["masking_rule"] = str(diag_masking)
-        print(
-            "  diag eval override (eval2..eval5): "
-            f"max_steps={eff_max_steps} "
-            f"masking_rule={diag_env_kwargs['masking_rule']}"
-        )
+        diag_env = eval_env_config(diag_run)
+        print("  diag eval override (eval2..eval5): "
+              f"max_steps={diag_env.env.max_steps} masking_rule={diag_env.env.masking_rule}")
 
         def _rollout_fn_diag(boards):
-            return eval_transformer(
-                agent, device, boards,
-                env_kwargs=dict(diag_env_kwargs),
-                n_rollouts=args.eval_n_rollouts, n_envs=args.n_envs,
-                base_seed=args.eval_base_seed, max_steps=eff_max_steps,
-                boards_per_batch=args.eval_boards_per_batch,
-                step_drc=True, final_drc=False,
-                save_artifacts=False,
-                mem_budget=mem_budget,
-            )
+            return _rollout(boards, diag_env)
 
     extras = []
     for boards_file, pfx in (
         (args.eval2_boards, args.eval2_prefix),
         (args.eval3_boards, args.eval3_prefix),
-        (getattr(args, "eval4_boards", None), getattr(args, "eval4_prefix", "val_d2b")),
-        (getattr(args, "eval5_boards", None), getattr(args, "eval5_prefix", "val_d2a")),
+        (args.eval4_boards, args.eval4_prefix),
+        (args.eval5_boards, args.eval5_prefix),
     ):
         if not boards_file:
             continue
@@ -154,23 +154,44 @@ def build_evaluators(args, agent, device, eval_boards, *, mem_budget=None,
     # exploration noise (temperature-recoverable); val_greedy ≈
     # val/fp_mean_of_means → genuine uncertainty. Diagnostic only — best-ckpt
     # stays on the sampled val/*.
-    if eval_boards and not getattr(args, "no_eval_greedy", False):
+    if eval_boards and not args.no_eval_greedy:
         def _rollout_fn_greedy(boards):
-            return eval_transformer(
-                agent, device, boards,
-                env_kwargs=env_kwargs_from_training_args(args),
-                n_rollouts=1, n_envs=args.n_envs,
-                base_seed=args.eval_base_seed, max_steps=args.max_steps,
-                deterministic=True,
-                boards_per_batch=args.eval_boards_per_batch,
-                step_drc=True, final_drc=False,
-                save_artifacts=False,
-                mem_budget=mem_budget,
-            )
+            return _rollout(boards, env_config, n_rollouts=1, deterministic=True)
 
         extras.append(("val_greedy", Evaluator(_rollout_fn_greedy, eval_boards)))
         print(f"  inline eval (greedy argmax): {len(eval_boards)} boards -> val_greedy/*")
     return evaluator, extras
+
+
+def _split_identity(run_args: dict):
+    """(board ids, real dataset dir, board_filename) the training split of a run resolves to,
+    read with that run's own ``boards_*`` args; None when the file cannot be read that way."""
+    import json
+    from configs.loader.paths import expand_data_path
+
+    try:
+        with open(run_args["boards_json"]) as f:
+            data = json.load(f)
+        split = run_args["boards_split"]
+        ids = data[run_args["boards_difficulty"]][split]
+        ds = run_args.get("boards_dataset_dir") or data["dataset_dirs"][split]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return ids, os.path.realpath(expand_data_path(ds)), data.get("board_filename")
+
+
+def _board_list_digest(paths) -> str:
+    """Digest of a resolved board list, order included. The common directory is resolved
+    once (a symlinked data root and its target give the same digest); the rest is string work."""
+    import hashlib
+
+    paths = [os.path.abspath(str(p)) for p in paths]
+    root = os.path.dirname(paths[0]) if len(paths) == 1 else os.path.commonpath(paths)
+    cut = len(root.rstrip(os.sep) + os.sep)          # every path starts with root + sep
+    h = hashlib.sha256(os.path.realpath(root).encode())
+    for p in paths:
+        h.update(b"\0" + p[cut:].encode())
+    return h.hexdigest()[:16]
 
 
 class RLTrainer(Trainer):
@@ -179,9 +200,16 @@ class RLTrainer(Trainer):
     # --- subclass contract ---
     ALGO: str = "rl"
     USE_CRITIC: bool = True
-    ALLOWED_MISSING_KEYS: set[str] = {"prev_action", "history_age", "drc"}
+    # Checkpoint-load tolerance: a missing policy key is accepted when its name
+    # contains one of these substrings. Subclasses inherit it or assign
+    # ``RLTrainer.ALLOWED_MISSING_KEYS | {...}``; never repeat the base values. No
+    # ``history_age``: the run builds the checkpoint's action-history layout (an age-less
+    # checkpoint → a model without the age projection), so its keys are never missing.
+    ALLOWED_MISSING_KEYS: frozenset[str] = frozenset({"prev_action", "drc"})
 
     def __init__(self, args) -> None:
+        """``args``: the run's resolved config (``configs.loader.resolve.RunConfig``, frozen —
+        ``methods.rl_agent.training.args.resolve_train_args``)."""
         super().__init__(iterations=args.iterations,
                          max_wallclock_sec=getattr(args, "max_wallclock_sec", None))
         self.args = args
@@ -193,11 +221,12 @@ class RLTrainer(Trainer):
         self.envs = None
         self.boards = None
         self.eval_boards = None
+        self.val_env = None      # the validation env config (configs.loader.resolve.RunConfig)
         self._ckpt_stamp = None  # provenance + obs probe, built on first save
+        self._run_record_path = None   # <save-dir>/run_record*.yaml, written first in setup()
         # optional diagnostic eval sets [(prefix, Evaluator)] -> <prefix>/* (eval2..eval5)
         self.extra_evaluators = []
         self.eval_cadence = None
-        self._corner_mode_int = 0
         # Board scheduling: a methods._shared.board_scheduler.BoardScheduler built in
         # _setup_boards owns selection/RNG/epoch state. ``multi_board`` /
         # ``per_env_board`` are derived flags read by the no-vecenv guard.
@@ -231,16 +260,17 @@ class RLTrainer(Trainer):
         args = self.args
         self._setup_boards()
         self._setup_eval_boards()
+        self._refuse_resume_overwrite()
+        self._write_run_record()    # before any env / engine / model exists: survives a crash
+        self.val_env = val_env_config(args)
         self.device = auto_device(args.device)
         self._print_banner()
         self.setup_algo_state()  # algo pre-flight checks + algo state
 
         torch.manual_seed(args.seed)
         np.random.seed(args.seed)
-        from configs.loader.schema import corner_deg_to_code
-        self._corner_mode_int = corner_deg_to_code(args.corner_mode)
-
         self.envs = self._build_envs()
+        self._record_effective()
         self.policy = self._build_policy()
         # Inference facade (Agent layer): rollout collection and validation
         # act through this; gradient updates keep the raw model (self.policy).
@@ -277,6 +307,51 @@ class RLTrainer(Trainer):
             print("  [eval@init] evaluating initial policy at iteration 0 ...")
             self._run_dual_eval(0, {}, select_best=False)
 
+    def _refuse_resume_overwrite(self) -> None:
+        """A resume writes ``policy_iter_<N>.pt`` / ``policy_last.pt`` into ``save_dir`` from the
+        checkpoint's iteration + 1 on: a ``save_dir`` that already holds a later checkpoint (an
+        earlier checkpoint of the run resumed in place) is refused before anything is written."""
+        from pathlib import Path
+
+        args = self.args
+        if not args.resume:
+            return
+        it, save_dir = args.ckpt_meta["iteration"], Path(args.save_dir)
+        later = sorted(p.name for p in save_dir.glob("policy_iter_*.pt")
+                       if p.stem.removeprefix("policy_iter_").isdigit()
+                       and int(p.stem.removeprefix("policy_iter_")) > it)
+        last = save_dir / "policy_last.pt"
+        if last.is_file() and not last.samefile(args.resume):
+            last_it = int(torch.load(last, map_location="cpu", weights_only=False)["iteration"])
+            if last_it > it:
+                later.append(f"policy_last.pt (iteration {last_it})")
+        if later:
+            raise RuntimeError(
+                f"--resume {args.resume} (iteration {it}) would overwrite later checkpoints in "
+                f"save_dir {save_dir}: {', '.join(later)} — pass a fresh --save-dir")
+
+    def _write_run_record(self) -> None:
+        """``<save-dir>/run_record.yaml`` (a resumed run: ``run_record.resume_iter<N>.yaml``)."""
+        from configs.loader.record import board_record, run_record_filename, write_run_record
+
+        args = self.args
+        self._run_record_path = write_run_record(
+            os.path.join(args.save_dir, run_record_filename(args)), args,
+            boards=board_record(self.boards, board=args.board if args.boards_order == "single" else None,
+                                boards_json=args.boards_json,
+                                boards_dataset_dir=args.boards_dataset_dir),
+            readback=True, extra={"trainer": self.ALGO})
+
+    def _record_effective(self) -> None:
+        """Fill the run record's ``effective`` column from the first training env's sinks
+        (``PCBWorld.effective_config``; its constructor already raised on a mismatch)."""
+        from configs.loader.record import fill_effective
+
+        envs = self.envs
+        effective = (envs[0].effective_config() if isinstance(envs, list)
+                     else envs.env_method("effective_config", indices=[0])[0])
+        fill_effective(self._run_record_path, self.args, effective)
+
     def _setup_boards(self) -> None:
         args = self.args
         # Shared curriculum/sampling engine (methods._shared.board_scheduler) — same
@@ -305,20 +380,38 @@ class RLTrainer(Trainer):
         args = self.args
         self.eval_boards = None
         if args.eval_split is None:
-            if getattr(args, "async_val", False):
+            if args.async_val:
                 raise RuntimeError("--async-val requires --eval-split")
             return
         if args.boards_order not in ("round_robin", "per_env_random", "per_env_epoch"):
-            raise RuntimeError("--eval-split requires a multi-board --boards-order")
-        eval_boards = load_eval_boards(args)
-        if not getattr(args, "async_val", False):
+            # A single-board run has no --boards-json split: the default (or the resumed
+            # run's) eval_split is skipped, one asked for on this command line or recipe is an error.
+            source = args.provenance["eval_split"].source
+            if source.startswith(("cli", "recipe:", "code:")):
+                raise RuntimeError("--eval-split requires a multi-board --boards-order")
+            if args.async_val:
+                raise RuntimeError("--async-val requires a multi-board --boards-order")
+            print(f"  validation: off — single-board run (--boards-order {args.boards_order}); "
+                  f"eval_split={args.eval_split!r} ({source}) skipped", flush=True)
+            return
+        try:
+            eval_boards = load_eval_boards(args)
+        except ValueError as e:
+            source = args.provenance["eval_split"].source
+            if source.startswith(("cli", "recipe:", "code:")):
+                raise
+            raise RuntimeError(f"{e} — eval_split={args.eval_split!r} came from {source} "
+                               "(configs/rl.yaml rl_train.shared.eval_split); name a split of this "
+                               "--boards-json with --eval-split, or --no-eval-split to train "
+                               "without validation") from e
+        if not args.async_val:
             # Inline eval shares the trainer's env pool; the async watcher
             # sizes its own pool (--n-envs on the watcher).
             assert args.n_envs >= args.eval_n_rollouts, (
                 f"n_envs ({args.n_envs}) must be >= eval_n_rollouts "
                 f"({args.eval_n_rollouts}) for inline eval"
             )
-        mode = "async" if getattr(args, "async_val", False) else "inline"
+        mode = "async" if args.async_val else "inline"
         print(
             f"  {mode} eval: {len(eval_boards)} boards × "
             f"{args.eval_n_rollouts} rollouts after every full "
@@ -326,54 +419,14 @@ class RLTrainer(Trainer):
         )
         self.eval_boards = eval_boards
 
-    # Kwargs the TRAINING pool adds on top of the shared RLEnvConfig surface.
-    # Everything else comes from ``to_pool_kwargs()`` — the SAME dict val/eval
-    # builds — so a knob added there reaches training with no edit here.
-    #
-    # Until 2026-08-20 this method hand-listed all 28 kwargs, and five knobs
-    # (action_history_len / net_constraint_obs / outline_obs / simplify_outline
-    # / keep_routing_fraction) were never added to that list: training silently
-    # ran on the factory defaults while val used the CLI value (obs drift, 87
-    # affected runs). Keep this tuple minimal — every entry is a train/val
-    # difference that has to be declared at launch (--expect-env-diff).
-    #: Knobs that exist only while training — passed to the factory as one
-    #: explicit ``train_extras`` bundle. Eval omits the bundle entirely, so its
-    #: absence means "no training layer" rather than a silent per-knob default
-    #: (factory._TRAIN_EXTRAS). Every entry here is a train/val difference and
-    #: must be declared at launch via --expect-env-diff.
-    _TRAIN_EXTRAS_ARGS = (
-        "reward_noise_std",
-        "aug_bbox_shifted", "aug_flip", "aug_rotate", "aug_trans", "aug_zoom",
-    )
-
-    def _env_kwargs(self) -> dict:
-        """Training env kwargs = shared RLEnvConfig surface + train-only bundle.
-
-        ``seed`` / ``policy_net_select`` are NOT part of the bundle: eval passes
-        both explicitly too (eval.rollout.rl), so they are ordinary required
-        factory arguments whose *values* may differ.
-        """
-        from methods.rl_agent.models.loader import env_kwargs_from_training_args
-
-        args = self.args
-        kwargs = env_kwargs_from_training_args(args)
-        kwargs["seed"] = args.seed
-        kwargs["policy_net_select"] = args.policy_net_select
-        kwargs["train_extras"] = {
-            name: getattr(args, name) for name in self._TRAIN_EXTRAS_ARGS
-        }
-        # Training reloads a board into every worker each iteration, which
-        # rebuilds the wrapper — keep each worker's random stream moving across
-        # those rebuilds instead of rewinding it to its first draws. Eval pools
-        # leave this off so a board's rollout stays independent of board order,
-        # which is why it belongs in the train-only bundle rather than the
-        # shared surface.
-        kwargs["train_extras"]["advance_rng_on_reload"] = True
-        return kwargs
-
     def _build_envs(self):
+        from configs.loader.schema import RLEnvConfig
+
         args = self.args
-        kwargs = self._env_kwargs()
+        # The config validation builds plus the train-only layer (reward noise,
+        # augmentation): every train-only value is a train/val difference that has
+        # to be declared at launch (--expect-env-diff).
+        env_config = RLEnvConfig.for_training(args)
         if args.no_vecenv:
             if self.multi_board or self.per_env_board:
                 raise RuntimeError(
@@ -388,70 +441,47 @@ class RLTrainer(Trainer):
             ):
                 # The pool derives per-worker seeds as ``seed + i`` internally
                 # (factory.make_decoder_env_pool); do the same by hand here.
-                base_seed = kwargs.pop("seed")
                 return [
-                    make_decoder_env(self.initial_board, seed=base_seed + i, **kwargs)
+                    make_decoder_env(self.initial_board, env_config, seed=args.seed + i,
+                                     policy_net_select=args.policy_net_select)
                     for i in range(args.n_envs)
                 ]
-        return make_decoder_env_pool(self.initial_board, args.n_envs, **kwargs)
+        # Training reloads a board into every worker each iteration, which
+        # rebuilds the wrapper — keep each worker's random stream moving across
+        # those rebuilds instead of rewinding it to its first draws. Eval pools
+        # leave this off so a board's rollout stays independent of board order.
+        return make_decoder_env_pool(
+            self.initial_board, args.n_envs, env_config, seed=args.seed,
+            policy_net_select=args.policy_net_select, advance_rng_on_reload=True,
+        )
 
     def _record_env_contract(self) -> None:
-        """Dump what train/val envs were ACTUALLY built with, then gate the diff.
+        """Record the validation env, then gate its difference from the training env.
 
-        ``config_resolved.yaml`` records the parsed CLI namespace — the run's
-        *intent*. This records the *effect*: the kwargs the factory resolved for
-        training (snapshotted inside it, post-default) and the kwargs validation
-        will resolve for itself. The 2026-08-20 five-knob drift was invisible
-        precisely because only intent was ever stored.
-
-        The val side is computed, not guessed: ``resolve_eval_env_kwargs`` is the
-        same function ``eval_transformer`` calls, so no rollout is needed to know
-        what validation will build.
+        ``run_record.yaml`` holds the training run's config; ``run_record.val.yaml`` holds
+        what validation builds — ``self.val_env``, the config the evaluators build
+        (:func:`val_env_config`), so no rollout is needed to know it — with the validation
+        seed and ``policy_net_select``. The two env configs are compared key by key and every
+        difference must be declared at launch (``--expect-env-diff``): the 2026-08-20
+        five-knob drift was a silent train/val difference.
         """
-        from dataclasses import asdict
-
-        from configs.loader.schema import RLPolicyConfig
-        from eval.rollout.rl import resolve_eval_env_kwargs
-        from methods._shared.config_dump import (
-            check_expected_env_diff,
-            dump_env_records,
+        from configs.loader.record import (
+            VAL_RUN_RECORD, board_record, check_expected_env_diff, env_diff, write_run_record,
         )
-        from methods.rl_agent.models.loader import env_kwargs_from_training_args
+        from configs.loader.schema import RLEnvConfig
+        from eval.rollout.rl import eval_policy_net_select
 
         args = self.args
-        train_env = getattr(self.envs, "effective_env_kwargs", None)
-        if train_env is None:            # --no-vecenv: a plain list of wrappers
-            train_env = self._env_kwargs()
-        val_env = resolve_eval_env_kwargs(
-            env_kwargs_from_training_args(args), self.agent, step_drc=True,
-        )
-        # eval passes the seed as its own argument, not through the dict.
-        val_env["seed"] = args.eval_base_seed
-        self._recorded_val_env = dict(val_env)
-        # An all-default bundle IS "no training layer", which is exactly what
-        # val has — recording it as present would put train_extras in every
-        # run's diff and force a declaration that says nothing. "All-default"
-        # is judged from the TRAINING side: _env_kwargs always forces the
-        # pool-level advance_rng_on_reload on, so comparing against the bare
-        # factory bundle (advance=False) can never match and every run would
-        # be back to declaring train_extras (the pre-fix state).
-        train_env = dict(train_env)
-        from methods.rl_agent.wrappers.factory import _TRAIN_EXTRAS
-        if train_env.get("train_extras") == {
-            **_TRAIN_EXTRAS, "advance_rng_on_reload": True,
-        }:
-            train_env.pop("train_extras")
-        out, diff = dump_env_records(
-            args.save_dir,
-            train_env=train_env, val_env=val_env,
-            policy=asdict(RLPolicyConfig.from_namespace(
-                args, use_critic=self.USE_CRITIC,
-            )),
-        )
-        print(f"[env-contract] records -> {out}")
+        val_meta = {"seed": args.eval_base_seed, "policy_net_select": eval_policy_net_select(self.agent)}
+        write_run_record(
+            os.path.join(args.save_dir, VAL_RUN_RECORD), self.val_env, extra=val_meta, echo=False,
+            boards=None if self.eval_boards is None else board_record(
+                [b.path for b in self.eval_boards], boards_json=args.boards_json))
+        self._recorded_val_env = {**self.val_env.values, **val_meta}
+        diff = env_diff(RLEnvConfig.for_training(args).to_record(), self.val_env.values)
         if diff:
             print(f"[env-contract] train/val diff: {sorted(diff)}")
-        check_expected_env_diff(diff, getattr(args, "expect_env_diff", ""))
+        check_expected_env_diff(diff, args.expect_env_diff)
 
     def _build_policy(self):
         from configs.loader.schema import RLPolicyConfig
@@ -459,8 +489,7 @@ class RLTrainer(Trainer):
         # slot_perm augmentation samples a fixed permutation over
         # [0, N_MAX_SLOTS=64) in the wrapper, so it is incompatible with a
         # policy whose slot table was enlarged (e.g. d3b's --n-max-slots 128).
-        if getattr(self.args, "slot_perm", False) and \
-                getattr(self.args, "n_max_slots", 64) != 64:
+        if self.args.slot_perm and self.args.n_max_slots != 64:
             raise RuntimeError(
                 "--slot-perm assumes n_max_slots=64 (fixed permutation) — "
                 f"cannot be used with --n-max-slots {self.args.n_max_slots}"
@@ -522,43 +551,33 @@ class RLTrainer(Trainer):
     # ------------------------------------------------------------------
     # BC-initialised fine-tuning (methods/rl_agent/training/finetune.py)
     # ------------------------------------------------------------------
-    #: init-ckpt args that change what the model SEES or its shape — a mismatch
-    #: would load BC weights into a differently-tokenised model silently.
-    INIT_CKPT_HARD_KEYS = (
-        "obstacle_obs", "shape_obs", "outline_obs", "net_constraint_obs",
-        "directional_candidates", "offboard_mask", "time_feature",
-        "policy_net_select", "same_net_bias", "disable_slot_emb",
-        "coord_encoding", "d_model", "n_layers", "n_heads", "d_ff",
-    )
-
     def _init_from_ckpt(self) -> None:
         """Load policy WEIGHTS from ``--init-ckpt`` (e.g. a BC ``policy_step_*.pt``).
 
         Unlike ``--resume``: optimizer, iteration counter, LR schedule and the
         reward normalizer start fresh; a missing ``critic_head`` (BC trains no
         critic) is left at its fresh init. ``--resume`` after this overrides it.
+        The run's arch keys are resolve's (mode init-ckpt): the checkpoint's, except a value
+        the checkpoint only estimates, which the command line may replace (with a warning).
         """
         path = getattr(self.args, "init_ckpt", None)
         if not path:
             return
         print(f"Initialising policy weights from: {path}")
+        iteration, missing = self._load_init_weights(self.policy, path)
+        print(
+            f"  [init-ckpt] step={iteration}  "
+            f"newly initialised: {missing or 'none'}"
+        )
+
+    def _load_init_weights(self, model, path) -> tuple:
+        """Load the init checkpoint's weights into ``model`` (built from the run's arch
+        config); only critic / allowed keys may be missing. Returns ``(iteration, missing)``."""
         ckpt = torch.load(path, map_location=self.device, weights_only=False)
-        ck_args = dict(ckpt.get("args") or {})
-        bad = []
-        for key in self.INIT_CKPT_HARD_KEYS:
-            if key in ck_args and hasattr(self.args, key):
-                a, b = ck_args[key], getattr(self.args, key)
-                if (a or None) != (b or None) and str(a) != str(b):
-                    bad.append(f"{key}: ckpt={a!r} run={b!r}")
-        if bad:
-            raise RuntimeError(
-                "init-ckpt obs/model args differ from this run (the BC policy "
-                "would see different tokens): " + "; ".join(bad)
-            )
         from methods.rl_agent.models.loader import pad_legacy_entity_type_rows
         state = ckpt["policy_state_dict"]
-        pad_legacy_entity_type_rows(state, self.policy)
-        missing, unexpected = self.policy.load_state_dict(state, strict=False)
+        pad_legacy_entity_type_rows(state, model)
+        missing, unexpected = model.load_state_dict(state, strict=False)
         allowed = set(self.ALLOWED_MISSING_KEYS) | {"critic"}
         hard_missing = [
             k for k in missing if not any(tag in k.lower() for tag in allowed)
@@ -568,10 +587,7 @@ class RLTrainer(Trainer):
                 f"init-ckpt load mismatch: missing={hard_missing}, "
                 f"unexpected={unexpected}",
             )
-        print(
-            f"  [init-ckpt] step={ckpt.get('iteration')}  "
-            f"newly initialised: {missing or 'none'}"
-        )
+        return ckpt.get("iteration"), missing
 
     def _build_ref_policy(self) -> None:
         """Frozen reference for the KL(pi || pi_ref) penalty (``--kl-ref-coef``)."""
@@ -581,15 +597,23 @@ class RLTrainer(Trainer):
         coef = float(getattr(self.args, "kl_ref_coef", 0.0) or 0.0)
         if coef <= 0.0:
             return
-        path = (getattr(self.args, "kl_ref_ckpt", None)
-                or getattr(self.args, "init_ckpt", None))
+        init_ckpt = getattr(self.args, "init_ckpt", None)
+        path = getattr(self.args, "kl_ref_ckpt", None) or init_ckpt
         if not path:
             raise ValueError("--kl-ref-coef needs --kl-ref-ckpt or --init-ckpt")
         if int(getattr(self.args, "update_gpus", 1)) > 1:
             raise ValueError("--kl-ref-coef is not supported with --update-gpus > 1")
-        from methods.rl_agent.policy.agent import KiCadRLAgent
         from methods.rl_agent.training.finetune import parse_type_ids
-        ref = KiCadRLAgent.from_checkpoint(path, self.device).model
+        if path == init_ckpt:
+            # The init checkpoint's weights under the run's arch config — the same
+            # tokenization as pi, also where resolve took a command-line value over an estimate.
+            from configs.loader.schema import RLPolicyConfig
+            ref = RLPolicyConfig.from_namespace(self.args, use_critic=self.USE_CRITIC).build(self.device)
+            self._load_init_weights(ref, path)
+        else:
+            from methods.rl_agent.policy.agent import KiCadRLAgent
+            ref = KiCadRLAgent.from_checkpoint(
+                path, self.device, strict=self.args.strict_ckpt).model
         ref.eval()
         for prm in ref.parameters():
             prm.requires_grad_(False)
@@ -655,20 +679,11 @@ class RLTrainer(Trainer):
         if not args.resume:
             return
         print(f"Resuming from checkpoint: {args.resume}")
+        from configs.loader.ckpt import load_ckpt_config
         ckpt = torch.load(args.resume, map_location=self.device)
-        # obstacle_obs adds no weights, so a flag flip across resume would be
-        # SILENT obs drift (tokens appear/vanish mid-run) — cross-check the
-        # saved args loudly. (shape_obs needs no guard: its shape_embed key
-        # makes a flip fail the strict-ish load below either way.)
-        ckpt_obst = bool((ckpt.get("args") or {}).get("obstacle_obs", False))
-        run_obst = bool(getattr(self.args, "obstacle_obs", False))
-        if ckpt_obst != run_obst:
-            raise RuntimeError(
-                f"obstacle_obs mismatch on resume: checkpoint trained with "
-                f"{ckpt_obst}, this run has {run_obst} — OBSTACLE tokens "
-                "would silently appear/vanish mid-run. Pass the matching "
-                "flag (or start fresh)."
-            )
+        # The run's arch / experiment keys already equal the checkpoint's (resolve mode
+        # resume); its config here only replays the board schedule.
+        ck_args, _ = load_ckpt_config(ckpt, strict=args.strict_ckpt)
         # Pre-OBSTACLE checkpoints carry a 14-row entity-type table — pad the
         # policy weights AND the Adam moments (torch validates the latter
         # only at the first optimizer.step()). Loud on any other mismatch.
@@ -711,7 +726,166 @@ class RLTrainer(Trainer):
         counters = ckpt.get("counters") or {}
         self._episodes_total = int(counters.get("episodes_total", 0))
         self._env_steps_total = int(counters.get("env_steps_total", 0))
+        self._restore_schedules(ckpt, ck_args, completed=self.start_iteration - 1)
+        self._restore_best_score(ckpt)
         print(f"  Loaded iteration {self.start_iteration - 1}, resuming from {self.start_iteration}")
+
+    def _restore_best_score(self, ckpt: dict) -> None:
+        """``policy_best.pt`` is the best over the whole run, across resumes. The score this
+        segment must beat is the better of the resumed ckpt's ``best_val_score`` and the score of
+        ``save_dir``'s ``policy_best.pt`` (``best_val_score``, else ``eval_overall``). A resume into
+        a new ``save_dir`` copies the resumed run's ``policy_best.pt`` there when it comes from at
+        or before the resumed iteration; one from after it (an abandoned branch) is left behind
+        and best selection starts fresh. A ``policy_best.pt`` whose score cannot be recovered is
+        copied to ``policy_best.unscored.pt`` with a warning and best selection starts fresh, so
+        this segment's first validation overwrites it."""
+        import shutil
+        from configs.loader.schema import DEFAULTS
+
+        def copy(src: str, dst: str) -> None:     # atomic, like _save_ckpt
+            shutil.copy2(src, f"{dst}.tmp")
+            os.replace(f"{dst}.tmp", dst)
+
+        key = DEFAULTS.best_metric_key.removeprefix("val/")
+        best = os.path.join(self.args.save_dir, "policy_best.pt")
+        prev = os.path.join(os.path.dirname(os.path.realpath(self.args.resume)), "policy_best.pt")
+        if not os.path.isfile(best) and os.path.isfile(prev):
+            prev_iter = torch.load(prev, map_location="cpu", weights_only=False).get("iteration")
+            if prev_iter is None or prev_iter > ckpt.get("iteration", 0):
+                print(f"  [resume] {prev} (iteration {prev_iter}) is not from this run's lineage "
+                      f"(resumed at iteration {ckpt.get('iteration', 0)}) — not copied; best "
+                      f"selection starts fresh in {self.args.save_dir}", flush=True)
+                return
+            copy(prev, best)
+            print(f"  [resume] the run's best checkpoint {prev} copied to {best}")
+        scores = [] if ckpt.get("best_val_score") is None else [float(ckpt["best_val_score"])]
+        if os.path.isfile(best):
+            payload = torch.load(best, map_location="cpu", weights_only=False)
+            score = payload.get("best_val_score")
+            if score is None:
+                score = (payload.get("eval_overall") or {}).get(key)
+            if score is None or not np.isfinite(score):
+                kept = os.path.join(self.args.save_dir, "policy_best.unscored.pt")
+                if not os.path.exists(kept):    # else: copied by a segment that ended before a val
+                    copy(best, kept)
+                print(f"  [resume] WARNING: {best} records no val {DEFAULTS.best_metric_key} — "
+                      f"kept as {kept}; this segment's first validation overwrites policy_best.pt",
+                      flush=True)
+                return
+            scores.append(float(score))
+        if scores:
+            self.best_eval_fp = (max if DEFAULTS.best_metric_mode == "max" else min)(scores)
+            print(f"  [resume] best val {DEFAULTS.best_metric_key} so far: {self.best_eval_fp:+.4f} "
+                  f"— policy_best.pt is written only when a validation beats it")
+
+    # Run args that fix the board scheduler's draw sequence (seed + picks per iteration)
+    # and the board list it indexes into; the last two may differ when the split still
+    # resolves to the same boards (_split_identity).
+    _BOARD_REPLAY_KEYS = ("seed", "n_envs", "group_size", "boards_order",
+                          "boards_difficulty", "boards_split", "boards_json", "boards_dataset_dir")
+    _SPLIT_LOCATION_KEYS = {"boards_json", "boards_dataset_dir"}
+
+    def _board_digest(self) -> str | None:
+        if len(self.boards or []) <= 1:
+            return None
+        if getattr(self, "_board_digest_cache", None) is None:
+            self._board_digest_cache = _board_list_digest(self.boards)   # once per run
+        return self._board_digest_cache
+
+    def _schedule_state(self) -> dict:
+        """Per-iteration schedule state that setup() rebuilds from scratch."""
+        return {
+            "board_scheduler": self.scheduler.state_dict(),
+            "board_list_digest": self._board_digest(),
+            "critic_warmup_end": getattr(self, "_critic_warmup_end", None),
+            "critic_gate_passed": bool(getattr(self, "_critic_gate_passed", False)),
+            # the gate reads the last `streak` EVs (the cap message the last 3)
+            "ev_history": list(getattr(self, "_ev_history", None) or [])[-max(self._ev_streak(), 3):],
+        }
+
+    def _ev_streak(self) -> int:
+        return max(1, int(getattr(self.args, "critic_warmup_ev_streak", 3) or 3))
+
+    def _same_board_draws(self, ck_args, state: dict | None) -> list[str]:
+        """What differs between the board draws of the run whose checkpoint config is
+        ``ck_args`` and this one — empty when the saved or replayed order applies to this
+        run's board list. A key one side has and the other lacks differs."""
+        if state is not None and state.get("board_list_digest") is not None:
+            return [] if state["board_list_digest"] == self._board_digest() else ["board list"]
+        run = vars(self.args)
+        diff = [k for k in self._BOARD_REPLAY_KEYS
+                if (k in ck_args) != (k in run) or (k in run and ck_args[k] != run[k])]
+        if diff and set(diff) <= self._SPLIT_LOCATION_KEYS:
+            old = _split_identity(ck_args)
+            if old is not None and old == _split_identity(vars(self.args)):
+                diff = []   # the same board list, reached through another split file or dir spelling
+        return diff
+
+    def _in_ev_gate_extension(self, completed: int) -> bool:
+        args = self.args
+        cw = int(getattr(args, "critic_warmup_iters", 0) or 0)
+        return (cw > 0 and completed >= max(1, cw - self._ev_streak() + 1)   # EVs the gate at iter cw reads
+                and float(getattr(args, "critic_warmup_min_ev", 0.0) or 0.0) > 0.0
+                and not getattr(self, "_critic_gate_passed", False)
+                and getattr(self, "_critic_warmup_end", None) is None)
+
+    def _restore_schedules(self, ckpt: dict, ck_args, completed: int) -> None:
+        """Continue the LR and board schedules after ``completed`` iterations.
+
+        setup() builds both schedulers fresh, so without this a resumed run
+        re-runs the LR warmup and re-deals boards from the start of the first
+        epoch. Checkpoints without a ``schedules`` entry (written before it
+        existed) are reconstructed from the iteration count. ``ck_args`` is the
+        checkpoint's resolved config (``configs.loader.ckpt.load_ckpt_config``).
+        """
+        state = ckpt.get("schedules")
+        if state is not None:
+            if state.get("critic_warmup_end") is not None:
+                self._critic_warmup_end = int(state["critic_warmup_end"])
+            if state.get("critic_gate_passed"):
+                self._critic_gate_passed = True
+            if "ev_history" in state:
+                self._ev_history = [float(e) for e in state["ev_history"]]
+            elif self._in_ev_gate_extension(completed):
+                print("  [resume] WARNING: checkpoint has no EV history; the EV gate needs a "
+                      "fresh streak of --critic-warmup-ev-streak iterations from here", flush=True)
+        elif int(getattr(self.args, "critic_warmup_iters", 0) or 0) > 0 and completed > 0:
+            print("  [resume] WARNING: checkpoint has no critic warm-up state; the EV gate "
+                  "and the LR warmup restart point assume the warm-up ended at "
+                  "--critic-warmup-iters", flush=True)
+
+        # The LR scheduler steps once per iteration, so its count == completed.
+        if self.lr_scheduler is not None:
+            sch = self.lr_scheduler
+            sch.last_epoch = completed
+            for group, base_lr, fn in zip(self.optimizer.param_groups, sch.base_lrs, sch.lr_lambdas):
+                group["lr"] = base_lr * fn(completed)
+            sch._last_lr = [group["lr"] for group in self.optimizer.param_groups]
+            print(f"  [resume] LR schedule at iteration {completed}: lr={sch._last_lr[0]:.3g}")
+
+        sched = self.scheduler
+        if sched.mode == "single" or len(self.boards) <= 1 or completed <= 0:
+            return  # select_boards never draws here
+        diff = self._same_board_draws(ck_args, state)
+        if diff:
+            print(f"  [resume] WARNING: {diff} differ from the run that wrote the checkpoint — "
+                  "board order restarts from a fresh epoch", flush=True)
+            return
+        if state is not None:
+            order = state["board_scheduler"].get("epoch_order") or []
+            if max(order, default=-1) >= len(self.boards):   # a split file rewritten in place (no digest to tell)
+                print(f"  [resume] WARNING: the saved board order indexes past this run's {len(self.boards)} "
+                      "boards — board order restarts from a fresh epoch", flush=True)
+                return
+            sched.load_state_dict(state["board_scheduler"])
+            how = "restored"
+        else:
+            n_pick, _ = self._board_pick()
+            for _ in range(completed):
+                sched.next_indices(n_pick)
+            how = f"replayed {completed}x{n_pick} draws"
+        print(f"  [resume] board order {how}: epoch {sched.epochs_completed}, "
+              f"{sched.epoch_remaining} boards left in it")
 
     def _setup_logger(self) -> None:
         args = self.args
@@ -738,14 +912,14 @@ class RLTrainer(Trainer):
         # in async mode the trainer never calls these, but building them still
         # fail-fasts on bad eval2..eval5 board lists at startup.
         self.evaluator, self.extra_evaluators = build_evaluators(
-            args, self.agent, self.device, self.eval_boards,
+            args, self.agent, self.device, self.eval_boards, val_env=self.val_env,
             mem_budget=self.mem_budget_rollout,
             expect_env_kwargs=getattr(self, "_recorded_val_env", None),
         )
         self.eval_cadence = (
             args.eval_every if args.eval_every is not None else len(self.boards)
         )
-        if getattr(args, "async_val", False):
+        if args.async_val:
             # The watcher evaluates the REGULAR periodic ckpts in place (no
             # separate eval snapshot), so every cadence iter must have one —
             # and the watcher reads the cadence from the ckpt args.
@@ -795,7 +969,7 @@ class RLTrainer(Trainer):
     # ------------------------------------------------------------------
 
     def _setup_mem_budget(self) -> None:
-        if not getattr(self.args, "mem_budget", False):
+        if not self.args.mem_budget:
             return
         if self.device.type != "cuda":
             print("  mem_budget: non-CUDA device — disabled")
@@ -827,33 +1001,19 @@ class RLTrainer(Trainer):
         from methods.rl_agent.training import mem_budget as mem_budget_mod
 
         seq_lens = self.policy.tokenizer._walk_obs(obs_list)["seq_lens"]
-        actions_np = buffer["actions"]
-        masks_np = buffer["action_masks"]
-        ptr_np = buffer.get("pointer_masks")
+        transition = buffer["transition"]
         device = self.device
         policy = self.policy
 
         def _tensors(pos: int, B: int):
-            obs = [obs_list[pos]] * B
-            act_t = torch.as_tensor(
-                actions_np[pos], dtype=torch.long, device=device,
-            ).unsqueeze(0).expand(B, -1).contiguous()
-            am_t = torch.as_tensor(
-                masks_np[pos], dtype=torch.bool, device=device,
-            ).unsqueeze(0).expand(B, -1).contiguous()
-            if ptr_np is not None and ptr_np.ndim == 2 and ptr_np.shape[1]:
-                pm_t = torch.as_tensor(
-                    ptr_np[pos], dtype=torch.long, device=device,
-                ).unsqueeze(0).expand(B, -1).contiguous()
-            else:
-                pm_t = torch.full((B, 0), -1, dtype=torch.long, device=device)
-            return obs, act_t, am_t, pm_t
+            # sample ``pos`` replicated B times, with its stored bundle
+            return [obs_list[pos]] * B, transition.select([pos] * B).to(device)
 
         def probe_update(pos: int, B: int) -> float:
-            obs, act_t, am_t, pm_t = _tensors(pos, B)
+            obs, rows = _tensors(pos, B)
             base = mem_budget_mod.begin_measured_region()
             new_lp, entropy, values = policy.evaluate_actions_and_value(
-                obs, act_t, action_masks=am_t, pointer_masks=pm_t,
+                obs, rows.actions, dist=rows.dist,
             )
             # The loss *shape* is irrelevant for the peak (the real losses only
             # add (B,)-sized terms); what matters is backward through the
@@ -864,9 +1024,9 @@ class RLTrainer(Trainer):
             return peak
 
         def probe_rollout(pos: int, B: int) -> float:
-            obs, _act_t, am_t, pm_t = _tensors(pos, B)
+            obs, rows = _tensors(pos, B)
             base = mem_budget_mod.begin_measured_region()
-            policy.act_and_value(obs, action_masks=am_t, pointer_masks=pm_t)
+            policy.act_and_value(obs, dist=rows.dist)
             return mem_budget_mod.end_measured_region(base)
 
         # RNG isolation: the rollout probe SAMPLES (act_and_value) and would
@@ -1007,7 +1167,7 @@ class RLTrainer(Trainer):
         w.add_scalar("train/policy_loss", metrics["policy_loss"], iteration)
         w.add_scalar("train/entropy", metrics["entropy"], iteration)
 
-        act_types = buffer["actions"][:, 0]
+        act_types = buffer["transition"].actions[:, 0]
         total_acts = max(len(act_types), 1)
         for ai, aname in enumerate(_ACTION_NAMES):
             ratio = float((act_types == ai).sum()) / total_acts
@@ -1133,7 +1293,7 @@ class RLTrainer(Trainer):
             "policy_state_dict": self.policy.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
             "metrics": metrics,
-            "args": vars(self.args),
+            **ckpt_entries(self.args.ckpt_config()),
         }
 
     def save_last_ckpt(self, iteration: int, metrics: dict) -> None:
@@ -1163,7 +1323,7 @@ class RLTrainer(Trainer):
         methods/rl_agent/models/v1/obs_probe.py).
         """
         if self._ckpt_stamp is None:
-            from methods._shared.config_dump import collect_provenance
+            from configs.loader.record import collect_provenance
             from methods.rl_agent.models.v1.obs_probe import (
                 build_probe_obs, probe_digest,
             )
@@ -1189,6 +1349,14 @@ class RLTrainer(Trainer):
             "episodes_total": getattr(self, "_episodes_total", 0),
             "env_steps_total": getattr(self, "_env_steps_total", 0),
         }
+        payload["schedules"] = self._schedule_state()
+        # The best val score so far: a resume must beat it before overwriting policy_best.pt.
+        payload["best_val_score"] = (
+            float(self.best_eval_fp) if np.isfinite(self.best_eval_fp) else None
+        )
+        # The writer: a schema-2 config takes the table value only for a key its writer never
+        # records (configs/ckpt_migrations.yaml `trainers:`).
+        payload["trainer"] = self.ALGO
         payload.update(self._ckpt_stamp_payload())
         # Atomic write: a crash mid-save must never corrupt an existing ckpt
         # (policy_last.pt is overwritten every iteration).
@@ -1209,7 +1377,7 @@ class RLTrainer(Trainer):
             "iteration": self.args.iterations,
             "policy_state_dict": self.policy.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
-            "args": vars(self.args),
+            **ckpt_entries(self.args.ckpt_config()),
         })
         if self.writer is not None:
             self.writer.close()
@@ -1406,7 +1574,7 @@ class RLTrainer(Trainer):
                     "iteration": iteration,
                     "policy_state_dict": state_fn(),
                     "eval_overall": ov,
-                    "args": vars(self.args),
+                    **ckpt_entries(self.args.ckpt_config()),
                 },
             )
 
@@ -1424,7 +1592,6 @@ class PPOTrainer(RLTrainer):
 
     ALGO = "ppo"
     USE_CRITIC = True
-    ALLOWED_MISSING_KEYS = {"prev_action", "history_age", "drc"}
 
     def __init__(self, args) -> None:
         super().__init__(args)
@@ -1448,11 +1615,15 @@ class PPOTrainer(RLTrainer):
 
     def _check_truncation_consistency(self) -> None:
         args = self.args
+        import inspect
+        from pcb_world.core.reward import PotentialReward
         from pcb_world.core.reward_config import get_reward_config
         cfg = get_reward_config(args.reward_rule)
-        trunc_mode = cfg._potential_cfg.get("truncation_mode", "none")
+        # Optional rule key: absent means the PotentialReward default.
+        trunc_mode = cfg.rule.potential.get(
+            "truncation_mode", inspect.signature(PotentialReward).parameters["truncation_mode"].default)
         bootstrap = bool(args.truncation_bootstrap)
-        if cfg._mode == "terminal":
+        if cfg.mode == "terminal":
             if trunc_mode == "full" and bootstrap:
                 raise ValueError(
                     f"Invalid combination: reward_rule={args.reward_rule} has "
@@ -1475,7 +1646,7 @@ class PPOTrainer(RLTrainer):
                 )
         print(
             f"  truncation: mode={trunc_mode} bootstrap={bootstrap} "
-            f"(reward_mode={cfg._mode})"
+            f"(reward_mode={cfg.mode})"
         )
         print()
 
@@ -1512,7 +1683,9 @@ class PPOTrainer(RLTrainer):
         buffer["returns_mc"] = returns_mc.reshape(-1).astype(np.float32)
         if self.ref_policy is not None and self._kl_mask_on:
             from methods.rl_agent.training.finetune import kl_mask_from_obs
-            buffer["kl_mask"] = kl_mask_from_obs(coll.obs_list, self._kl_seen)
+            buffer["transition"] = replace(
+                buffer["transition"], kl_mask=kl_mask_from_obs(coll.obs_list, self._kl_seen),
+            )
         return buffer
 
     def update_kwargs(self) -> dict:
@@ -1520,7 +1693,7 @@ class PPOTrainer(RLTrainer):
         return {
             "algo": "ppo",
             "clip_eps": args.clip_eps, "entropy_coef": args.entropy_coef,
-            "entropy_norm": bool(getattr(args, "entropy_norm", False)),
+            "entropy_norm": bool(args.entropy_norm),
             "n_epochs": args.n_epochs, "batch_size": args.batch_size,
             "max_grad_norm": args.max_grad_norm, "vf_coef": args.vf_coef,
             "normalize_advantages": bool(args.normalize_adv),
@@ -1586,12 +1759,13 @@ class PPOTrainer(RLTrainer):
             metrics["step_time_mean"] = metrics["step_time_p95"] = metrics["step_time_max"] = 0.0
             for key, _lo, _hi in _ST_BUCKETS:
                 metrics[key] = 0
+        old_values = buffer["transition"].old_values
         metrics["explained_variance"] = explained_variance(
-            buffer["old_values"], buffer["returns"],
+            old_values, buffer["returns"],
         )
         if "returns_mc" in buffer:
             metrics["explained_variance_mc"] = explained_variance(
-                buffer["old_values"], buffer["returns_mc"],
+                old_values, buffer["returns_mc"],
             )
         metrics["critic_warmup"] = float(getattr(self, "_actor_frozen", False))
         metrics["n_episodes"] = len(coll.episode_rewards)
@@ -1606,7 +1780,7 @@ class PPOTrainer(RLTrainer):
 
         # value-loss-explosion diagnostics
         raw_r, norm_r = coll.raw_rewards, coll.rewards
-        rets, vals = buffer["returns"], buffer["old_values"]
+        rets, vals = buffer["returns"], old_values
         metrics["raw_reward_max"] = float(raw_r.max())
         metrics["raw_reward_min"] = float(raw_r.min())
         metrics["raw_reward_mean"] = float(raw_r.mean())
@@ -1724,7 +1898,7 @@ class GRPOTrainer(RLTrainer):
 
     ALGO = "grpo"
     USE_CRITIC = False
-    ALLOWED_MISSING_KEYS = {"prev_action", "history_age", "drc", "same_net_bias"}
+    ALLOWED_MISSING_KEYS = RLTrainer.ALLOWED_MISSING_KEYS | {"same_net_bias"}
 
     def __init__(self, args) -> None:
         if args.n_envs % args.group_size != 0:
@@ -1781,7 +1955,7 @@ class GRPOTrainer(RLTrainer):
         return {
             "algo": "grpo",
             "clip_eps": args.clip_eps, "entropy_coef": args.entropy_coef,
-            "entropy_norm": bool(getattr(args, "entropy_norm", False)),
+            "entropy_norm": bool(args.entropy_norm),
             "n_epochs": args.n_epochs, "batch_size": args.batch_size,
             "max_grad_norm": args.max_grad_norm, "normalize_advantages": False,
             "mem_budget": self.mem_budget_update,

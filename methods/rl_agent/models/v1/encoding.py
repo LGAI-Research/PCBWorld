@@ -12,16 +12,17 @@ from the former scattered codec modules:
   * **State**    — norm context + dataclasses (from ``policy/state_tokenizer_common``)
                    + obs→net/cand ordering (from ``wrappers/state_converter``)
   * **Action**   — triple decode + pointer→value (from ``wrappers/action_converter``)
-  * **Mask**     — mode/pointer/net masks + VecBackend stacks (from ``wrappers/mask``)
+  * **Mask**     — mode/pointer/net/off-layer/off-board masks + the per-state payload
+                   + the wrapper-less serving ``DistInputs`` (``dist_from_obs``)
 
 Those source modules have been removed; import the codec from here.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import Any
 
 import numpy as np
 import torch
@@ -29,13 +30,13 @@ import torch
 from pcb_world.core.action_schema import MODE_WALKAROUND
 from pcb_world.core.indexed_obs import is_indexed
 from pcb_world.vec.candidate_pool import (
+    CTYPE_DIRECTIONAL,
     build_directional_candidates,
     collect_raw_candidates,
 )
-from methods.rl_agent.models.v1.spec import ACTION_ARITY, MAX_COPPER, NUM_ROUTING_MODES
-
-if TYPE_CHECKING:
-    from pcb_world.vec.backends.base import VecBackend
+from methods.rl_agent.models.v1.spec import (
+    ACTION_ARITY, MAX_COPPER, NUM_ROUTING_MODES, DistInputs,
+)
 
 
 # ===========================================================================
@@ -460,13 +461,19 @@ def net_valid_mask(
     *,
     sorted_net_codes: list[int],
     last_obs: dict,
+    net_reselect: bool = False,
 ) -> np.ndarray:
     """``(M,) bool`` — True for nets that still have ratsnest points AND were
     not consumed by a ``net_end`` this episode (``obs["closed_nets"]``), in
-    ``sorted_net_codes`` order — the valid ACT_NET_SELECT targets. A net_end
-    permanently retires its net for the episode (give-up under permissive
-    masking rules); once every routable net is closed the env terminates, so
-    the mask never needs to reopen closed nets.
+    ``sorted_net_codes`` order — the valid ACT_NET_SELECT targets. By default
+    a net_end retires its net for the episode (give-up under permissive
+    masking rules); once every routable net is closed the env terminates.
+
+    ``net_reselect`` (the env knob, :attr:`PCBWorld.net_reselect`) drops the
+    closed condition: every net with ratsnest points is a target, closed or
+    not, and the env reopens a closed net when it is selected. Pass the value
+    of the env the observation came from — a mask that keeps closed nets for
+    an env that does not reopen them changes the episode semantics.
 
     Invariant: a valid-net count of 0 occurs only in the state right before
     termination, so all-False cannot appear at a net_select decision point on
@@ -476,7 +483,7 @@ def net_valid_mask(
     M = len(sorted_net_codes)
     if M == 0:
         return np.zeros((0,), dtype=bool)
-    closed = set(last_obs.get("closed_nets") or [])
+    closed = set() if net_reselect else set(last_obs.get("closed_nets") or [])
     mask = np.zeros((M,), dtype=bool)
     if is_indexed(last_obs):
         # Array path: "net has ratsnest points" == rat_count > 0 for the
@@ -498,123 +505,128 @@ def net_valid_mask(
     return mask
 
 
-# ---------------------------------------------------------------------------
-# Batch mask queries over a VecBackend (the design-intended branch wrapper for
-# ``env_method`` — base.py §11). Each stacks per-worker mask methods into a
-# rectangular ndarray, with the same right-padding the subprocess pool applies.
-# Backend-agnostic: works over any VecBackend exposing ``env_method`` (subproc
-# or ray), so the policy code is decoupled from the transport mechanism.
-# ---------------------------------------------------------------------------
-def stack_action_masks(
-    backend: "VecBackend", indices: Sequence[int] | None = None,
+def offlayer_pointer_indices(
+    *, obs: dict, cand_mm: list[tuple[float, float, int]],
 ) -> np.ndarray:
-    """Parallel ``action_masks()`` → ``(N, NUM_ACTIONS)`` bool."""
-    return np.stack(backend.env_method("action_masks", indices=indices))
-
-
-def stack_mode_masks(
-    backend: "VecBackend", indices: Sequence[int] | None = None,
-) -> np.ndarray:
-    """Parallel ``mode_mask()`` → ``(N, 3)`` bool."""
-    return np.stack(backend.env_method("mode_mask", indices=indices))
-
-
-def stack_offlayer_masks(
-    backend: "VecBackend", indices: Sequence[int] | None = None,
-) -> np.ndarray:
-    """Parallel ``offlayer_pointer_indices()`` → ``(N, K_max)`` int64,
-    right-padded with ``-1``.
-
-    Same shape contract as :func:`stack_pointer_masks`, but consumed under a
-    per-ROW type gate: the policy blocks these columns on the **make_line** row
-    only. make_line cannot change layer, so an off-layer candidate duplicates the
-    same-layer one; make_via changes layer by design and keeps every candidate.
-    """
-    try:
-        per_env = backend.env_method("offlayer_pointer_indices", indices=indices)
-    except (AttributeError, KeyError, NotImplementedError):
-        per_env = None          # stub backend / env double: rule stays inactive
-    if not per_env:
-        return np.zeros((0, 0), dtype=np.int64)
-    K_max = max((p.shape[0] for p in per_env), default=0)
-    if K_max == 0:
-        return np.full((len(per_env), 0), -1, dtype=np.int64)
-    out = np.full((len(per_env), K_max), -1, dtype=np.int64)
-    for i, p in enumerate(per_env):
-        if p.shape[0]:
-            out[i, :p.shape[0]] = p
-    return out
-
-
-def stack_pointer_masks(
-    backend: "VecBackend", indices: Sequence[int] | None = None,
-) -> np.ndarray:
-    """Parallel ``start_route_pointer_indices()`` → ``(N, K_max)`` int64,
-    right-padded with ``-1``.
-
-    Per-env match counts vary (0–N cands sharing the start_route ``(x, y)``),
-    so the batch is right-padded to a rectangular ndarray. ``-1`` marks "no
-    entry"; the policy masks every non-negative column to ``-inf``.
-    """
-    per_env = backend.env_method("start_route_pointer_indices", indices=indices)
-    if not per_env:
-        return np.zeros((0, 0), dtype=np.int64)
-    K_max = max((p.shape[0] for p in per_env), default=0)
-    if K_max == 0:
-        return np.full((len(per_env), 0), -1, dtype=np.int64)
-    out = np.full((len(per_env), K_max), -1, dtype=np.int64)
-    for i, p in enumerate(per_env):
-        if p.shape[0]:
-            out[i, : p.shape[0]] = p
-    return out
-
-
-def stack_cand_block_masks(
-    backend: "VecBackend", indices: Sequence[int] | None = None,
-) -> np.ndarray:
-    """Parallel ``start_route_pointer_indices() ++ offboard_pointer_indices()``
-    → ``(N, K_max)`` int64, right-padded with ``-1``.
-
-    The columns the cand pointer head blocks on EVERY row (net.py
-    ``cand_block_idx``): the same-point rule plus the off-board directional
-    rule (``KiCadRLWrapper.offboard_pointer_indices``, empty unless
-    ``offboard_mask``). Rows are concatenated per env BEFORE padding, so the
-    result is bit-identical to the obs-embedded branch of
-    ``gather_mask_arrays``. Envs without the off-board method (stubs / doubles)
-    contribute their same-point rows alone.
-    """
-    per_ptr = backend.env_method("start_route_pointer_indices", indices=indices)
-    if not per_ptr:
-        return np.zeros((0, 0), dtype=np.int64)
-    try:
-        per_off = backend.env_method("offboard_pointer_indices", indices=indices)
-    except (AttributeError, KeyError, NotImplementedError):
-        per_off = None          # stub backend / env double: rule stays inactive
-    rows = (
-        [np.concatenate([p, o]) for p, o in zip(per_ptr, per_off)]
-        if per_off else list(per_ptr)
+    """Cand-pool indices on a layer other than the router head's — blocked on
+    the make_line row only (rule and rationale:
+    ``KiCadRLWrapper.offlayer_pointer_indices``). Empty ``(0,) int64`` when not
+    routing or nothing is off-layer."""
+    rh = obs.get("router_head") or {}
+    if not rh.get("is_routing", False):
+        return np.zeros((0,), dtype=np.int64)
+    cur = int(rh.get("current_layer", -1))
+    if cur < 0 or not cand_mm:
+        return np.zeros((0,), dtype=np.int64)
+    return np.asarray(
+        [i for i, (_x, _y, lay) in enumerate(cand_mm) if int(lay) != cur], dtype=np.int64,
     )
-    K_max = max((r.shape[0] for r in rows), default=0)
-    out = np.full((len(rows), K_max), -1, dtype=np.int64)
-    for i, r in enumerate(rows):
-        if r.shape[0]:
-            out[i, :r.shape[0]] = r
-    return out
 
 
-def stack_net_valid_masks(
-    backend: "VecBackend", indices: Sequence[int] | None = None,
+def offboard_pointer_indices(
+    *,
+    offboard_mask: bool,
+    obs: dict,
+    cand_mm: list[tuple[float, float, int]],
+    cand_ctype: list[int],
 ) -> np.ndarray:
-    """Parallel ``net_valid_mask()`` → ``(N, M_max)`` bool, right-padded False.
+    """Cand-pool indices of DIRECTIONAL candidates outside the ``board_static``
+    bbox (edges inclusive) — blocked on every cand row (rule and rationale:
+    ``KiCadRLWrapper.offboard_pointer_indices``). Empty ``(0,) int64`` when
+    ``offboard_mask`` is off or nothing is off-board."""
+    if not offboard_mask or not cand_mm:
+        return np.zeros((0,), dtype=np.int64)
+    bs = obs["board_static"]
+    x0, y0 = float(bs["bbox_x"]), float(bs["bbox_y"])
+    x1, y1 = x0 + float(bs["bbox_w"]), y0 + float(bs["bbox_h"])
+    return np.asarray([
+        i for i, ((x, y, _l), ct) in enumerate(zip(cand_mm, cand_ctype))
+        if ct == CTYPE_DIRECTIONAL and not (x0 <= x <= x1 and y0 <= y <= y1)
+    ], dtype=np.int64)
 
-    Per-env net counts differ; padded positions must be masked to ``-inf`` in
-    the policy's net pointer logits (mirrors the ``net_indices=-1`` handling).
-    """
-    per_env = backend.env_method("net_valid_mask", indices=indices)
-    if not per_env:
-        return np.zeros((0, 0), dtype=bool)
-    M_max = max(m.shape[0] for m in per_env)
-    out = np.zeros((len(per_env), M_max), dtype=bool)
-    for i, m in enumerate(per_env):
-        out[i, : m.shape[0]] = m
-    return out
+
+# Env-var hook for routing-mode ablation experiments. When set to "0", "1",
+# or "2" (mark_obstacles / shove / walkaround), every routing_mode the
+# policy emits is replaced by this value and the mode_mask exposes only the
+# forced mode as valid. Read at module import time so forkserver/spawn
+# workers inherit the override from the parent's environment. Unset = no
+# override (normal behavior).
+FORCE_ROUTING_MODE: int | None = (
+    int(os.environ["PCBWORLD_FORCE_ROUTING_MODE"])
+    if os.environ.get("PCBWORLD_FORCE_ROUTING_MODE", "").strip() != ""
+    else None
+)
+if FORCE_ROUTING_MODE is not None and FORCE_ROUTING_MODE not in (0, 1, 2):
+    raise ValueError(
+        f"PCBWORLD_FORCE_ROUTING_MODE must be 0/1/2, got {FORCE_ROUTING_MODE}",
+    )
+
+
+def mask_payload(
+    *,
+    action_mask: np.ndarray,
+    obs: dict,
+    cand_mm: list[tuple[float, float, int]],
+    cand_ctype: list[int],
+    sorted_net_codes: list[int],
+    start_route_xy: tuple[float, float, int] | None,
+    mask_start_point: bool,
+    offboard_mask: bool,
+    force_walkaround: bool,
+    net_reselect: bool,
+) -> dict[str, np.ndarray]:
+    """The six act-time mask arrays of one state — the payload
+    ``DistInputs.from_payloads`` stacks. One rule set for the wrapper
+    (``obs["_masks"]``) and the bare-PCBWorld inference paths (``rl_provider``,
+    ``rl_act_server``), so all of them mask the pool they are given as training
+    did (the pool itself is :func:`cand_raw_list_from_obs` of that obs)."""
+    return {
+        "action": np.asarray(action_mask, dtype=bool),
+        "pointer": start_route_pointer_indices(
+            mask_start_point=mask_start_point, start_route_xy=start_route_xy, cand_mm=cand_mm,
+        ),
+        "mode": mode_mask(force_routing_mode=FORCE_ROUTING_MODE, force_walkaround=force_walkaround),
+        "net_valid": net_valid_mask(
+            sorted_net_codes=sorted_net_codes, last_obs=obs, net_reselect=net_reselect,
+        ),
+        "offlayer": offlayer_pointer_indices(obs=obs, cand_mm=cand_mm),
+        "offboard": offboard_pointer_indices(
+            offboard_mask=offboard_mask, obs=obs, cand_mm=cand_mm, cand_ctype=cand_ctype,
+        ),
+    }
+
+
+def dist_from_obs(
+    obs_list: list[dict],
+    action_masks: list[np.ndarray],
+    start_route_xys: list[tuple[float, float, int] | None],
+    knobs: Any,
+    *,
+    policy_net_select: bool,
+) -> tuple[DistInputs, list[list[tuple[float, float, int]]], list[list[int]]]:
+    """Serving path without the wrapper (bare PCBWorld / JSON obs): per obs the
+    candidate pool and net order the tokenizer sees, the :func:`mask_payload`
+    under the checkpoint's mask ``knobs`` (``mask_start_point`` ·
+    ``offboard_mask`` · ``force_walkaround`` · ``net_reselect``), stacked into
+    one ``DistInputs``. Returns ``(dist, cand_mm per obs, sorted net codes per
+    obs)`` — the pointer-decode tables of each row."""
+    payloads, pools, net_codes = [], [], []
+    for obs, am, xy in zip(obs_list, action_masks, start_route_xys, strict=True):
+        raw = cand_raw_list_from_obs(obs)
+        cand_mm = [(x, y, ly) for (x, y, ly, _ct) in raw]
+        codes = sorted_net_codes_from_obs(obs)
+        payloads.append(mask_payload(
+            action_mask=am, obs=obs, cand_mm=cand_mm,
+            cand_ctype=[ct for (_x, _y, _l, ct) in raw],
+            sorted_net_codes=codes, start_route_xy=xy,
+            mask_start_point=knobs.mask_start_point,
+            offboard_mask=knobs.offboard_mask,
+            force_walkaround=knobs.force_walkaround,
+            net_reselect=knobs.net_reselect,
+        ))
+        pools.append(cand_mm)
+        net_codes.append(codes)
+    return (
+        DistInputs.from_payloads(payloads, policy_net_select=policy_net_select),
+        pools, net_codes,
+    )

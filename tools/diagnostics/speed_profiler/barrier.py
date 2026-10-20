@@ -83,7 +83,7 @@ def barrier_probe(trainer, n_steps: int, policy_net_select: bool | None = None) 
     ``worker_compute`` split; without it that field is None (the send/straggler/
     unpickle split still works). Advances the rollout faithfully (reset on done).
     """
-    from methods.rl_agent.policy.agent import gather_mask_arrays, mask_arrays_to_tensors
+    from methods.rl_agent.policy.agent import gather_dist
 
     pool, agent, device = trainer.envs, trainer.agent, trainer.device
     if policy_net_select is None:
@@ -105,12 +105,8 @@ def barrier_probe(trainer, n_steps: int, policy_net_select: bool | None = None) 
 
         # --- real forward (correct masks) to get actions ---
         obs_live = [obs_by_slot[s] for s in live]
-        # v0.31: gather_mask_arrays returns a 5th offlayer_masks array — feed it
-        # through mask_arrays_to_tensors' off_masks kwarg (same as the base path).
-        masks, ptr, mode, nvm, offm = gather_mask_arrays(pool, live, policy_net_select=policy_net_select)
-        mt, pt, mdt, nk = mask_arrays_to_tensors(masks, ptr, mode, nvm, device,
-                                                 mode_none_if_all_true=False, off_masks=offm)
-        acts, _ = agent.act(obs_live, action_masks=mt, pointer_masks=pt, mode_mask=mdt, **nk)
+        dist = gather_dist(pool, live, policy_net_select=policy_net_select)
+        acts, _ = agent.act(obs_live, dist=dist.to(device))
         acts = acts.cpu().numpy()
 
         # --- step-barrier decomposition ---

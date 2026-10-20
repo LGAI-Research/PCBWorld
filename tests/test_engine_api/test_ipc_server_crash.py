@@ -23,8 +23,8 @@ import signal
 import pytest
 
 from pcb_world.engine import engine_available, router_client
-from pcb_world.engine.kicad_engine import KiCadEngine
 from pcb_world.engine.router_client import EngineServerCrashed, ipc_enabled
+from tests.helpers.engine import open_engine
 
 BOARD = "tests/fixtures/simple_routing_board.kicad_pcb"
 
@@ -55,7 +55,7 @@ def _kill_server(eng, sig: int) -> int:
 
 
 def test_sigkill_raises_engine_server_crashed_and_cleans_tmpdir():
-    eng = KiCadEngine(BOARD)
+    eng = open_engine(BOARD)
     try:
         tmpdir = eng._r._conn.tmpdir
         pid = _kill_server(eng, signal.SIGKILL)
@@ -75,7 +75,7 @@ def test_sigkill_raises_engine_server_crashed_and_cleans_tmpdir():
 
 def test_sigsegv_server_writes_crashlog(tmp_path, monkeypatch):
     monkeypatch.setenv("KICAD_CRASH_LOG_DIR", str(tmp_path))
-    eng = KiCadEngine(BOARD)                  # fresh server inherits the env
+    eng = open_engine(BOARD)                  # fresh server inherits the env
     try:
         pid = _kill_server(eng, signal.SIGSEGV)
         with pytest.raises(EngineServerCrashed):
@@ -96,7 +96,7 @@ def test_sigsegv_server_writes_crashlog(tmp_path, monkeypatch):
 def test_sigsegv_crashlog_killswitch(tmp_path, monkeypatch):
     monkeypatch.setenv("KICAD_CRASH_LOG_DIR", str(tmp_path))
     monkeypatch.setenv("KICAD_CRASH_DIAG", "0")
-    eng = KiCadEngine(BOARD)
+    eng = open_engine(BOARD)
     try:
         _kill_server(eng, signal.SIGSEGV)
         with pytest.raises(EngineServerCrashed):   # failure policy unaffected

@@ -10,7 +10,7 @@ Routing strategy (deterministic, per board):
     2. for each net's pads, route a chain pad[0] -> pad[1] -> pad[2] -> ...
        using ``KiCadEngine.start_route`` + ``fix_route``.
     3. when consecutive pads are on different layers, drop a via at the
-       second pad (``toggle_via`` + ``switch_layer`` mid-route) so the
+       second pad (``set_via_placement`` + ``switch_layer`` mid-route) so the
        ratsnest closes with proper electrical continuity.
 
 Boards that fail mid-routing keep whatever was already laid down — the
@@ -70,10 +70,10 @@ def _route_net(engine, pads) -> tuple[int, int]:
             else:
                 # Drive a head to b's xy on the start layer, drop a via,
                 # switch, then commit at b on the destination layer. The
-                # PNS engine handles the via geometry once toggle_via +
+                # PNS engine handles the via geometry once set_via_placement +
                 # switch_layer are called between move and fix.
                 engine.move(b.x_mm, b.y_mm)
-                engine.toggle_via()
+                engine.set_via_placement(True)
                 engine.switch_layer(b_layer)
                 engine.fix_route(b.x_mm, b.y_mm, force_finish=True)
         except Exception:
@@ -93,9 +93,13 @@ def route_board(src: Path, dst: Path) -> dict:
 
     Returns a dict with per-net stats and the final ratsnest count.
     """
+    from configs.loader.schema import EnvConfig
     from pcb_world.engine.kicad_engine import KiCadEngine
 
-    engine = KiCadEngine(str(src))
+    # Paper-era routing: fix_route commits the partial stub when stuck (reject_if_stuck false; the paper's
+    # few-shot pool predates 2026-07-10).
+    engine = KiCadEngine(str(src), **EnvConfig.with_overrides(
+        simplify_outline=False, reject_if_stuck=False).engine_kwargs())
     try:
         engine.build_connectivity()
 
@@ -137,7 +141,8 @@ def route_board(src: Path, dst: Path) -> dict:
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__)
+    from configs.loader.cli import StrictArgumentParser
+    p = StrictArgumentParser(description=__doc__)
     p.add_argument("src_dir", type=Path,
                    help="Directory of unrouted .kicad_pcb (e.g. synth_2L_v2/val).")
     p.add_argument("-o", "--output", type=Path, required=True,

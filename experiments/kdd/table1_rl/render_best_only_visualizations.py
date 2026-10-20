@@ -198,7 +198,8 @@ def _output_dir_for(base: Path, manifest_dir: Path, count: int) -> Path:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    from configs.loader.cli import StrictArgumentParser
+    parser = StrictArgumentParser(description=__doc__)
     parser.add_argument("--manifest-dir", action="append", default=None)
     parser.add_argument("--rollouts-csv", action="append", default=None)
     parser.add_argument("--output-dir", default=None)

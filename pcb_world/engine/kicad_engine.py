@@ -13,6 +13,7 @@ import os
 import traceback
 import warnings
 import weakref
+from typing import Sequence
 
 from pcb_world.engine.containers import (
     BoardMeta,
@@ -186,36 +187,51 @@ class KiCadEngine:
 
     def __init__(
         self, board_path: str, project_path: str | None = None,
-        engine_seed: int | None = 77,
-        shove_iter_limit: int = 250,
-        followbranch_iter_limit: int = 1_000_000,
-        reject_if_stuck: bool = True,
-        simplify_outline: bool = False,
+        *,
+        engine_seed: int,
+        shove_iter_limit: int,
+        followbranch_iter_limit: int,
+        reject_if_stuck: bool,
+        trim_at_contact: bool,
+        simplify_outline: bool,
+        drc_promoted_codes: Sequence[int],
         allow_default_rules: bool = False,
     ) -> None:
-        """``engine_seed`` (default 77): seed KiCad's (process-global) KIID/UUID
+        """The engine knobs, ``simplify_outline`` and ``drc_promoted_codes`` are required —
+        no default here: they are ``EnvConfig`` fields (``PCBWorld`` passes
+        ``env_config.engine_kwargs()``; a direct construction passes
+        ``EnvConfig.with_overrides(...).engine_kwargs()``).
+
+        ``engine_seed``: seed KiCad's (process-global) KIID/UUID
         generator at construction for reproducible routing + UUID-keyed DRC across
         runs/processes (decided once here, never re-seeded — re-seeding mid-run would
-        replay the same UUID stream and risk collisions). ``None`` = default entropy
-        seeding (non-reproducible). The generator is global, so use one engine per
-        process for clean determinism.
+        replay the same UUID stream and risk collisions). < 0 = default entropy
+        seeding (non-reproducible). Passed to the engine as given — an ``int`` in the
+        C++ ``int`` range, anything else raises ``ValueError`` — so :attr:`engine_seed` reads it back unchanged.
+        The generator is global, so use one engine per process for clean determinism.
 
-        ``shove_iter_limit`` (250) / ``followbranch_iter_limit`` (1,000,000) bound the
+        ``shove_iter_limit`` / ``followbranch_iter_limit`` bound the
         PNS shove loop and ``TOPOLOGY::followBranch`` DFS. They are iteration counts,
         not wallclock timeouts, so a given board truncates at the same point on every
         run (a wallclock cutoff would land differently each time).
 
-        ``simplify_outline`` (default False): after loading, rewrite tessellated
+        ``reject_if_stuck`` / ``trim_at_contact``: the default make_line / commit
+        policies of :meth:`fix_route` and :meth:`finish`.
+
+        ``simplify_outline``: after loading, rewrite tessellated
         micro-segment outline chains (Edge.Cuts/Margin) into native arcs/merged
         lines in the loaded board — see ``pcb_world.engine.outline_simplify``.
         Removes the PNS walkaround cluster blowup on baked-curve boards; the
         result is what routing, obs, DRC, and ``save`` all consume.
 
+        ``drc_promoted_codes``: the warning codes the ``errors_and_promoted`` DRC
+        severity mode counts as errors — held by :attr:`drc_helper`.
+
         ``allow_default_rules`` (default False): the load contract refuses a
         board whose design rules did not come from a project file (they would
         be KiCad compile-time defaults). ``True`` declares the caller will
         substitute its own rules right after construction (the env's
-        ``use_yaml_drc_fallback`` path) — the pro-less load is then allowed.
+        ``rules_source='board_or_yaml'`` path) — the pro-less load is then allowed.
         Legacy (KiCad 5 era, rules embedded in the pcb) boards are refused
         regardless.
         """
@@ -234,7 +250,7 @@ class KiCadEngine:
         #     without one would silently route under KiCad DEFAULT rules,
         #     which is refused unless the caller declared it will substitute
         #     its own rules (``allow_default_rules=True`` — the env sets it
-        #     for its ``use_yaml_drc_fallback`` opt-in, which then pushes the
+        #     for ``rules_source='board_or_yaml'``, which then pushes the
         #     YAML rules via ``apply_default_drc_if_fallback``);
         #   * legacy boards that embed their rules in the .kicad_pcb body
         #     (KiCad 5 era) are refused unconditionally — convert once via
@@ -251,9 +267,14 @@ class KiCadEngine:
         # / ``was_legacy_design_settings_loaded()`` to tell whether the
         # currently exposed design rules originated on disk or are the
         # KiCad default fallback.
-        # None or a negative value → -1 (entropy seeding, non-reproducible);
-        # a non-negative value seeds the KIID generator deterministically.
-        seed = -1 if engine_seed is None or int(engine_seed) < 0 else (int(engine_seed) & 0x7FFFFFFF)
+        # A negative value = entropy seeding (non-reproducible); a non-negative
+        # value seeds the KIID generator deterministically. Checked here, not left
+        # to the binding, so a bad seed names the knob.
+        if (not isinstance(engine_seed, int) or isinstance(engine_seed, bool)
+                or not -2**31 <= engine_seed < 2**31):
+            raise ValueError(f"engine_seed must be an int in the C++ int range "
+                             f"[-2**31, 2**31) (< 0 = entropy seeding), got {engine_seed!r}")
+        seed = engine_seed
 
         if ipc_enabled():
             # GPL/BSD-3 boundary (default): the GPL shared library loads only in
@@ -305,12 +326,15 @@ class KiCadEngine:
                 f"design rules would be KiCad defaults — add the .kicad_pro "
                 f"next to the board (or pass project_path), or construct "
                 f"with allow_default_rules=True if the caller substitutes "
-                f"its own rules (env: use_yaml_drc_fallback)."
+                f"its own rules (env: rules_source=board_or_yaml)."
             )
         # Default stuck-rejection policy for fix_route (make_line). When True, a
         # route that can't reach its target is aborted rather than committing a
         # partial dangling stub. Overridable per-call via fix_route(reject_if_stuck=).
         self._reject_if_stuck = bool(reject_if_stuck)
+        # Default contact-trim policy for fix_route and finish commits; see fix_route.
+        # (Drag commits are never trimmed; optimize_all_lines always is.)
+        self._trim_at_contact = bool(trim_at_contact)
         # Load-time outline simplification — must run before anything reads the
         # board (obs parse, routing, DRC) and before router configuration: the
         # native replace re-inits the PNS world and ROUTING_SETTINGS.
@@ -327,7 +351,7 @@ class KiCadEngine:
             self.outline_simplify_report = apply_graphics_simplify(
                 self._r, layers=layers)
         self._r.build_connectivity()
-        self.drc_helper = DRCUtils()
+        self.drc_helper = DRCUtils(drc_promoted_codes)
         self.layer_map = LayerMapping(self._r.get_copper_layer_count())
         # Net-subset (partial routing): when set (via set_target_nets), the
         # unrouted/connectivity count is scoped to these net codes so "board
@@ -342,6 +366,40 @@ class KiCadEngine:
         # Built on first use — pads are fixed for the life of the engine (reset
         # only strips copper). Read by pad_block_reason().
         self._thru_pads: list[tuple[float, float, float, int]] | None = None
+
+    # --- Readback of the construction knobs (PCBWorld.effective_config) ---
+    # The three numeric knobs are read from the C++ router itself.
+
+    @property
+    def engine_seed(self) -> int:
+        """The KIID seed the router was constructed with (< 0 = entropy seeding)."""
+        return self._r.get_engine_seed()
+
+    @property
+    def shove_iter_limit(self) -> int:
+        """The shove iteration bound the PNS settings hold now."""
+        return self._r.get_shove_iter_limit()
+
+    @property
+    def followbranch_iter_limit(self) -> int:
+        """The ``TOPOLOGY::followBranch`` DFS pop bound the PNS settings hold."""
+        return self._r.get_followbranch_iter_limit()
+
+    @property
+    def simplify_outline(self) -> bool:
+        """Whether the load-time outline simplification ran on this board."""
+        return self.outline_simplify_report is not None
+
+    @classmethod
+    def for_board_file(cls, board_path: str, project_path: str | None = None, *,
+                       allow_default_rules: bool = False) -> "KiCadEngine":
+        """An engine outside any env — scoring a saved board, converting or saving
+        files, diagnostics: the ``configs/env.yaml`` (``env:``) engine knobs
+        with the outline kept as stored (``simplify_outline`` off)."""
+        from configs.loader.schema import EnvConfig
+
+        return cls(board_path, project_path, allow_default_rules=allow_default_rules,
+                   **EnvConfig.with_overrides(simplify_outline=False).engine_kwargs())
 
     # --- Pad-adjacent placement guard ---
 
@@ -390,15 +448,23 @@ class KiCadEngine:
     def route_item_radius_mm(self, *, for_via: bool) -> float:
         """Copper half-width of the item the next fix_route would land.
 
-        Netclass default for the net being routed; falls back to KiCad's own
-        defaults when the class leaves the field unset (reported as -1).
+        Inside a routing session: the size the router holds
+        (:meth:`get_route_sizes` — what ``start_route`` imported, plus any
+        session override). Outside one there is no session net
+        (``get_current_net_code() == -1``), so it is the Default class value;
+        a non-positive Default value raises.
         """
-        nc = self.get_netclass_for_net(self.get_current_net_code())
-        raw = (getattr(nc, "via_diameter_mm", -1.0) if for_via
-               else getattr(nc, "track_width_mm", -1.0))
-        if raw is None or raw <= 0.0:
-            raw = 0.6 if for_via else 0.2
-        return float(raw) / 2.0
+        key, attr = (("via_diameter", "via_diameter_mm") if for_via
+                     else ("track_width", "track_width_mm"))
+        if self.is_routing():
+            return float(self.get_route_sizes()[key]) / 2.0
+        value = getattr(self.get_netclass_for_net(self.get_current_net_code()), attr, -1.0)
+        if value is None or value <= 0.0:
+            value = getattr(self.get_design_rules().default_netclass, attr, -1.0)
+        if value is None or value <= 0.0:
+            raise ValueError(f"route_item_radius_mm: no positive {attr} on net "
+                             f"{self.get_current_net_code()}'s class or the Default class")
+        return float(value) / 2.0
 
     def set_target_nets(self, target_nets) -> None:
         """Scope the unrouted/connectivity count to ``target_nets`` (net codes).
@@ -485,20 +551,31 @@ class KiCadEngine:
         """Corner mode: 0=MITERED_45 (default), 2=MITERED_90 (no diagonals)."""
         self._r.set_corner_mode(mode)
 
+    # Sizes: ``start_route`` imports track width / via size / clearance from the
+    # start item's net class (the call pcbnew's interactive router makes). The
+    # three setters override the CURRENT routing session only; they raise on <= 0
+    # (ValueError) and when no route is in progress (RuntimeError).
     def set_track_width(self, width_mm: float) -> None:
-        """Track width in millimetres (0 = use design rules)."""
+        """Override the track width (mm, > 0) for the current routing session."""
         self._r.set_track_width(width_mm)
 
     def set_via_diameter(self, diameter_mm: float) -> None:
-        """Via outer diameter in millimetres."""
+        """Override the via outer diameter (mm, > 0) for the current routing session."""
         self._r.set_via_diameter(diameter_mm)
 
     def set_via_drill(self, drill_mm: float) -> None:
-        """Via drill diameter in millimetres."""
+        """Override the via drill (mm, > 0) for the current routing session."""
         self._r.set_via_drill(drill_mm)
 
-    def reset_via_mode(self) -> None:
-        self._r.reset_via_mode()
+    def get_route_sizes(self) -> dict[str, float]:
+        """Sizes (mm) the router currently holds, as set by ``start_route``."""
+        tw, vd, dr, cl = self._r.get_route_sizes()
+        return {"track_width": tw, "via_diameter": vd, "via_drill": dr, "clearance": cl}
+
+    def set_via_placement(self, on: bool) -> None:
+        """Turn via placement on/off (on: the next fix ends with a via). Only
+        changeable while a route is in progress — the engine raises otherwise."""
+        self._r.set_via_placement(bool(on))
 
     # --- Routing ---
 
@@ -523,6 +600,7 @@ class KiCadEngine:
         expected_layer: int | None = None,
         arrive_tol_mm: float = 0.0,
         require_via: bool = False,
+        trim_at_contact: bool | None = None,
     ) -> bool:
         """Route to (x_mm, y_mm) and fix the result.
 
@@ -530,7 +608,7 @@ class KiCadEngine:
         walkaround could not reach (x_mm, y_mm) — the head got stuck at the board
         edge or existing copper — so no partial dangling stub is drawn. ``None``
         (the default) uses the engine-level policy set at construction
-        (``reject_if_stuck=``, default True); pass True/False to override per call.
+        (``reject_if_stuck=``); pass True/False to override per call.
 
         ``arrive_tol_mm`` (0 = exact coordinate match) widens the reject_if_stuck
         arrival test to a radius. Exact match is stricter than PNS's own rule —
@@ -550,31 +628,66 @@ class KiCadEngine:
         action (make_line) committing an unintended layer switch left over
         from residual via-placement state. ``None`` skips the check (make_via
         is exempt since a layer switch is its intended outcome).
+
+        ``trim_at_contact``: just before the commit, clean the copper it writes on
+        every net it touches — the route and whatever shove moved: stretches lying
+        collinearly (within a few nm) on same-net copper at least as wide are
+        dropped, and same-net segments are split at every committed segment end,
+        committed via and same-net crossing, so no copper is duplicated and every
+        T/X junction is a joint (the track cleaner's anchor-based dangling pass
+        then keeps those connections). The route is not recomputed; vias are never
+        removed. ``None`` uses the engine-level policy
+        (``trim_at_contact=``).
         """
         if reject_if_stuck is None:
             reject_if_stuck = self._reject_if_stuck
+        if trim_at_contact is None:
+            trim_at_contact = self._trim_at_contact
         board_layer = (
             -1 if expected_layer is None
             else self.layer_map.human_to_board(expected_layer)
         )
         return self._r.fix_route(x_mm, y_mm, force_finish, reject_if_stuck,
                                  board_layer, float(arrive_tol_mm),
-                                 bool(require_via))
+                                 bool(require_via), bool(trim_at_contact))
+
+    def optimize_all_lines(self, net_codes=None, passes: int = 2) -> int:
+        """Final whole-board line optimization — a finishing pass like
+        :meth:`cleanup_tracks`, not a routing step.
+
+        Runs the router's PNS optimizer (merge segments / obtuse corners / colinear
+        runs, topology kept, Smart Pads in 45° modes; collisions checked) over every
+        committed line (joint to joint) of ``net_codes`` (None/empty = all nets), up
+        to ``passes`` times (``passes < 1`` = no-op) or until a pass changes nothing.
+        A result that would touch same-net copper the original line did not is
+        rejected, so connectivity is unchanged. A result that leaves the shape as it
+        was is not committed either — that includes one that only drops vertices on a
+        straight run, which ``cleanup_tracks(merge_segments=True)`` merges instead.
+        QUIESCENT ONLY: returns -1 while a routing or drag session is open. Returns
+        the number of lines replaced.
+        """
+        return int(self._r.optimize_all_lines(
+            [int(n) for n in (net_codes or [])], int(passes)))
 
     def cancel_route(self) -> None:
         self._r.cancel_route()
 
-    def finish(self, max_attempts: int = 5) -> bool:
-        return self._r.finish(max_attempts)
+    def finish(self, max_attempts: int = 5, trim_at_contact: bool | None = None) -> bool:
+        """Auto-complete the open route to the nearest unconnected anchor and commit.
+
+        ``trim_at_contact``: the same pre-commit cleanup as :meth:`fix_route`'s — the
+        router joins the route's end through its end item, but the stretch before it
+        can still run along same-net copper. ``None`` uses the engine-level policy.
+        """
+        if trim_at_contact is None:
+            trim_at_contact = self._trim_at_contact
+        return self._r.finish(max_attempts, bool(trim_at_contact))
 
     def undo_last_segment(self) -> bool:
         return self._r.undo_last_segment()
 
     def flip_posture(self) -> None:
         self._r.flip_posture()
-
-    def toggle_via(self) -> None:
-        self._r.toggle_via()
 
     def switch_layer(self, layer: int) -> bool:
         """Switch routing layer. layer is human layer (1=Top, N=Bottom)."""
@@ -773,9 +886,10 @@ class KiCadEngine:
         return self._r.get_design_rules()
 
     def set_design_rules(self, rules) -> None:
-        """Apply the global minima fields of a DesignRules object.
+        """Apply the global minima and the ``default_netclass`` size fields of a
+        DesignRules object (the latter into the board's Default net class).
 
-        Preset lists and netclass entries are ignored (read-only at this layer).
+        Preset lists and the other netclass entries are ignored (read-only here).
         Negative field values are treated as 'leave unchanged', so partial
         updates are easy::
 
@@ -871,6 +985,10 @@ class KiCadEngine:
         released / cleared by :meth:`reset_checkpoints`), in which case the board is
         left unchanged. Check the return (or :meth:`has_checkpoint` beforehand) in
         long-lived loops so a stale handle is never silently acted on.
+
+        Raises ``RuntimeError`` (after the board, DRC state and UUID stream are
+        restored) when the checkpoint held a routing session that cannot be
+        re-opened on its net at the stored head.
         """
         ok = self._r.restore(handle)
         if ok:
@@ -884,7 +1002,8 @@ class KiCadEngine:
         large boards. The checkpoint's DRC state is restored too.
 
         Returns ``True`` if restored, ``False`` if ``handle`` is invalid (see
-        :meth:`restore`); the board is left unchanged on ``False``.
+        :meth:`restore`); the board is left unchanged on ``False``. Raises like
+        :meth:`restore` when the session cannot be re-opened.
         """
         ok = self._r.restore_incremental(handle)
         if ok:
@@ -928,7 +1047,7 @@ class KiCadEngine:
         mints the SAME UUID stream — making per-episode routing and UUID-keyed DRC
         reproducible instead of drifting as the global generator advances across
         episodes (the generator is seeded once at construction and never re-seeded;
-        see ``engine_seed``). No-op under entropy seeding (``engine_seed=None`` / < 0).
+        see ``engine_seed``). No-op under entropy seeding (``engine_seed`` < 0).
         Collision-safe the same way :meth:`restore` is: pre-load items keep their file
         UUIDs (drawn before the captured position) and the previous episode's routed
         tracks are deleted before this call, so the re-issued stream never aliases a

@@ -139,3 +139,6 @@ wandb/
 /external/freerouting/*.jar
 # Pinned upstream checkout made by tools/setup/fetch_baselines.sh (KRT_ROOT)
 /external/KiCadRoutingTools/
+
+# Local auth credentials — never commit.
+*.cert

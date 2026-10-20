@@ -63,7 +63,7 @@ SYNTH_FEWSHOT_PREP_LIMIT="${SYNTH_FEWSHOT_PREP_LIMIT:-8}"
 # ── Sample sizes ──────────────────────────────────────────────────
 N_SAMPLES="${N_SAMPLES:-5}"
 N_FEWSHOT="${N_FEWSHOT:-2}"
-LIMIT_REAL="${LIMIT_REAL:-0}"       # 0 = all 100 real boards (0001~0100 in the pcbench_exacad dataset)
+LIMIT_REAL="${LIMIT_REAL:-0}"       # 0 = all 99 D3-A boards (configs/datasets/d3.json easy.test)
 LIMIT_SYNTH="${LIMIT_SYNTH:-128}"   # full synth_2L_v2/test set
 
 # ── Model / sampling ──────────────────────────────────────────────
@@ -114,26 +114,16 @@ run_scenario() {
     local limit
     local real_files=()
     if [[ "$set_name" == "real" ]]; then
-        # Resolve real boards 0001..0100 under exacad_sorted/. Each board
-        # lives in a directory named "<bid>_<slug>"; we pick its
-        # processed_v9_guide_v3.kicad_pcb. LIMIT_REAL caps the count
-        # (default 0 = all 100).
-        mapfile -t real_files < <(
-            python3 - "$REPO_ROOT" "$REAL_BOARD_DIR" "$REAL_BOARD_NAME_FILTER" "$LIMIT_REAL" <<'PY'
-import glob, sys
-repo, exacad, fname, limit = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
-out, missing = [], []
-for i in range(1, 101):
-    bid = f"{i:04d}"
-    matches = sorted(glob.glob(f"{exacad}/{bid}_*/{fname}"))
-    (out if matches else missing).append(matches[0] if matches else bid)
-if missing:
-    sys.stderr.write(f"[WARN] {len(missing)} board ids didn't resolve: {missing[:3]}...\n")
-if limit > 0:
-    out = out[:limit]
-print("\n".join(out))
-PY
-        )
+        # Resolve the D3-A boards (configs/datasets/d3.json easy.test) under
+        # exacad_sorted/. Each board lives in a directory named
+        # "<bid>_<slug>"; we pick its processed_v9_guide_v3.kicad_pcb.
+        # LIMIT_REAL caps the count (default 0 = all 99; a missing board is
+        # then an error, see d3a_boards.py).
+        local _resolved
+        _resolved="$(python3 "$SCRIPT_DIR/d3a_boards.py" "$REAL_BOARD_DIR" "$REAL_BOARD_NAME_FILTER" "$LIMIT_REAL")" \
+            || { echo "[error] could not resolve the D3-A board list under $REAL_BOARD_DIR (see above)" >&2; exit 1; }
+        real_files=()
+        [[ -n "$_resolved" ]] && mapfile -t real_files <<< "$_resolved"
         if [[ "${#real_files[@]}" -eq 0 ]]; then
             echo "[skip] no real boards matched $REAL_BOARD_NAME_FILTER under $REAL_BOARD_DIR"
             return

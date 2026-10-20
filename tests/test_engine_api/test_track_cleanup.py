@@ -25,6 +25,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.engine import open_engine
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "build_rl" / "pcbnew" / "python" / "rl"))
 
@@ -280,12 +282,9 @@ class TestCrossProcessDeterminism:
 class TestEngineWrapper:
     def test_engine_cleanup_tracks(self, cleanup_board_path: str) -> None:
         pytest.importorskip("pcb_world.engine")
-        from pcb_world.engine import (
-            CLEANUP_TOPOLOGY_PRESERVING,
-            KiCadEngine,
-        )
+        from pcb_world.engine import CLEANUP_TOPOLOGY_PRESERVING
 
-        engine = KiCadEngine(cleanup_board_path)
+        engine = open_engine(cleanup_board_path)
         try:
             engine.build_connectivity()
 

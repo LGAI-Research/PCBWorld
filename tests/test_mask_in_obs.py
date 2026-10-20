@@ -1,10 +1,10 @@
 """mask-in-obs equivalence tests — wrapper-embedded act-time masks.
 
-``KiCadRLWrapper`` embeds the act-time mask arrays under ``obs["_masks"]``
+``KiCadRLWrapper`` embeds the act-time mask payload under ``obs["_masks"]``
 on every step/reset (computed in-worker right after ``_refresh_cache``);
-``gather_mask_arrays(obs_list=)`` stacks them locally instead of issuing 4
-``env_method`` IPC round-trips per rollout step (query fallback for obs
-without the payload — stubs, diagnostics). Semantics: the state right
+``gather_dist(obs_list=)`` stacks it locally instead of an
+``env_method("mask_payload")`` IPC round-trip per rollout step (query path for
+obs without the payload — stubs, diagnostics). Semantics: the state right
 after a step/reset return equals the state at the next act time (nothing
 mutates in between), so the embedded arrays must be **bit-identical** to the
 legacy queries — and the collected trajectories must be identical too (same
@@ -19,15 +19,18 @@ values, different source). Verified here:
 from __future__ import annotations
 
 import os
+from dataclasses import fields
 
 import numpy as np
 import pytest
 
+from configs.loader.schema import EnvConfig
 from pcb_world.engine import engine_available
 import torch
 
 from pcb_world.core.masking import NUM_ACTIONS
-from methods.rl_agent.policy.agent import gather_mask_arrays
+from methods.rl_agent.models.v1.spec import DistInputs
+from methods.rl_agent.policy.agent import gather_dist
 from methods.rl_agent.training.collect import collect_n_steps_ppo
 
 from tests._mock_obs import make_mock_obs
@@ -67,13 +70,7 @@ class _ScriptedEnv:
             "step": self._step, "acc": self._acc,
         }
         if self._embed_masks:
-            obs["_masks"] = {
-                "action": self.action_masks(),
-                "pointer": self.start_route_pointer_indices(),
-                "mode": self.mode_mask(),
-                "net_valid": self.net_valid_mask(),
-                "offboard": self.offboard_pointer_indices(),
-            }
+            obs["_masks"] = self.mask_payload()
         return obs
 
     def reset(self, **kwargs):
@@ -126,6 +123,21 @@ class _ScriptedEnv:
         k = self._acc % 2
         return np.arange(k, dtype=np.int64) + 10 + (self._acc % 3)
 
+    def offlayer_pointer_indices(self) -> np.ndarray:
+        # variable K per env/step incl. 0 — its own make_line-row block
+        k = (self._acc // 3) % 3
+        return np.arange(k, dtype=np.int64) + 20
+
+    def mask_payload(self) -> dict:
+        return {
+            "action": self.action_masks(),
+            "pointer": self.start_route_pointer_indices(),
+            "mode": self.mode_mask(),
+            "net_valid": self.net_valid_mask(),
+            "offlayer": self.offlayer_pointer_indices(),
+            "offboard": self.offboard_pointer_indices(),
+        }
+
     def close(self):
         pass
 
@@ -139,21 +151,30 @@ class _ScriptedPolicy:
     def eval(self):
         pass
 
-    def act_and_value(self, obs_list, action_masks=None, pointer_masks=None,
-                      mode_mask=None, deterministic=False, **_kw):
+    def act_and_value(self, obs_list, *, dist, deterministic=False, walked=None):
         B = len(obs_list)
         actions = torch.zeros(B, 3, dtype=torch.long)
         log_probs = torch.zeros(B)
         values = torch.zeros(B)
         for i, obs in enumerate(obs_list):
             tr = obs["_trace"]
-            valid = action_masks[i].nonzero(as_tuple=False).flatten()
+            valid = dist.action[i].nonzero(as_tuple=False).flatten()
             actions[i, 0] = valid[tr["acc"] % len(valid)]
             actions[i, 1] = (tr["acc"] + tr["env_id"]) % 5
             actions[i, 2] = tr["step"] % 3
             log_probs[i] = float(tr["acc"] % 97) / 97.0
             values[i] = float((tr["acc"] + 3) % 89) / 89.0
         return actions, log_probs, values
+
+
+def _assert_dist_equal(got: DistInputs, want: DistInputs) -> None:
+    for f in fields(DistInputs):
+        g, w = getattr(got, f.name), getattr(want, f.name)
+        if w is None:
+            assert g is None, f.name
+            continue
+        assert g.dtype == w.dtype, f.name
+        assert np.array_equal(g, w), f.name
 
 
 # ===================================================================
@@ -171,34 +192,40 @@ class TestGatherMaskParity:
         obs = [e._make_obs() for e in envs]
 
         for pns in (False, True):
-            m_obs = gather_mask_arrays(envs, [0, 1, 2, 3],
-                                       policy_net_select=pns, obs_list=obs)
-            m_query = gather_mask_arrays(envs, [0, 1, 2, 3],
-                                         policy_net_select=pns)
-            for got, want, name in zip(
-                m_obs, m_query, ("action", "pointer", "mode", "net_valid"),
-            ):
-                if want is None:
-                    assert got is None, name
-                    continue
-                assert got.dtype == want.dtype, name
-                assert np.array_equal(got, want), name
+            m_obs = gather_dist(envs, [0, 1, 2, 3],
+                                policy_net_select=pns, obs_list=obs)
+            m_query = gather_dist(envs, [0, 1, 2, 3],
+                                  policy_net_select=pns)
+            assert (m_obs.net_valid is None) == (not pns)
+            _assert_dist_equal(m_obs, m_query)
+        # not vacuous: the off-layer block is ragged and non-empty somewhere
+        assert m_obs.offlayer.shape[1] > 0
 
     def test_missing_masks_falls_through(self):
-        """obs without '_masks' → legacy query path (no crash, same output)."""
+        """obs without '_masks' → query path (no crash, same output)."""
         envs = [_ScriptedEnv(i, embed_masks=False) for i in range(2)]
         obs = [e.reset()[0] for e in envs]
-        m_obs = gather_mask_arrays(envs, [0, 1], policy_net_select=False,
-                                   obs_list=obs)
-        m_query = gather_mask_arrays(envs, [0, 1], policy_net_select=False)
-        for got, want in zip(m_obs[:3], m_query[:3]):
-            assert np.array_equal(got, want)
+        m_obs = gather_dist(envs, [0, 1], policy_net_select=False,
+                            obs_list=obs)
+        m_query = gather_dist(envs, [0, 1], policy_net_select=False)
+        _assert_dist_equal(m_obs, m_query)
+
+    @pytest.mark.parametrize("key", ["offlayer", "offboard", "mode"])
+    def test_payload_missing_key_raises(self, key):
+        """A payload without one of the six keys fails loudly — it is never
+        read as "nothing masked" (the pre-DistInputs gather turned a missing
+        ``offlayer`` / ``offboard`` into an empty block for the whole batch)."""
+        envs = [_ScriptedEnv(i, embed_masks=True) for i in range(2)]
+        obs = [e.reset()[0] for e in envs]
+        del obs[1]["_masks"][key]
+        with pytest.raises(KeyError, match=key):
+            gather_dist(envs, [0, 1], policy_net_select=False, obs_list=obs)
 
 
     def test_offboard_rides_pointer_block(self):
         """Off-board rows are appended to the same-point rows per env, THEN
         padded — identically on the obs path, the list path and the
-        env_method path (stack_cand_block_masks)."""
+        env_method path."""
         envs = [_ScriptedEnv(i, embed_masks=True) for i in range(4)]
         obs = [e.reset()[0] for e in envs]
         for s in range(2):
@@ -209,11 +236,11 @@ class TestGatherMaskParity:
                 return [getattr(envs[i], name)(*a, **kw) for i in indices]
 
         idx = [0, 1, 2, 3]
-        ptr_obs = gather_mask_arrays(envs, idx, policy_net_select=False,
-                                     obs_list=obs)[1]
-        ptr_list = gather_mask_arrays(envs, idx, policy_net_select=False)[1]
-        ptr_pool = gather_mask_arrays(_Pool(), idx, policy_net_select=False)[1]
-        assert ptr_obs.dtype == np.int64
+        ptr_obs = gather_dist(envs, idx, policy_net_select=False,
+                              obs_list=obs).pointer
+        ptr_list = gather_dist(envs, idx, policy_net_select=False).pointer
+        ptr_pool = gather_dist(_Pool(), idx, policy_net_select=False).pointer
+        assert ptr_obs.dtype == np.int32   # stored int32 (DistInputs)
         assert np.array_equal(ptr_obs, ptr_list)
         assert np.array_equal(ptr_obs, ptr_pool)
         assert any(e.offboard_pointer_indices().size for e in envs)  # not vacuous
@@ -236,7 +263,7 @@ class TestRealEnvMaskParity:
         from pcb_world.core.env import PCBWorld
         from methods.rl_agent.wrappers.adapter import KiCadRLWrapper
 
-        env = PCBWorld(board_path=_FIXTURE_BOARD, max_steps=20)
+        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
         return KiCadRLWrapper(env)
 
     @staticmethod
@@ -247,6 +274,7 @@ class TestRealEnvMaskParity:
             (m["pointer"], wrapper.start_route_pointer_indices(), "pointer"),
             (m["mode"], wrapper.mode_mask(), "mode"),
             (m["net_valid"], wrapper.net_valid_mask(), "net_valid"),
+            (m["offlayer"], wrapper.offlayer_pointer_indices(), "offlayer"),
             (m["offboard"], wrapper.offboard_pointer_indices(), "offboard"),
         ):
             assert got.dtype == want.dtype, name
@@ -295,10 +323,13 @@ class TestPPOCollectorMaskInObs:
         for oa, ob in zip(a.obs_list, b.obs_list):
             # obs differ only by the embedded '_masks' payload
             assert oa["_trace"] == ob["_trace"]
-        for name in ("actions", "log_probs", "action_masks", "pointer_masks",
-                     "mode_masks", "rewards", "raw_rewards", "values",
+        for name in ("rewards", "raw_rewards", "values",
                      "episode_starts", "terminated_mask", "final_values"):
             assert np.array_equal(getattr(a, name), getattr(b, name)), name
+        for name in ("actions", "old_log_probs", "old_values"):
+            assert np.array_equal(getattr(a.transition, name),
+                                  getattr(b.transition, name)), name
+        _assert_dist_equal(a.transition.dist, b.transition.dist)
         assert np.array_equal(a.terminal_values, b.terminal_values,
                               equal_nan=True)
         assert a.episode_rewards == b.episode_rewards

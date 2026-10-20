@@ -16,6 +16,7 @@ import textwrap
 import numpy as np
 import pytest
 
+from configs.loader.schema import EnvConfig
 from tests.helpers.pro_sidecar import write_default_pro
 from tests.test_env.test_action_class_empty import BOARD_TEMPLATE
 
@@ -33,10 +34,8 @@ def _truncating_reward(board: str, *, seed: int | None) -> float:
     from pcb_world.core.env import PCBWorld
 
     env = PCBWorld(
-        board_path=board,
-        reward_rule="drc_only_sparse",
-        reward_noise_std=NOISE_STD,
-        max_steps=1,
+        board,
+        EnvConfig.with_overrides(reward_rule="drc_only_sparse", reward_noise_std=NOISE_STD, max_steps=1),
         seed=seed,
     )
     try:

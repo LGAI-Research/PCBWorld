@@ -75,7 +75,7 @@ def test_server_crash_respawns_worker_and_spares_siblings(
 ):
     monkeypatch.setenv("KICAD_CRASH_LOG_DIR", str(tmp_path))  # parent postmortem
     pool = make_decoder_env_pool(
-        str(BOARD), n_envs=2,
+        str(BOARD), n_envs=2, advance_rng_on_reload=False,
         **pool_kwargs(max_steps=30, masking_rule="default_no_finish",
                       reward_rule="drc_only_dense"),
     )

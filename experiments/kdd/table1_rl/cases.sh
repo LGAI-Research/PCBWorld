@@ -36,8 +36,16 @@ paper_repro_load_table1_policy_case() {
   TABLE1_D_FF=512
   TABLE1_WIRE_VIA_EMISSION="per_step"
 
+  # Rollout + scoring of the Table 1 cells (paper Table 3): configs/paper_train_flags.sh
+  # PAPER_*_FLAGS plus policy_best.pt per seed, 5 rollouts per board, the routing angle
+  # (TABLE1_CORNER_MODE) as the track-angle check and the trained 64-slot net table (D3-A board 0096 has 73 nets and is out of the 99 boards).
+  TABLE1_PAPER_TASKS_DEFAULT="d2a d3a d3b"
+  TABLE1_PAPER_N_ROLLOUTS=5
+  TABLE1_PAPER_N_MAX_SLOTS=64
+
   case "$method" in
     ppo_per_step)
+      TABLE1_CELL="transformer_pcbworld"
       TABLE1_TRAIN_MODULE="methods.rl_agent.training.train_ppo"
       TABLE1_REWARD_RULE="drc_dense_promoted"
       TABLE1_ITERATIONS=300
@@ -49,6 +57,7 @@ paper_repro_load_table1_policy_case() {
       TABLE1_GROUP_SIZE=""
       ;;
     ppo_terminal)
+      TABLE1_CELL="transformer_pcbworld_episodic"
       TABLE1_TRAIN_MODULE="methods.rl_agent.training.train_ppo"
       TABLE1_REWARD_RULE="drc_sparse_promoted_ppo"
       TABLE1_ITERATIONS=300
@@ -60,6 +69,7 @@ paper_repro_load_table1_policy_case() {
       TABLE1_GROUP_SIZE=""
       ;;
     grpo)
+      TABLE1_CELL="transformer_pcbworld_grpo"
       TABLE1_TRAIN_MODULE="methods.rl_agent.training.train_grpo"
       TABLE1_REWARD_RULE="drc_sparse_promoted_grpo"
       TABLE1_ITERATIONS=1800

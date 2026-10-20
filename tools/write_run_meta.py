@@ -21,6 +21,8 @@ from datetime import datetime
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent
+if str(_REPO) not in sys.path:  # configs.loader when run as a script
+    sys.path.insert(0, str(_REPO))
 
 
 def _git_commit() -> str | None:
@@ -44,7 +46,6 @@ def write_run_meta(out_dir, dataset=None, cmd=None, extra=None) -> Path:
         "cwd": str(Path.cwd()),
     }
     if dataset:
-        sys.path.insert(0, str(_REPO))
         from configs.loader.paths import resolve_dataset
 
         meta["dataset"] = dataset
@@ -57,7 +58,8 @@ def write_run_meta(out_dir, dataset=None, cmd=None, extra=None) -> Path:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(
+    from configs.loader.cli import StrictArgumentParser
+    ap = StrictArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

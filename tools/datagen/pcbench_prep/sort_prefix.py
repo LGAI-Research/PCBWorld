@@ -33,6 +33,7 @@ import json
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
 
 CSV_NAME = "pcb_characteristics_exacad_sorted.csv"
@@ -67,7 +68,11 @@ def board_stats(folder: Path) -> dict | None:
 
 
 def main():
-    argparse.ArgumentParser(
+    repo_dir = str(Path(__file__).resolve().parents[3])  # configs.loader when run as a script
+    if repo_dir not in sys.path:
+        sys.path.insert(0, repo_dir)
+    from configs.loader.cli import StrictArgumentParser
+    StrictArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     ).parse_args()

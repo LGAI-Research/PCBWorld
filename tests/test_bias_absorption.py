@@ -21,6 +21,7 @@ import torch
 from methods.rl_agent.models.v1.blocks import build_slot_membership
 from methods.rl_agent.models.v1.net import KiCadRLModel
 from tests._mock_obs import make_mock_obs
+from tests.helpers.dist_inputs import permissive_dist
 
 
 def _devices() -> list[str]:
@@ -41,6 +42,8 @@ class TestSameNetBiasAbsorption:
     def _opened_model(self, device: str) -> KiCadRLModel:
         torch.manual_seed(0)
         m = KiCadRLModel(
+            disable_slot_emb=False,
+            policy_net_select=False,
             d_model=32, n_heads=4, n_layers=2, d_ff=64, max_seq_len=2000,
             n_freq=4, use_critic=True, same_net_bias=True,
         ).to(device)
@@ -88,9 +91,10 @@ class TestSameNetBiasAbsorption:
         # out by ReZero or dropped by the attention kernel).
         m = self._opened_model(device)
         obs = self._varied_batch()
-        acts, _ = m.act(obs, deterministic=True)
+        dist = permissive_dist(m, obs)
+        acts, _ = m.act(obs, dist=dist, deterministic=True)
         m.zero_grad(set_to_none=True)
-        lp, ent, val = m.evaluate_actions_and_value(obs, acts)
+        lp, ent, val = m.evaluate_actions_and_value(obs, acts, dist=dist)
         (lp.sum() + ent.sum() + val.pow(2).sum()).backward()
         assert m.same_net_bias.alpha.grad.abs().max() > 1e-4
 
@@ -107,9 +111,12 @@ class TestSameNetBiasAbsorption:
         # checkpoints are byte-identical, so backward compat holds.
         src = self._opened_model("cpu")
         obs = self._varied_batch()
-        acts, _ = src.act(obs, deterministic=True)
+        dist = permissive_dist(src, obs)
+        acts, _ = src.act(obs, dist=dist, deterministic=True)
 
         dst = KiCadRLModel(
+            disable_slot_emb=False,
+            policy_net_select=False,
             d_model=32, n_heads=4, n_layers=2, d_ff=64, max_seq_len=2000,
             n_freq=4, use_critic=True, same_net_bias=True,
         )
@@ -117,7 +124,7 @@ class TestSameNetBiasAbsorption:
         assert not missing and not unexpected
 
         with torch.no_grad():
-            lp_s, _, v_s = src.evaluate_actions_and_value(obs, acts)
-            lp_d, _, v_d = dst.evaluate_actions_and_value(obs, acts)
+            lp_s, _, v_s = src.evaluate_actions_and_value(obs, acts, dist=dist)
+            lp_d, _, v_d = dst.evaluate_actions_and_value(obs, acts, dist=dist)
         assert torch.allclose(lp_s, lp_d, atol=1e-5)
         assert torch.allclose(v_s, v_d, atol=1e-5)

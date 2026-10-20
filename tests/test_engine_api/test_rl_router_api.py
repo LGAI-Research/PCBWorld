@@ -7,8 +7,9 @@ Test board: simple_obstacle_board.kicad_pcb
 APIs covered:
   - RLRouter(board_path)           : constructor
   - set_routing_mode(mode)         : set the routing mode
-  - set_track_width(width_mm)      : set the track width
-  - start_route(x, y, layer)      : start a route
+  - start_route(x, y, layer)      : start a route (imports the net class sizes)
+  - set_track_width(width_mm)      : override the track width of the current route
+  - get_route_sizes()             : sizes the router currently holds
   - move(x, y)                    : move the route head
   - fix_route(x, y, force_finish) : commit a route
   - cancel_route()                : cancel a route
@@ -68,6 +69,13 @@ def _route_simple(r, krl) -> bool:
     """Helper for a simple P1->P2 route. Returns whether it succeeded."""
     r.set_routing_mode(krl.MODE_WALKAROUND)
     r.start_route(START[0], START[1], 0)
+    r.move(1.5, 2.5)
+    r.fix_route(1.5, 2.5, force_finish=False)
+    return r.fix_route(END[0], END[1])
+
+
+def _finish_simple(r) -> bool:
+    """Completes the P1->P2 route of an already started session."""
     r.move(1.5, 2.5)
     r.fix_route(1.5, 2.5, force_finish=False)
     return r.fix_route(END[0], END[1])
@@ -173,34 +181,64 @@ class TestSetRoutingMode:
 # 4. set_track_width()
 # ──────────────────────────────────────────────
 class TestSetTrackWidth:
-    """set_track_width() checks."""
+    """set_track_width() checks: an override for the current routing session."""
 
     def test_default_width(self, board_path: str) -> None:
-        """Design-rule width applies automatically (width=0)."""
+        """Without an override the route gets the start net's class width."""
         krl = _import_krl()
         r = krl.RLRouter(board_path)
-        r.set_track_width(0)
+        r.set_routing_mode(krl.MODE_WALKAROUND)
+        assert r.start_route(START[0], START[1], 0)
+        class_width_mm = r.get_route_sizes()[0]
+        assert class_width_mm > 0
 
-        success = _route_simple(r, krl)
-        assert success
+        assert _finish_simple(r)
 
         tracks = r.get_tracks()
         assert len(tracks) > 0
-        assert tracks[0].width_mm > 0
+        for t in tracks:
+            assert t.width_mm == pytest.approx(class_width_mm, abs=1e-6)
 
     def test_custom_width(self, board_path: str) -> None:
-        """Sets a custom track width (0.25mm)."""
+        """A width set after start_route applies to that route (0.25mm)."""
         krl = _import_krl()
         r = krl.RLRouter(board_path)
         width_mm = 0.25
+        r.set_routing_mode(krl.MODE_WALKAROUND)
+        assert r.start_route(START[0], START[1], 0)
+        assert r.get_route_sizes()[0] != pytest.approx(width_mm, abs=0.01)
         r.set_track_width(width_mm)
+        assert r.get_route_sizes()[0] == pytest.approx(width_mm, abs=1e-6)
 
-        success = _route_simple(r, krl)
-        assert success
+        assert _finish_simple(r)
 
         tracks = r.get_tracks()
         assert len(tracks) > 0
         assert tracks[0].width_mm == pytest.approx(width_mm, abs=0.01)
+
+    def test_width_set_while_idle_raises(self, board_path: str) -> None:
+        """No session open: the next start_route would re-import the net class width
+        over it, so the call raises; the session then routes at the class width."""
+        krl = _import_krl()
+        r = krl.RLRouter(board_path)
+        with pytest.raises(RuntimeError, match="while a route is in progress"):
+            r.set_track_width(0.5)
+
+        r.set_routing_mode(krl.MODE_WALKAROUND)
+        assert r.start_route(START[0], START[1], 0)
+        class_width_mm = r.get_route_sizes()[0]
+        assert class_width_mm != pytest.approx(0.5, abs=0.01)
+
+        assert _finish_simple(r)
+        assert r.get_tracks()[0].width_mm == pytest.approx(class_width_mm, abs=1e-6)
+
+    @pytest.mark.parametrize("width_mm", [0, -0.2])
+    def test_non_positive_width_raises(self, board_path: str, width_mm: float) -> None:
+        """A width <= 0 is an error, not a request for the design-rule width."""
+        krl = _import_krl()
+        r = krl.RLRouter(board_path)
+        with pytest.raises(ValueError, match="track width must be > 0"):
+            r.set_track_width(width_mm)
 
     @pytest.mark.parametrize(
         "width_mm_a,width_mm_b",
@@ -216,22 +254,23 @@ class TestSetTrackWidth:
         krl = _import_krl()
         r = krl.RLRouter(board_path)
 
+        r.set_routing_mode(krl.MODE_WALKAROUND)
+        r.start_route(START[0], START[1], 0)
         r.set_track_width(width_mm_a)
-        _route_simple(r, krl)
+        _finish_simple(r)
         width_a = r.get_tracks()[0].width_mm
 
         while r.get_track_count() > 0:
             r.delete_track_by_index(0)
 
-        r.set_track_width(width_mm_b)
         r.set_routing_mode(krl.MODE_WALKAROUND)
         r.start_route(START[0], START[1], 0)
-        r.move(1.5, 2.5)
-        r.fix_route(1.5, 2.5, force_finish=False)
-        r.fix_route(END[0], END[1])
+        r.set_track_width(width_mm_b)
+        _finish_simple(r)
         width_b = r.get_tracks()[0].width_mm
 
-        assert width_a != pytest.approx(width_b, abs=0.01)
+        assert width_a == pytest.approx(width_mm_a, abs=0.01)
+        assert width_b == pytest.approx(width_mm_b, abs=0.01)
 
 
 # ──────────────────────────────────────────────

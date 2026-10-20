@@ -37,45 +37,64 @@ if "KICAD_CRASH_LOG_DIR" not in os.environ:
     atexit.register(shutil.rmtree, _diag_tmp, True)
 
 # --- Duration-aware file scheduling (xdist --dist loadfile) -----------------
-# Wall-clock long poles (inductor compile ~7-13s, board-reload ~9s) must start
-# early: xdist hands out file-scopes in collection order and pre-assigns two
-# consecutive scopes per worker, so alphabetical order both starts them late and
-# can chain two slow files onto one worker. Reorder from measured durations:
-# zipper longest/shortest so each worker's initial pair is one long + one short
-# file. Two duration sources, freshest wins per file:
-#   tests/durations.json  — tracked seed, so fresh clones order well from run 1.
-#                           Refresh with `pytest <paths> --update-durations`
-#                           (merges just the files that ran; prunes deleted ones).
-#   pytest cache          — this host's latest measurements, recorded every run.
+# Wall-clock long poles (inductor compile ~8-20s, board-reload ~6s) must start
+# early: with --no-loadscope-reorder (pyproject addopts) xdist hands out
+# file-scopes in collection order — one per worker, then, in worker order, a
+# second one to each worker whose first file has at most 2 tests left
+# (xdist's _reschedule), then each next file to whichever worker drains first.
+# Reorder from measured durations: longest first, with the next n files (n =
+# worker count) reversed so gw0, holding the longest file, is pre-given the
+# shortest of them when that file has at most 2 tests (today
+# test_flex_attn_compiled.py, one test). Two duration sources, freshest wins per file:
+#   durations.json   — tracked seed per test tree (the nearest one above each
+#                      file, e.g. tests/durations.json), so fresh clones and
+#                      worktrees order well from run 1. Refresh with
+#                      `pytest <paths> --update-durations` (merges the files that
+#                      ran into their own tree's seed; prunes deleted ones).
+#   pytest cache     — this host's latest measurements, recorded every run.
 # Workers read the same sources at collection, so xdist sees identical orderings.
 _FILE_DURATIONS_KEY = "pcbworld/file_durations"
-_DURATIONS_SEED = os.path.join(os.path.dirname(os.path.abspath(__file__)), "durations.json")
+_SEED_NAME = "durations.json"
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _this_run_durations: dict[str, float] = {}
 
 
 def pytest_addoption(parser):
     parser.addoption(
         "--update-durations", action="store_true", dest="update_durations",
-        help="merge this run's per-file wall times into tests/durations.json",
+        help="merge this run's per-file wall times into each test tree's durations.json",
     )
 
 
-def _load_durations_seed() -> dict:
+def _seed_for(rel_file: str, root: str = _REPO_ROOT) -> str | None:
+    """The durations seed of the test tree ``rel_file`` (repo-relative) belongs to:
+    the nearest ``durations.json`` in its directory or above, else None."""
+    d = os.path.dirname(rel_file)
+    while d:
+        path = os.path.join(root, d, _SEED_NAME)
+        if os.path.isfile(path):
+            return path
+        d = os.path.dirname(d)
+    return None
+
+
+def _load_seed(path: str) -> dict:
     import json
     try:
-        with open(_DURATIONS_SEED) as f:
+        with open(path) as f:
             return json.load(f)
     except (OSError, ValueError):
         return {}
 
 
+def _schedule_order(files: list[str], recorded: dict, n_workers: int) -> list[str]:
+    """Longest recorded file first; the second block of ``n_workers`` reversed."""
+    order = sorted(files, key=lambda k: -recorded.get(k, 0.0))
+    order[n_workers:2 * n_workers] = order[n_workers:2 * n_workers][::-1]
+    return order
+
+
 def pytest_collection_modifyitems(config, items):
-    recorded = _load_durations_seed()
-    cache = getattr(config, "cache", None)
-    if cache is not None:
-        recorded.update(cache.get(_FILE_DURATIONS_KEY, {}))
-    if not recorded:
-        return
     files, groups = [], {}
     for it in items:
         key = it.location[0]
@@ -83,15 +102,16 @@ def pytest_collection_modifyitems(config, items):
             groups[key] = []
             files.append(key)
         groups[key].append(it)
-    files.sort(key=lambda k: -recorded.get(k, 0.0))
-    woven, i, j = [], 0, len(files) - 1
-    while i <= j:
-        woven.append(files[i])
-        i += 1
-        if i <= j:
-            woven.append(files[j])
-            j -= 1
-    items[:] = [it for key in woven for it in groups[key]]
+    recorded = {}
+    for seed in sorted({s for s in map(_seed_for, files) if s}):
+        recorded.update(_load_seed(seed))
+    cache = getattr(config, "cache", None)
+    if cache is not None:
+        recorded.update(cache.get(_FILE_DURATIONS_KEY, {}))
+    if not recorded:
+        return
+    n = getattr(config, "workerinput", {}).get("workercount", 0)
+    items[:] = [it for key in _schedule_order(files, recorded, n) for it in groups[key]]
 
 
 def pytest_runtest_logreport(report):
@@ -114,13 +134,22 @@ def pytest_sessionfinish(session, exitstatus):
         cache.set(_FILE_DURATIONS_KEY, merged)
     if config.getoption("update_durations", default=False):
         import json
-        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        seed = _load_durations_seed()
-        seed.update({k: round(v, 1) for k, v in _this_run_durations.items()})
-        seed = {k: v for k, v in seed.items() if os.path.exists(os.path.join(root, k))}
-        with open(_DURATIONS_SEED, "w") as f:
-            json.dump(seed, f, indent=1, sort_keys=True)
-            f.write("\n")
+        by_seed: dict[str, dict] = {}
+        for k, v in _this_run_durations.items():
+            seed = _seed_for(k)
+            if seed is None:
+                config.pluginmanager.get_plugin("terminalreporter").write_line(
+                    f"--update-durations: no {_SEED_NAME} above {k} — not recorded", yellow=True)
+                continue
+            by_seed.setdefault(seed, {})[k] = round(v, 1)
+        for seed, ran in by_seed.items():
+            merged = _load_seed(seed)
+            merged.update(ran)
+            merged = {k: v for k, v in merged.items()
+                      if os.path.exists(os.path.join(_REPO_ROOT, k))}
+            with open(seed, "w") as f:
+                json.dump(merged, f, indent=1, sort_keys=True)
+                f.write("\n")
 
 
 # --- Crash logging (always-on fatal-signal diagnostics) ----------------------
@@ -173,15 +202,12 @@ router_lib_dir()
 
 @pytest.fixture
 def pool_kwargs():
-    """Factory for a COMPLETE ``make_decoder_env_pool`` kwarg surface.
+    """Factory for COMPLETE ``make_decoder_env_pool`` kwargs (``env_config``, ``seed``,
+    ``policy_net_select`` — :func:`tests.helpers.env_kwargs.full_env_kwargs`); override
+    only what the test cares about. The pool's ``advance_rng_on_reload`` is passed
+    explicitly::
 
-    The pool factory has no signature defaults for env-contract knobs (a
-    missing one raises TypeError — see factory._REQ), so tests build the whole
-    surface from ``RLEnvConfig.to_pool_kwargs()`` and override only what the
-    test cares about (``seed`` is part of the bundle — override it via
-    ``pool_kwargs(seed=...)``, never as a separate kwarg)::
-
-        pool = make_decoder_env_pool(board, n_envs=2,
+        pool = make_decoder_env_pool(board, n_envs=2, advance_rng_on_reload=False,
                                      **pool_kwargs(max_steps=20))
     """
     from tests.helpers.env_kwargs import full_env_kwargs
@@ -190,3 +216,11 @@ def pool_kwargs():
         return full_env_kwargs(**overrides)
 
     return _make
+
+
+@pytest.fixture(params=["ipc", "in_process"])
+def engine_mode(request, monkeypatch):
+    """Run the test over both engine transports: the IPC engine server (the default)
+    and in-process (``KICAD_ENGINE_IPC=0``)."""
+    monkeypatch.setenv("KICAD_ENGINE_IPC", "1" if request.param == "ipc" else "0")
+    return request.param

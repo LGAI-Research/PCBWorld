@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from configs.loader.schema import EnvConfig
 from pcb_world.core.env import PCBWorld
 from pcb_world.core.masking import ACTION_NAMES
 from pcb_world.diag.step_stream import CrashLogger, _safe_serialize
@@ -37,11 +38,7 @@ def env(crash_log_dir, monkeypatch):
     """Create env with crash logging to temp dir (monkeypatch restores the
     session-wide diag dir the conftest set)."""
     monkeypatch.setenv("KICAD_CRASH_LOG_DIR", crash_log_dir)
-    e = PCBWorld(
-        board_path=BOARD_PATH,
-        max_steps=200,
-        masking_rule="strict_phase",
-    )
+    e = PCBWorld(BOARD_PATH, EnvConfig.with_overrides(max_steps=200, masking_rule="strict_phase"))
     yield e
     e.close()
 

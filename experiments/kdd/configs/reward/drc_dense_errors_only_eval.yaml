@@ -1,17 +1,9 @@
-# Eval-only variant of the Transformer 2L training reward.
-#
-# Training (PPO on Synth2L) used drc_dense_promoted with these per-run
-# overrides — see docs/QUICKSTART.md ("Canonical training settings"):
-#   wirelength_penalty: 0.002
-#   via_penalty:        0.1
-# That config kept drc_severity_mode=errors_and_promoted so the agent was
-# penalised for ERROR-severity DRVs AND the three promoted warnings
-# (track_dangling / via_dangling / net_conflict). This file bakes in those
-# training overrides AND flips the DRC severity gate to ``errors_only`` so
-# eval scoring (Φ and clean_pass) is decided by genuine DRC errors —
-# promoted warnings and track-angle violations are reported separately but
-# do NOT subtract from Φ here. Same potential shape as training otherwise,
-# so Φ values stay directly comparable across Ours / FreeRouting / KRT.
+# Errors-only variant of the Table 1 PPO training reward: drc_dense_promoted with the training
+# overrides baked in (wirelength_penalty 0.002, via_penalty 0.1) and the DRC severity gate set
+# to ``errors_only``, so Φ counts only ERROR-severity DRVs — the three promoted warnings
+# (track_dangling / via_dangling / net_conflict) and track-angle violations are reported but do
+# not subtract from Φ. The KDD recipes score with the plain drc_dense_promoted
+# (experiments/kdd/configs/paper_train_flags.sh PAPER_SCORING_FLAGS).
 
 name: drc_dense_errors_only_eval
 mode: per_step
@@ -29,3 +21,6 @@ potential:
   step_penalty: 0.0
   truncation_mode: none
   drc_severity_mode: errors_only
+  invalid_action_penalty: 0.01
+  parse_fail_penalty: 0.2
+  mask_reject_penalty: 0.09

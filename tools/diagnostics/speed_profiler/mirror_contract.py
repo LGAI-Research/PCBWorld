@@ -30,11 +30,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 # mirror location -> (base module, base qualname, sha256[:16] of base source)
 BASES: dict[str, tuple[str, str, str]] = {
     "hooks.rollout_decomp": (
-        "methods.rl_agent.rollout.primitive", "iter_rollout", "0e00823aa2523c05"),
+        "methods.rl_agent.rollout.primitive", "iter_rollout", "be93345428898cdf"),
     "hooks.update_decomp": (
-        "methods.rl_agent.algorithms._common", "_fixed_batch_step", "05b2823319c444c9"),
+        "methods.rl_agent.algorithms._common", "_fixed_batch_step", "bcb1acbc0708c6d3"),
     "hooks.update_decomp/chunk": (
-        "methods.rl_agent.algorithms._common", "_accumulate_chunk", "a8e10cc031a857be"),
+        "methods.rl_agent.algorithms._common", "_accumulate_chunk", "9199c045b6cd2a4f"),
     "worker_shim._decoder_worker": (
         "pcb_world.vec.backends.subproc", "_decoder_worker", "c046d07a6521ecbb"),
 }

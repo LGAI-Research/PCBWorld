@@ -10,15 +10,16 @@ import gc
 
 import pytest
 
-from pcb_world.engine.kicad_engine import KiCadEngine
+from configs.loader.schema import EnvConfig
 from pcb_world.core.env import PCBWorld
+from tests.helpers.engine import open_engine
 
 BOARD = "tests/fixtures/simple_routing_board.kicad_pcb"
 
 
 def test_engine_count_and_release():
     """Engine-level: count tracks live checkpoints; release is idempotent."""
-    e = KiCadEngine(BOARD)
+    e = open_engine(BOARD)
     e.build_connectivity()
     assert e.checkpoint_count() == 0
     h1 = e.checkpoint()
@@ -35,7 +36,7 @@ def test_engine_count_and_release():
 
 @pytest.fixture
 def env():
-    e = PCBWorld(board_path=BOARD, max_steps=20)
+    e = PCBWorld(BOARD, EnvConfig.with_overrides(max_steps=20))
     e.reset()
     yield e
     e.close()
@@ -73,7 +74,7 @@ def test_many_checkpoints_reaped_on_gc(env):
 def test_release_after_close_is_safe():
     """Releasing / GC-ing a checkpoint after the engine closed does not crash
     (the router already freed every handle on close)."""
-    e = PCBWorld(board_path=BOARD, max_steps=20)
+    e = PCBWorld(BOARD, EnvConfig.with_overrides(max_steps=20))
     e.reset()
     ck = e.checkpoint()
     e.close()           # router destroyed -> all handles gone

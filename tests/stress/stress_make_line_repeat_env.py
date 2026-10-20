@@ -37,6 +37,7 @@ OUTPUT_DIR = PROJECT_ROOT / "var" / "tests" / "output" / "stress_make_line_repea
 sys.path.insert(0, str(RL_MODULE_DIR))
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from configs.loader.schema import EnvConfig
 from pcb_world.core.env import PCBWorld  # noqa: E402
 from pcb_world.engine.drc_config import DEFAULT_DRC_CONFIG_PATH  # noqa: E402
 from pcb_world.core.masking import (  # noqa: E402
@@ -192,7 +193,7 @@ def main() -> int:
     print(f"board    : {board_path}")
     print(f"pins     : NET1 P1={START_PIN}  P2={FAR_PIN}")
     print(f"target   : {TARGET}  (NOT a pin)")
-    print(f"corner   : MITERED_90  (env corner_mode=2)")
+    print(f"corner   : MITERED_90  (env corner_mode=90)")
     print(f"iters    : {N_ITER}")
     print()
 
@@ -200,13 +201,8 @@ def main() -> int:
     # doesn't raise. The actual experiment is unaffected by which DRC defaults
     # the env applies.
     env = PCBWorld(
-        board_path=str(board_path),
-        max_steps=N_ITER + 10,
-        masking_rule="default",
-        corner_mode=2,                    # MITERED_90
-        use_yaml_drc_fallback=True,
-        drc_config_path=str(DEFAULT_DRC_CONFIG_PATH),
-        reward_rule="drc_only_dense",
+        str(board_path),
+        EnvConfig.with_overrides(max_steps=N_ITER + 10, masking_rule="default", corner_mode=90, rules_source="board_or_yaml", drc_config_path=str(DEFAULT_DRC_CONFIG_PATH), reward_rule="drc_only_dense"),
     )
     obs, info = env.reset()
 

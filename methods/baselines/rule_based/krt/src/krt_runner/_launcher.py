@@ -26,9 +26,7 @@ from pathlib import Path
 
 
 def main() -> None:
-    cache_dir = os.environ.get("KRT_RUST_SO_DIR")
-    if not cache_dir:
-        cache_dir = str(Path.home() / ".cache" / "krt_runner")
+    cache_dir = os.environ["KRT_RUST_SO_DIR"]   # set by run_route to the version-keyed cache
     if cache_dir not in sys.path:
         sys.path.insert(0, cache_dir)
 
@@ -37,6 +35,9 @@ def main() -> None:
     import grid_router  # noqa: F401
 
     route_py = os.environ["KRT_ROUTE_PY"]
+    # `python route.py` puts route.py's folder first on sys.path and KRT imports its flat
+    # modules from there (startup_checks, kicad_parser, ...); run_path does not, so do it here.
+    sys.path.insert(0, str(Path(route_py).resolve().parent))
     sys.argv = [route_py, *sys.argv[1:]]
     runpy.run_path(route_py, run_name="__main__")
 

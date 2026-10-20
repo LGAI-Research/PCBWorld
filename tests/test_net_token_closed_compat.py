@@ -7,12 +7,12 @@ the ``legacy_pad_layer_encoding`` mechanism — so both generations stay
 loadable without a config knob.
 """
 
-from methods.rl_agent.models.loader import _policy_args_for_checkpoint
+from tests.helpers.ckpt_payload import resolve_state_dict
 
 _ARGS = {
     "d_model": 32, "n_heads": 4, "n_layers": 1, "d_ff": 64,
     "max_seq_len": 512, "n_freq": 4, "coord_encoding": "fourier",
-    "mlp_hidden": 16, "use_critic": True,
+    "mlp_hidden": 16, "use_critic": True, "policy_net_select": False, "disable_slot_emb": False,
 }
 
 
@@ -28,7 +28,7 @@ def _model(**overrides):
 class TestCheckpointShapeDetection:
     def test_legacy_3f_checkpoint_detected_and_loads(self):
         legacy_sd = _model(legacy_net_encoding=True).state_dict()
-        compat = _policy_args_for_checkpoint(dict(_ARGS), legacy_sd)
+        compat = resolve_state_dict(legacy_sd, **_ARGS)
         assert compat["legacy_net_encoding"] is True
 
         from configs.loader.schema import RLPolicyConfig
@@ -38,7 +38,7 @@ class TestCheckpointShapeDetection:
 
     def test_current_4f_checkpoint_detected_and_loads(self):
         current_sd = _model(legacy_net_encoding=False).state_dict()
-        compat = _policy_args_for_checkpoint(dict(_ARGS), current_sd)
+        compat = resolve_state_dict(current_sd, **_ARGS)
         assert compat["legacy_net_encoding"] is False
 
         from configs.loader.schema import RLPolicyConfig

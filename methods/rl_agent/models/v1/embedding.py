@@ -97,7 +97,6 @@ class TokenVocabulary(nn.Module):
         mlp_hidden: int = 128,
         fourier_base: float = 1.20,
         n_max_slots: int = N_MAX_SLOTS,
-        disable_slot_emb: bool = False,
         slot_scale_init: float = 0.3,
         legacy_pad_layer_encoding: bool = False,
         legacy_net_encoding: bool = False,
@@ -107,6 +106,8 @@ class TokenVocabulary(nn.Module):
         legacy_action_history: bool = False,
         obstacle_obs: bool = False,
         shape_obs: bool = False,
+        *,
+        disable_slot_emb: bool,
     ) -> None:
         super().__init__()
         if coord_encoding not in ("fourier", "mlp", "linear"):

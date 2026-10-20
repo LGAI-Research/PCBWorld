@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests.helpers.engine import open_engine
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "build_rl" / "pcbnew" / "python" / "rl"))
@@ -307,7 +308,7 @@ class TestDrcSeverityMode:
 class TestRewardStateFromRouter:
     def test_captures_state(self) -> None:
         try:
-            from pcb_world.engine import KiCadEngine
+            from pcb_world.engine import KiCadEngine  # noqa: F401
         except ImportError:
             pytest.skip("kicad_rl_router module not available")
 
@@ -317,7 +318,7 @@ class TestRewardStateFromRouter:
         if not BOARD_PATH.exists():
             pytest.skip(f"Test board not found: {BOARD_PATH}")
 
-        r = KiCadEngine(board_path)
+        r = open_engine(board_path)
         snap = r.get_reward_snapshot(run_drc=False)
         state = RewardState.from_snapshot(snap)
 

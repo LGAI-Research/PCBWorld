@@ -102,7 +102,7 @@ export N_SAMPLES="$SAMPLES"
 # Drive baseline's board selection from the same boards_json as PCBWORLD —
 # the launcher resolves these via board_loader.resolve_board_list so the
 # API-level evaluator sees the exact same list (filtered by difficulty/split)
-# as table1/llm/run.sh would for the same alias.
+# as table1_llm/run.sh would for the same alias.
 export BOARDS_JSON="$QS_BOARDS_JSON"
 export BOARDS_DIFFICULTY="$QS_DIFF"
 export BOARDS_SPLIT="$QS_SPLIT"

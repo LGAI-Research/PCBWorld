@@ -42,7 +42,7 @@ generator cannot drift. `N_TRAIN`/`N_TEST`/`N_VAL` size the corpus.
 
 | script | input, default first |
 | --- | --- |
-| `run.sh eval` | boards `var/datasets/synthetic/pcb_dataset_synthetic_10net_2pin_1layer_grid<G>_test` (paper: `BOARDS_DIR=$DATASET_ROOT/synthetic/synth_1L_grid<G>_5net_v02/test`), checkpoints `$CKPT_ROOT/Transformer_1L/grid<G>/seed<S>/policy_best.pt` |
+| `run.sh eval` | boards `var/datasets/synthetic/pcb_dataset_synthetic_10net_2pin_1layer_grid<G>_test` (paper: `BOARDS_DIR=$DATASET_ROOT/synthetic/synth_1L/grid<G>_5net_v15/test`), checkpoints `$CKPT_ROOT/Transformer_1L_300/grid<G>/seed<S>/policy_iter_300.pt` (the paper's: the last checkpoint, not `policy_best.pt`) |
 | `train_transformer_ppo.sh` | split json `experiments/kdd/configs/datasets/grids/10net_2pin_1layer_grid<G>_v2.json`; a staged `$DATASET_ROOT/synthetic/splits/synth_1L_grid<G>_*v<NN>_local.json` wins when present, `--split-json` over both |
 | `train_jumanji_a2c.sh`, `train_sable.sh` | arrays `$DATASET_ROOT/synthetic/connector_v2/grid<G>/{train,val}.npz` |
 | `plot_grid_scenarios.py` | arrays `$DATASET_ROOT/synthetic/connector_v2/grid<G>/test.npz` |
@@ -51,7 +51,7 @@ Notes:
 
 - **The generated corpus is not the paper corpus.** `make_grid_dataset.sh` is
   fixed at 10 nets × 2 pins and its board seeds are not the published ones; the
-  paper's D1 is 5 nets × 2 pins (`synth_1L_grid<G>_5net_v02`). Grid geometry,
+  paper's D1 is 5 nets × 2 pins (`synth_1L/grid<G>_5net_v15`). Grid geometry,
   the per-grid step penalty and every trainer knob in `cases.sh` are the
   published ones, so the scalability *protocol* is what carries over.
 - The paper's split json uses the `_local` suffix — the *gitignored, personal*
@@ -59,8 +59,8 @@ Notes:
   so it is never tracked, and only a staged dataset root has it.
 - The Connector-v2 `.npz` arrays are a Jumanji-side board encoding; no encoder
   for them is part of this tree.
-- The rule-based D1 baselines use yet another root
-  (`synthetic/synth_1L_grid<G>_5net_v02`, selected by `SYNTH1L_PCB_ROOT_<G>` —
+- The rule-based D1 baselines read
+  `synthetic/synth_1L_grid<G>_5net_v02` (selected by `SYNTH1L_PCB_ROOT_<G>` —
   [methods/baselines/rule_based/_lib/datasets.py](../../../methods/baselines/rule_based/_lib/datasets.py)).
 
 ## Baselines that cannot be retrained here at all

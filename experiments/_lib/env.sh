@@ -102,9 +102,11 @@ public_wandb_args() {
   local project="${3:-${WANDB_PROJECT:-pcbworld}}"
   local tags="${4:-paper_repro}"
   PUBLIC_WANDB_ARGS=()
-  # W&B is opt-in, matching the trainer default: emit flags only when WANDB=1
-  # is exported, and never when the W&B client itself is disabled.
+  # W&B is opt-in, matching the trainer default: on only when WANDB=1 is exported
+  # and the W&B client itself is not disabled. Off is said explicitly — a --resume
+  # starts from the checkpoint's wandb value.
   if [[ "${WANDB:-0}" != "1" || "${WANDB_MODE:-}" == "disabled" ]]; then
+    PUBLIC_WANDB_ARGS+=(--no-wandb)
     return 0
   fi
   PUBLIC_WANDB_ARGS+=(--wandb --wandb-project "$project" --wandb-run-name "$run_name" --wandb-group "$group" --wandb-tags "$tags")
@@ -119,4 +121,56 @@ public_cuda_run() {
     return 0
   fi
   CUDA_VISIBLE_DEVICES="${GPU:-0}" "$@"
+}
+
+# --- KDD paper-cell evaluation helpers ---
+# The recipes' eval stages write their pooled cells under $EXPR_ROOT/<task>/<cell>: the tree
+# experiments/draw_figure.py reads (var/results/kdd — the EXPR_ROOT default), so a recipe's figure
+# stage draws what its eval stage produced. Per-checkpoint rollouts and board lists stay under
+# $LOCAL_OUT. An EXPR_ROOT pointed at a read-only staged tree makes the eval stage fail.
+
+# kdd_task_boards_list <task> <file>: write the test boards of a KDD split alias (qs_resolve_split:
+# experiments/kdd/configs/quickstart/splits.json or QS_SPLITS_CONFIG; d2a | d3a | d3b | d3c, legacy
+# t-names accepted) to <file>, one path per line. Every board the split lists must exist — a
+# partial set is not the paper's.
+kdd_task_boards_list() {
+  source "$PCBWORLD_REPO_ROOT/experiments/_lib/llm_lib.sh"
+  qs_resolve_split "$1"
+  mkdir -p "$(dirname "$2")"
+  "$PYTHON_BIN" - "$QS_BOARDS_JSON" "$QS_DIFF" "$QS_SPLIT" "$2" <<'PY'
+import json, sys
+from methods._shared.board_loader import load_boards_from_split_json
+split_json, diff, split, out = sys.argv[1:]
+listed = json.load(open(split_json))[diff][split]
+boards = load_boards_from_split_json(split_json, diff, split)
+if len(boards) != len(listed):
+    sys.exit(f"[kdd] {split_json} {diff}.{split}: {len(listed) - len(boards)} of {len(listed)} boards are missing (warnings above)")
+open(out, "w").write("".join(b.path + "\n" for b in boards))
+PY
+}
+
+# kdd_eval_cell <cell_dir> <boards_list> <rollout_root> <check_angle> <ckpt>... -- <rollout flags>:
+# one paper cell. eval/pipeline.py rolls out one checkpoint per run, so each checkpoint's Stage 1
+# goes to <rollout_root>/<i>/<cell name> (PAPER_ROLLOUT_FLAGS + <rollout flags>), the parts are
+# pooled into <cell_dir> (pool_seed_cells.py: boards, rows, run records), and the pooled cell is
+# scored and aggregated (Stages 2-3, PAPER_SCORING_FLAGS). Needs paper_train_flags.sh sourced.
+kdd_eval_cell() {
+  local cell="$1" boards="$2" root="$3" angle="$4" ckpts=() parts=() i=0
+  shift 4
+  while [[ "$1" != "--" ]]; do ckpts+=("$1"); shift; done
+  shift
+  if [[ -e "$cell/per_rollout.csv" ]]; then
+    echo "[kdd] $cell already holds a cell (per_rollout.csv) — move it away or point EXPR_ROOT elsewhere" >&2
+    exit 2
+  fi
+  for ckpt in "${ckpts[@]}"; do
+    parts+=("$root/$i/$(basename "$cell")")
+    public_cuda_run "$PYTHON_BIN" -u eval/pipeline.py --stages rollout --ckpt "$ckpt" --boards-list "$boards" \
+      "${PAPER_ROLLOUT_FLAGS[@]}" "$@" --check-angle "$angle" --output-dir "${parts[-1]}"
+    i=$((i + 1))
+  done
+  quickstart_log "pool ${#parts[@]} checkpoints -> $cell"
+  [[ "${DRY_RUN:-0}" == "1" ]] || "$PYTHON_BIN" experiments/_lib/pool_seed_cells.py "$cell" "${parts[@]}"
+  public_cuda_run "$PYTHON_BIN" -u eval/pipeline.py --stages eval,aggregate --boards-list "$boards" \
+    "${PAPER_SCORING_FLAGS[@]}" --check-angle "$angle" --output-dir "$cell"
 }

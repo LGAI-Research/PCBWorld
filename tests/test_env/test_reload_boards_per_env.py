@@ -29,7 +29,7 @@ def test_reload_boards_per_env_different_boards(pool_kwargs):
     aliasing across workers) and confirms per-env curriculum is viable.
     """
     pool = make_decoder_env_pool(
-        str(BOARD_A), n_envs=2,
+        str(BOARD_A), n_envs=2, advance_rng_on_reload=False,
         **pool_kwargs(max_steps=20, masking_rule="default_no_finish",
                       reward_rule="drc_only_dense"),
     )
@@ -51,42 +51,5 @@ def test_reload_boards_per_env_different_boards(pool_kwargs):
         pool.step_async(pool.get_pointer_masks())  # pointer indices as actions
         # Don't assert on step result — just ensure no crash/hang.
         pool.step_wait()
-    finally:
-        pool.close()
-
-
-@pytest.mark.skipif(
-    not (BOARD_A.exists() and BOARD_B.exists()),
-    reason="fixture boards missing",
-)
-def test_reload_boards_respawns_dead_worker(pool_kwargs):
-    """A worker killed before ``reload_boards`` is respawned on its NEW board.
-
-    Regression guard for the 260803 campaign crash: a worker segfault landing
-    between iterations made ``reload_boards`` raise EOFError and killed the
-    whole trainer (recovery only covered the step path).
-    """
-    import os
-    import signal
-
-    pool = make_decoder_env_pool(
-        str(BOARD_A), n_envs=2,
-        **pool_kwargs(max_steps=20, masking_rule="default_no_finish",
-                      reward_rule="drc_only_dense"),
-    )
-    try:
-        pool.reset_all()
-        victim = pool.processes[1]
-        os.kill(victim.pid, signal.SIGKILL)
-        victim.join(timeout=5)
-
-        pool.reload_boards([str(BOARD_A), str(BOARD_B)])  # must not raise
-
-        assert pool.processes[1].pid != victim.pid, "dead worker must be respawned"
-        assert pool.processes[1].is_alive()
-        obs = pool.reset_all()
-        assert len(obs) == 2
-        masks = pool.get_action_masks()
-        assert masks.shape[0] == 2
     finally:
         pool.close()

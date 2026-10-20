@@ -58,26 +58,51 @@ def _ckpt_iter(ckpt_path: Path) -> int:
 
 
 def load_recorded_val_env(save_dir: str | Path) -> dict | None:
-    """Recorded val-env kwargs from ``<save_dir>/env_records/val_env.yaml``.
+    """The val env the trainer recorded at startup, in the ``env_record`` form (env config +
+    ``seed`` + ``policy_net_select``): ``<save_dir>/run_record.val.yaml`` (its config values and
+    ``extra``), or — a run before run records — ``env_records/val_env.yaml``.
 
-    The trainer records the resolved val kwargs at startup; the watcher hands
-    them to ``build_evaluators`` as ``expect_env_kwargs`` so the async path
+    The watcher hands it to ``build_evaluators`` as ``expect_env_kwargs`` so the async path
     gets the same record-vs-actual cross-check the inline path has
-    (``assert_env_kwargs_as_recorded``). Returns None — with a loud note, the
-    check is then skipped — only for a save_dir predating the env-records
-    feature.
+    (``assert_env_kwargs_as_recorded``). Returns None — with a loud note, the check is then
+    skipped — only for a save_dir with neither file; an old record that is not a mapping
+    (empty / truncated) raises. Keys a record predates (an older version wrote it) are filled
+    with their pre-knob values from the checkpoint migration table
+    (``configs.loader.ckpt.with_legacy_env_defaults``)
+    — the values the run was built with, and what the checkpoint-driven val env rebuilds — so
+    a knob added after the run started does not fail the cross-check; the filled keys are
+    named in a note.
     """
     import yaml
-    from methods._shared.config_dump import ENV_RECORDS_DIR
+    from configs.loader.ckpt import with_legacy_env_defaults
+    from configs.loader.record import VAL_RUN_RECORD
 
-    path = Path(save_dir) / ENV_RECORDS_DIR / "val_env.yaml"
-    if not path.is_file():
+    record = Path(save_dir) / VAL_RUN_RECORD
+    if record.is_file():
+        path = record
+        rec = yaml.safe_load(record.read_text())
+        old = {**{k: e["value"] for k, e in rec["config"].items()}, **rec["extra"]}
+    else:
+        path = Path(save_dir) / "env_records" / "val_env.yaml"
+        if not path.is_file():
+            print(f"[watcher] neither {record} nor {path} — skipping the env-kwargs cross-check "
+                  "(save_dir predates env records?)", flush=True)
+            return None
+        old = yaml.safe_load(path.read_text())
+        if not isinstance(old, dict):
+            raise ValueError(
+                f"{path} is not an env-kwargs mapping (got {type(old).__name__}) "
+                "— the trainer's startup record is empty or truncated"
+            )
+    filled = with_legacy_env_defaults(old)
+    added = sorted(set(filled) - set(old))
+    if added:
         print(
-            f"[watcher] {path} missing — skipping the env-kwargs cross-check "
-            "(save_dir predates env_records?)", flush=True,
+            f"[watcher] {path} predates {', '.join(added)} — cross-checked "
+            "against their pre-knob values (configs/ckpt_migrations.yaml)",
+            flush=True,
         )
-        return None
-    return yaml.safe_load(path.read_text())
+    return filled
 
 
 def pending_evals(save_dir: str | Path, eval_every: int) -> list[tuple[int, Path]]:
@@ -151,19 +176,23 @@ def watcher_main(
     device: str = "auto",
     n_envs: int | None = None,
     poll_interval: float = 10.0,
+    strict: bool,
 ) -> None:
     """Evaluate cadence checkpoints until the trainer signals ``train_done``.
 
     Bootstraps the policy, the evaluators, and ``eval_every`` ONCE from the
-    first checkpoint's saved training args (later checkpoints only swap the
-    ``state_dict``), so the per-request cost is one ``load_state_dict`` plus
-    the eval rollouts. ``n_envs`` overrides the training-time value for the
-    eval pool — size it to THIS node's cores/VRAM.
+    first checkpoint's training config, resolved once in mode eval
+    (``resolve_ckpt_train_config``; later checkpoints only swap the ``state_dict``), so the
+    per-request cost is one ``load_state_dict`` plus the eval rollouts. ``n_envs`` overrides
+    the training-time value for the eval pool (a ``code:`` layer) — size it to THIS node's
+    cores/VRAM. ``strict`` = ``--strict-ckpt``. Each evaluated checkpoint gets a run record
+    under ``async_val/records/``, written before its rollouts.
     """
     import gc
 
     import torch
 
+    from configs.loader.record import board_record, write_run_record
     from methods.rl_agent.models.loader import pad_legacy_entity_type_rows
     from methods.rl_agent.training.utils import auto_device
 
@@ -172,6 +201,7 @@ def watcher_main(
     dev = auto_device(device)
     agent = None
     eval_sets = None  # [(prefix, Evaluator)] — "val" first
+    args = boards = None  # the training config / primary val board record (bootstrap)
     eval_every = None
 
     print(f"[watcher] polling {save_dir} (device={dev})", flush=True)
@@ -182,15 +212,20 @@ def watcher_main(
             if not ckpts:
                 time.sleep(poll_interval)
                 continue
-            from types import SimpleNamespace
-
+            from configs.loader.resolve import Layer
             from methods.rl_agent.policy.agent import KiCadRLAgent
+            from methods.rl_agent.training.args import resolve_ckpt_train_config
             from methods.rl_agent.training.loop import (
-                build_evaluators, load_eval_boards,
+                build_evaluators, load_eval_boards, val_env_config,
             )
 
-            agent = KiCadRLAgent.from_checkpoint(ckpts[0], dev)
-            args = SimpleNamespace(**torch.load(ckpts[0], map_location="cpu")["args"])
+            agent = KiCadRLAgent.from_checkpoint(ckpts[0], dev, strict=strict)
+            # The training config, resolved from the checkpoint (stored values + pre-knob
+            # values of keys an older one predates); this node's pool size on top.
+            pool = None if n_envs is None else Layer(
+                "code:methods/rl_agent/training/async_val.py", {"n_envs": n_envs},
+                where={"n_envs": "watcher --n-envs"})
+            args = resolve_ckpt_train_config(ckpts[0], strict=strict, code=pool)
             if args.eval_every is None:
                 raise RuntimeError(
                     "--async-val checkpoints carry eval_every=None; the "
@@ -198,10 +233,10 @@ def watcher_main(
                     "is required)"
                 )
             eval_every = int(args.eval_every)
-            if n_envs is not None:
-                args.n_envs = n_envs
+            eval_boards = load_eval_boards(args)
+            boards = board_record([b.path for b in eval_boards], boards_json=args.boards_json)
             primary, extras = build_evaluators(
-                args, agent, dev, load_eval_boards(args),
+                args, agent, dev, eval_boards, val_env=val_env_config(args),
                 expect_env_kwargs=load_recorded_val_env(save_dir),
             )
             eval_sets = [("val", primary)] + list(extras)
@@ -221,6 +256,8 @@ def watcher_main(
             continue
 
         iteration, ckpt = pending[0]
+        write_run_record(save_dir / ASYNC_DIRNAME / "records" / f"iter_{iteration:06d}.yaml", args,
+                         boards=boards, extra={"ckpt": str(ckpt)}, echo=False)
         state = torch.load(ckpt, map_location="cpu")["policy_state_dict"]
         # Watcher on new code consuming a pre-OBSTACLE trainer's checkpoints:
         # pad the 14-row entity-type table (strict load hard-errors on size
@@ -228,8 +265,11 @@ def watcher_main(
         pad_legacy_entity_type_rows(state, agent.model)
         agent.model.load_state_dict(state)
 
+        from eval.aggregation import giveup_log
+
         scalars: dict[str, float] = {}
         overall = None
+        giveups: dict[str, list[dict]] = {}
         for pfx, ev in eval_sets:
             t0 = time.time()
             summary = ev.run()
@@ -240,6 +280,9 @@ def watcher_main(
             )
             if pfx == "val":
                 overall = summary.overall
+            log = giveup_log(summary.per_rollout)
+            if log:
+                giveups[pfx] = log
 
         from eval.metrics import _jsonable
 
@@ -254,6 +297,10 @@ def watcher_main(
         mismatch = getattr(agent.model, "obs_schema_mismatch", None)
         if mismatch:
             result["obs_schema_mismatch"] = mismatch
+        # Per-rollout give-up log per eval set (the result keeps no per-rollout
+        # rows otherwise): lets give-up precision be recomputed across runs.
+        if giveups:
+            result["giveup_log"] = giveups
         res_path = results_dir / _res_name(iteration)
         tmp = res_path.with_name(res_path.name + ".tmp")
         tmp.write_text(json.dumps(result))

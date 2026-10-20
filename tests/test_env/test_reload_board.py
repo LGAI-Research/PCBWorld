@@ -29,7 +29,7 @@ BOARD_B = FIXTURES / "simple_routing_board_shifted.kicad_pcb"
 )
 def test_reload_board_swaps_env_without_restart(pool_kwargs):
     pool = make_decoder_env_pool(
-        str(BOARD_A), n_envs=2,
+        str(BOARD_A), n_envs=2, advance_rng_on_reload=False,
         **pool_kwargs(max_steps=20, masking_rule="default_no_finish",
                       reward_rule="drc_only_dense"),
     )

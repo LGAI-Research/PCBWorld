@@ -21,6 +21,7 @@ import torch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from configs.loader.schema import EnvConfig
 from pcb_world.core.env import PCBWorld
 from tests.helpers.reference_tokenizer import StateTokenizer
 from methods.rl_agent.models.v1.encoding import (
@@ -81,12 +82,12 @@ def test_norm_ctx_equivalence(sx, sy, cxa, cya, tmp_path):
     shifted_path = _write_shifted(sx, sy, cxa, cya)
     try:
         # Path A: loaded fixture + aug=None
-        e_a = PCBWorld(str(shifted_path), max_steps=1)
+        e_a = PCBWorld(str(shifted_path), EnvConfig.with_overrides(max_steps=1))
         obs_a, _ = e_a.reset()
         e_a.close()
 
         # Path B: base + aug={scale_x,...}
-        e_b = PCBWorld(str(BASE), max_steps=1)
+        e_b = PCBWorld(str(BASE), EnvConfig.with_overrides(max_steps=1))
         obs_b, _ = e_b.reset()
         e_b.close()
         obs_b["_aug"] = {
@@ -158,12 +159,12 @@ def test_tokenizer_forward_equivalence(sx, sy, cxa, cya):
         torch.manual_seed(0)
         tok = StateTokenizer(d_model=64, n_freq=16).eval()
 
-        e_a = PCBWorld(str(shifted_path), max_steps=1)
+        e_a = PCBWorld(str(shifted_path), EnvConfig.with_overrides(max_steps=1))
         obs_a, _ = e_a.reset(); e_a.close()
         # Strip any _aug key path A shouldn't have.
         obs_a.pop("_aug", None)
 
-        e_b = PCBWorld(str(BASE), max_steps=1)
+        e_b = PCBWorld(str(BASE), EnvConfig.with_overrides(max_steps=1))
         obs_b, _ = e_b.reset(); e_b.close()
         obs_b["_aug"] = {
             "scale_x": sx, "scale_y": sy,

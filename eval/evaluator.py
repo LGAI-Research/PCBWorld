@@ -155,7 +155,14 @@ def _rows_from_scored(
             reward_config=reward_config,
             check_angle=check_angle,
         )
-        row["status"] = "completed" if row.get("eval_status") == "ok" else "crashed"
+        # A scoring error on an existing board leaves that row completed but
+        # unscored (eval_status=error); the aggregation prices a board with no
+        # scored attempt like a failed attempt (n_eval_error), as in Stage 3. Only
+        # a missing board file is a failed attempt.
+        row["status"] = (
+            "completed" if row.get("eval_status") == "ok" or Path(pcb).is_file()
+            else "crashed"
+        )
         rows.append(row)
     return rows
 

@@ -16,16 +16,20 @@ Difficulty classification
 * rows ``[--easy-rows, ...)`` with pins > N       → **hard**
   where N = --medium-pin-threshold (default 100).
 
+Excluded boards
+---------------
+``EXCLUDED_BOARDS`` are not part of D3 at all (reasons in
+``configs/datasets/README.md``): they are dropped from every list after the
+test picks below, so the picks stay those of the full CSV.
+
 Train sets
 ----------
-Every board in each difficulty enters ``<diff>.train`` (this generator
-never down-samples train).
+Every remaining board in each difficulty enters ``<diff>.train`` (this
+generator never down-samples train).
 
 Test sets (held-out for LLM eval)
 ---------------------------------
-* **easy.test** — all 99 easy boards *except* the one matching
-  ``--easy-train-only-glob`` (default ``0096_*``), which stays as
-  train-only so any single-board sanity command can target a known sample.
+* **easy.test** — every easy board: the same list as ``easy.train``.
 * **medium.test / hard.test** — 10 boards each, picked by:
     1. restrict to ``layer == 2``,
     2. (hard only) drop the top ``--hard-trim-frac`` of boards by ``pins``
@@ -40,8 +44,8 @@ A boards-json (the schema consumed by
 ``experiments/kdd/configs/quickstart/splits.json`` via the d3a/d3b/d3c aliases):
 
     {
-      "easy":   {"train": [...100 boards...], "test": [...99 boards...]},
-      "medium": {"train": [...287...],        "test": [...10...]},
+      "easy":   {"train": [...99 boards...],  "test": [...99 boards...]},
+      "medium": {"train": [...286...],        "test": [...10...]},
       "hard":   {"train": [...292...],        "test": [...10...]},
       "dataset_dirs": {"train": "<--sorted-dir>", "test": "<--sorted-dir>"},
       "board_filename": "processed_v9_guide_v3.kicad_pcb"
@@ -62,7 +66,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import fnmatch
 import json
 import re
 import sys
@@ -71,6 +74,12 @@ from pathlib import Path
 import numpy as np
 
 _PREFIX_RE = re.compile(r"^(\d{4,5})_(.+)$")
+
+# Boards left out of D3 (folder names; reasons in configs/datasets/README.md).
+EXCLUDED_BOARDS = (
+    "0096_karabas-nano_wifi_revA",
+    "0170_hackaday_esp-14_power_meter__autosave-esp-14",
+)
 
 
 def _load_prefix_map(sorted_dir: Path) -> dict[str, str]:
@@ -134,17 +143,6 @@ def build(args: argparse.Namespace) -> dict:
     medium_train = [prefix_by_sample[r["sample"]] for r in medium_rows]
     hard_train   = [prefix_by_sample[r["sample"]] for r in hard_rows]
 
-    # easy.test = all easy boards except the train-only one.
-    easy_train_only = [
-        n for n in easy_train if fnmatch.fnmatch(n, args.easy_train_only_glob)
-    ]
-    if len(easy_train_only) != 1:
-        raise SystemExit(
-            f"[error] --easy-train-only-glob {args.easy_train_only_glob!r} "
-            f"matched {len(easy_train_only)} boards (need exactly 1)."
-        )
-    easy_test = [n for n in easy_train if n != easy_train_only[0]]
-
     # Layer-2 quantile-median pick for medium / hard.
     medium_l2 = [r for r in medium_rows if int(r["layers"]) == 2]
     hard_l2   = [r for r in hard_rows   if int(r["layers"]) == 2]
@@ -163,6 +161,25 @@ def build(args: argparse.Namespace) -> dict:
         for r in _decile_median_pick(hard_l2_kept, args.hard_n)
     )
 
+    # Drop the excluded boards only now, so the medium/hard picks above stay
+    # those of the full CSV; a picked excluded board would change the test set.
+    pool = set(easy_train) | set(medium_train) | set(hard_train)
+    absent = [b for b in EXCLUDED_BOARDS if b not in pool]
+    if absent:
+        raise SystemExit(
+            f"[error] EXCLUDED_BOARDS not found in the corpus: {absent}"
+        )
+    picked = [b for b in EXCLUDED_BOARDS if b in medium_test or b in hard_test]
+    if picked:
+        raise SystemExit(
+            f"[error] excluded board(s) picked for a test set: {picked}"
+        )
+    excluded = set(EXCLUDED_BOARDS)
+    easy_train   = [n for n in easy_train   if n not in excluded]
+    medium_train = [n for n in medium_train if n not in excluded]
+    hard_train   = [n for n in hard_train   if n not in excluded]
+    easy_test = list(easy_train)
+
     sorted_dir_str = str(args.sorted_dir.resolve())
     return {
         "easy":   {"train": easy_train,   "test": easy_test},
@@ -174,8 +191,12 @@ def build(args: argparse.Namespace) -> dict:
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        description=__doc__,
+    repo_dir = str(Path(__file__).resolve().parents[3])  # configs.loader when run as a script
+    if repo_dir not in sys.path:
+        sys.path.insert(0, repo_dir)
+    from configs.loader.cli import StrictArgumentParser
+    p = StrictArgumentParser(
+        description=__doc__, removed=("--easy-train-only-glob",),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--csv", type=Path, required=True,
@@ -196,9 +217,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--hard-trim-frac", type=float, default=0.10,
                    help="Drop the top fraction of hard L2 boards by pins before "
                         "the decile pick (default 0.10).")
-    p.add_argument("--easy-train-only-glob", default="0096_*",
-                   help="Glob matching the single easy board that stays in "
-                        "train but is excluded from easy.test (default 0096_*).")
     return p.parse_args()
 
 

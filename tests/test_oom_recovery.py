@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import os
 
-import numpy as np
 import pytest
 
 from pcb_world.engine import engine_available
@@ -28,8 +27,9 @@ from methods.rl_agent.algorithms._common import (
     _peel_accumulate,
     policy_update_loop,
 )
-from methods.rl_agent.models.v1.net import NUM_ACTION_TYPES, KiCadRLModel
+from methods.rl_agent.models.v1.net import KiCadRLModel
 from tests._mock_obs import make_mock_obs
+from tests.helpers.dist_inputs import permissive_buffer, permissive_dist
 
 _FIXTURE_BOARD = os.path.join(
     os.path.dirname(__file__), "fixtures", "simple_routing_board.kicad_pcb",
@@ -62,6 +62,8 @@ def _real_ppo_buffer() -> dict:
         envs = [make_decoder_env(_FIXTURE_BOARD, **full_env_kwargs(max_steps=24, seed=i)) for i in range(3)]
     try:
         collector_policy = KiCadRLModel(
+            disable_slot_emb=False,
+            policy_net_select=False,
             d_model=32, n_heads=4, n_layers=2, d_ff=64, max_seq_len=4000,
             n_freq=4, use_critic=True,
         ).to(device)
@@ -141,6 +143,8 @@ class TestOOMRecoveryEquivalence:
     def _fresh_policy(self, use_critic: bool = True) -> KiCadRLModel:
         torch.manual_seed(0)
         p = KiCadRLModel(
+            disable_slot_emb=False,
+            policy_net_select=False,
             d_model=32, n_heads=4, n_layers=2, d_ff=64, max_seq_len=4000,
             n_freq=4, use_critic=use_critic,
         )
@@ -152,22 +156,12 @@ class TestOOMRecoveryEquivalence:
 
     def _buffer(self, obs_list, *, ppo: bool) -> dict:
         p = self._fresh_policy(use_critic=ppo)
+        dist = permissive_dist(p, obs_list)
         if ppo:
-            acts, old_lp, _ = p.act_and_value(obs_list, deterministic=True)
+            acts, old_lp, _ = p.act_and_value(obs_list, dist=dist, deterministic=True)
         else:
-            acts, old_lp = p.act(obs_list, deterministic=True)
-        n = len(obs_list)
-        rng = np.random.default_rng(0)
-        buf = {
-            "obs_list": obs_list,
-            "actions": acts.cpu().numpy(),
-            "old_log_probs": old_lp.cpu().numpy(),
-            "action_masks": np.ones((n, NUM_ACTION_TYPES), dtype=bool),
-            "advantages": rng.standard_normal(n).astype(np.float32),
-        }
-        if ppo:
-            buf["returns"] = rng.standard_normal(n).astype(np.float32)
-        return buf
+            acts, old_lp = p.act(obs_list, dist=dist, deterministic=True)
+        return permissive_buffer(obs_list, acts, old_lp, returns=ppo)
 
     def _grads(self, obs_list, buffer, *, algo, oom_forward: int | None) -> dict:
         """Run one epoch / one logical minibatch (batch_size=N) with lr=0 so

@@ -22,7 +22,6 @@ Fixed rules:
 """
 from __future__ import annotations
 
-import argparse
 import glob
 import json
 import os
@@ -575,7 +574,8 @@ The step_barrier row is the inline wall (the internal send/worker/straggler/unpi
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(prog="waterfall", description=__doc__)
+    from configs.loader.cli import StrictArgumentParser
+    p = StrictArgumentParser(prog="waterfall", description=__doc__)
     p.add_argument("data_dir", nargs="+", help="prof_*.json directory (2+ = variant comparison mode)")
     p.add_argument("-o", "--out", default=None, help="output html (default: <data_dir>/waterfall.html)")
     p.add_argument("--labels", default=None,

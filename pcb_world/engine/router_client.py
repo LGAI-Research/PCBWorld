@@ -89,19 +89,22 @@ _ENGINE_MISSING_HINT = (
 _GETTER_PREFIXES = ("get_", "is_", "was_", "has_")
 
 # Getters whose results cannot change over a router's lifetime: no binding
-# API mutates pads / the copper stackup / the netlist. Cached once per
-# construct, immune to mutator invalidation (the "pads cache" first-order
-# mitigation from the spike, handoff §6.4).
+# API mutates pads / the copper stackup / the netlist, and the engine seed and
+# followBranch bound are construction values. Cached once per construct, immune
+# to mutator invalidation (the "pads cache" first-order mitigation from the
+# spike, handoff §6.4).
 _PERSISTENT_GETTERS = frozenset({
     "get_pads", "get_copper_layer_count", "get_board_net_count",
+    "get_engine_seed", "get_followbranch_iter_limit",
 })
 
 # Router-config setters that alter no queryable board/session state — calling
 # them must not flush the query cache (set_routing_mode alone fires ~0.5×/step).
+# The size setters, set_via_placement and set_shove_iter_limit are NOT here:
+# get_route_sizes / is_placing_via / get_routing_session_state /
+# get_shove_iter_limit read what they change.
 _NON_INVALIDATING = frozenset({
-    "set_routing_mode", "set_corner_mode", "set_track_width",
-    "set_via_diameter", "set_via_drill", "reset_via_mode",
-    "set_shove_iter_limit",
+    "set_routing_mode", "set_corner_mode",
 })
 
 # Parked servers (router closed, process alive) for reuse. They hold an

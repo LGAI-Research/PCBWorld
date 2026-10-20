@@ -21,8 +21,15 @@
 #   --rollouts <int>          --rollout_episodes (default 5)
 #   --limit <int>             temporarily truncate the resolved board split (default 0 = all)
 #   --seed <int>              (default 42)
-#   --max-steps <int>         (default 20)
+#   --max-steps <int>         base step budget (default 20); the rollout raises it per board
+#                             to max(base, 3*pins + 2*nets)
+#   --early-stop <int>        --early_stop_no_progress (default 8; 0 for gpt-5.4)
+#   --max-new-tokens <int>    per-turn generation budget (default 512 for a together-served
+#                             model, 256 otherwise)
 #   --prompt <vN>             --prompt_version (default v5)
+#   --masking <rule>          --masking_rule (default strict, the paper rule; fits v1-v6 only):
+#                             v7 describes no finish and needs a no-finish rule, e.g.
+#                             --prompt v7 --masking default_no_finish
 #   --extra-args "<...>"      raw flags forwarded to the pcbworld rollout
 #   --dry-run                 print the final python invocation and exit 0
 #   -h | --help
@@ -35,7 +42,7 @@ source "$_self_dir/../../_lib/llm_lib.sh"
 qs_load_env
 
 usage() {
-    sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     exit 0
 }
 
@@ -47,7 +54,10 @@ ROLLOUTS=5
 LIMIT=0
 SEED=42
 MAX_STEPS=20
+EARLY_STOP=""
+MAX_NEW_TOKENS=""
 PROMPT="v5"
+MASKING="strict"
 EXTRA_ARGS=""
 DRY_RUN=0
 
@@ -62,7 +72,10 @@ while [ $# -gt 0 ]; do
         --limit)         LIMIT="$2"; shift 2 ;;
         --seed)          SEED="$2"; shift 2 ;;
         --max-steps)     MAX_STEPS="$2"; shift 2 ;;
+        --max-new-tokens) MAX_NEW_TOKENS="$2"; shift 2 ;;
+        --early-stop)    EARLY_STOP="$2"; shift 2 ;;
         --prompt)        PROMPT="$2"; shift 2 ;;
+        --masking)       MASKING="$2"; shift 2 ;;
         --extra-args)    EXTRA_ARGS="$2"; shift 2 ;;
         --dry-run)       DRY_RUN=1; shift ;;
         -h|--help)       usage ;;
@@ -76,6 +89,12 @@ done
 
 qs_resolve_model "$MODEL_ALIAS"
 qs_resolve_split "$SPLIT_ALIAS"
+if [ -z "$EARLY_STOP" ]; then
+    if [ "$MODEL_ALIAS" = "gpt-5.4" ]; then EARLY_STOP=0; else EARLY_STOP=8; fi
+fi
+if [ -z "$MAX_NEW_TOKENS" ]; then
+    if [ "$QS_API_PROVIDER" = "together" ]; then MAX_NEW_TOKENS=512; else MAX_NEW_TOKENS=256; fi
+fi
 
 if [ "$LIMIT" != "0" ]; then
     QS_LIMITED_BOARDS_JSON="$(mktemp "/tmp/pcbworld_qs_${SPLIT_ALIAS}_XXXXXX.json")"
@@ -118,6 +137,24 @@ py_cmd=(
     --max_steps         "$MAX_STEPS"
     --state_format      sexpr
     --prompt_version    "$PROMPT"
+    # The Table 1 LLM protocol: the last 4 turns as history, a stop after N consecutive
+    # non-progress actions and no geometry-stall stop, the per-model token budget.
+    # Reasoning models (GPT-5.x) are sent no temperature (the provider default), the
+    # others 0.7. reward_rule / corner_mode: the LLM env's values.
+    --history_length    4
+    --early_stop_no_progress "$EARLY_STOP"
+    --early_stop_no_geometry_progress 0
+    --max_new_tokens    "$MAX_NEW_TOKENS"
+    --temperature       0.7
+    --reward_rule       grpo_final
+    --corner_mode       45
+    # Paper-era env: the shipped defaults moved on (arc outline, simplified outline,
+    # per-net constraints, pcbworld_masking, make_line aborting when stuck) — pinned so the rows stay comparable.
+    --outline_obs       tess
+    --no-simplify_outline
+    --no-net_constraint_obs
+    --no-reject_if_stuck
+    --masking_rule      "$MASKING"
     --dump_dir          "$OUT/interactive/_raw"
     --silent
 )

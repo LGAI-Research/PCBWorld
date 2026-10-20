@@ -43,9 +43,15 @@ Per-board protocol:
 
 Outputs land in --output:
     output/per_board/<board_id>/sample_<i>.{kicad_pcb,kicad_pro,json,txt}
-    output/per_board/<board_id>/aggregate.json
+    output/per_board/<board_id>/aggregate.json   (written for every board; ``error`` names a failure)
     output/summary.csv
     output/overall.json
+
+A board that errors counts as a failure in every rate (``boards_failed`` next
+to the rates), and the run then exits 1. An error is the board's failure: an
+exception during any sample's replay (other than an engine crash, which only
+fails that sample) scores the whole board 0 — samples replayed before it are
+not used. A board that produced no sample errors as ``no_samples``.
 """
 
 from __future__ import annotations
@@ -64,7 +70,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-_THIS_DIR = Path(__file__).resolve().parent.parent.parent  # llm_eval→paper_repro→scripts→repo
+_THIS_DIR = Path(__file__).resolve().parent.parent.parent.parent  # llm_eval→kdd→experiments→repo
 _KICAD_RL_DIR = _THIS_DIR / "build_rl" / "pcbnew" / "python" / "rl"
 for p in (_THIS_DIR, _KICAD_RL_DIR):
     s = str(p)
@@ -317,23 +323,25 @@ def extract_action_sequence(response: str) -> list[dict]:
 # Initial-state extraction
 # ---------------------------------------------------------------------------
 
-def _build_env(board_path: Path, masking_rule: str = "default", state_format: str = "sexpr"):
+def _build_env(board_path: Path, masking_rule: str = "default"):
     """Construct a fresh PCBWorld. Caller must close it."""
+    from configs.loader.schema import EnvConfig
     from pcb_world.core.env import PCBWorld
     from pcb_world.engine.drc_config import DEFAULT_DRC_CONFIG_PATH
-    return PCBWorld(
-        board_path=str(board_path),
+    return PCBWorld(str(board_path), EnvConfig.with_overrides(
         masking_rule=masking_rule,
-        state_format=state_format,
         # Generous step budget — sequence may have many actions.
         max_steps=10_000,
         # Synth boards' .kicad_pro lacks legacy setup tokens, so the
         # engine can't seed DRC from them — fall back to configs/drc/pcbworld_drc.yaml
         # (passed explicitly; there is no implicit default) rather than
         # refusing to construct.
-        use_yaml_drc_fallback=True,
+        rules_source="board_or_yaml",
         drc_config_path=str(DEFAULT_DRC_CONFIG_PATH),
-    )
+        # Paper-era observation (the recipe's values before they were YAML defaults).
+        outline_obs="tess", simplify_outline=False, net_constraint_obs=False,
+        reject_if_stuck=False,   # paper-era make_line (commit the partial stub; before 2026-07-10)
+    ))
 
 
 def initial_board_state_text(env, state_format: str = "sexpr") -> str:
@@ -349,10 +357,11 @@ def initial_board_state_text(env, state_format: str = "sexpr") -> str:
         format_state_split_sexpr, format_state_split,
     )
     obs, _info = env.reset()
+    # paper-era (legacy v5) obs elements of this env
     if state_format == "sexpr":
-        static, _ = format_state_split_sexpr(obs)
+        static, _ = format_state_split_sexpr(obs, "v5", net_constraint_obs=env.net_constraint_obs)
     else:
-        static, _ = format_state_split(obs)
+        static, _ = format_state_split(obs, "v5", net_constraint_obs=env.net_constraint_obs)
     return static
 
 
@@ -390,10 +399,7 @@ def load_fewshot_pool(
         for f in files:
             if len(out) >= k:
                 break
-            try:
-                blob = json.loads(f.read_text())
-            except Exception:
-                continue
+            blob = json.loads(f.read_text())
             board_static = blob.get("board_static", "")
             actions = blob.get("action_sequence", "")
             if isinstance(actions, list):
@@ -587,27 +593,24 @@ def replay_actions_and_eval(
         u_0 = env._initial_unconnected
         steps_run = 0
         steps_accepted = 0   # passed the mask + dispatched without error
-        steps_rejected = 0   # mask-rejected or raised inside the engine
+        steps_rejected = 0   # mask-rejected or the dispatch failed
         last_done = False
 
         for action in actions:
             if last_done:
                 break
-            try:
-                # env.step → (obs, reward, terminated, truncated, info)
-                _, _, terminated, truncated, info = env.step(action)
-                last_done = bool(terminated or truncated)
-                # action_success captures the dispatcher outcome (False on
-                # mask reject, parse fallback, or empty effect). Counting it
-                # here gives us a "fraction of LLM actions actually applied"
-                # signal that's far more diagnostic than success alone.
-                if info.get("action_success", False):
-                    steps_accepted += 1
-                else:
-                    steps_rejected += 1
-            except Exception:
-                # Engine refusal / mask reject is logged inside env; keep
-                # replaying — a bad action shouldn't kill the rollout.
+            # env.step → (obs, reward, terminated, truncated, info). A rejected
+            # action is a return value, not an exception: anything raised here
+            # is a crash or a bug and must not be counted as a rejected step.
+            _, _, terminated, truncated, info = env.step(action)
+            last_done = bool(terminated or truncated)
+            # action_success captures the dispatcher outcome (False on
+            # mask reject, parse fallback, or empty effect). Counting it
+            # here gives us a "fraction of LLM actions actually applied"
+            # signal that's far more diagnostic than success alone.
+            if info.get("action_success", False):
+                steps_accepted += 1
+            else:
                 steps_rejected += 1
             steps_run += 1
 
@@ -616,7 +619,7 @@ def replay_actions_and_eval(
         u_t = snap.unrouted_count
         track_count = snap.track_count
         via_count = snap.via_count
-        drv_count = snap.drc_violation_count
+        drv_count = snap.drc_error_count  # errors only, the DRV of every KDD table
         wirelength_mm = snap.total_wirelength
 
         if save_pcb_path is not None:
@@ -650,10 +653,7 @@ def replay_actions_and_eval(
         }
     finally:
         # Singleton constraint — drop the env before the next board's env.
-        try:
-            env.close()
-        except Exception:
-            pass
+        env.close()
 
 
 def _failure_metrics(error: str) -> dict:
@@ -678,6 +678,8 @@ def _failure_metrics(error: str) -> dict:
 class BoardResult:
     board_id: str
     source_path: str
+    # The k the run asked this board for (None: unknown, a board the run stopped in).
+    requested_k: int | None
     samples: list[dict] = field(default_factory=list)
     error: str = ""
 
@@ -750,6 +752,20 @@ def dry_run_response_for(board_path: Path, masking_rule: str, state_format: str)
     return f"<actions>\n{actions_text}\n</actions>\n"
 
 
+def board_id_for(src: Path, src_root: Path) -> str:
+    """The board's ``per_board/<board_id>`` name: ``<parent>__<stem>`` for a
+    board given directly, the ``__``-joined path below ``src_root`` otherwise."""
+    rel = src.relative_to(src_root) if src.is_relative_to(src_root) else Path(src.name)
+    board_id = rel.with_suffix("").as_posix().replace("/", "__")
+    if "/" not in rel.as_posix() and src.parent.name:
+        board_id = f"{src.parent.name}__{board_id}"
+    return board_id
+
+
+# The error of a board that produced no sample (live run and --reaggregate alike).
+_NO_SAMPLES = "no_samples"
+
+
 def run_one_board(
     src: Path,
     src_root: Path,
@@ -757,28 +773,22 @@ def run_one_board(
     examples: list[FewShotExample],
     out_root: Path,
 ) -> BoardResult:
-    rel = src.relative_to(src_root) if src.is_relative_to(src_root) else Path(src.name)
-    board_id = rel.with_suffix("").as_posix().replace("/", "__")
-    if "/" not in rel.as_posix() and src.parent.name:
-        board_id = f"{src.parent.name}__{board_id}"
+    board_id = board_id_for(src, src_root)
     board_dir = out_root / "per_board" / board_id
     board_dir.mkdir(parents=True, exist_ok=True)
+    # A previous run's aggregate must not describe this run (its samples go once
+    # this run's responses have arrived, so a failed call keeps paid responses).
+    (board_dir / "aggregate.json").unlink(missing_ok=True)
 
-    result = BoardResult(board_id=board_id, source_path=str(src))
+    result = BoardResult(board_id=board_id, source_path=str(src),
+                         requested_k=args.num_samples)
 
-    # 1. Render initial board state.
+    # 1. Render initial board state (an error here fails the board in main()).
+    env = _build_env(src, masking_rule=args.masking_rule)
     try:
-        env = _build_env(src, masking_rule=args.masking_rule, state_format=args.state_format)
-        try:
-            board_static = initial_board_state_text(env, args.state_format)
-        finally:
-            try:
-                env.close()
-            except Exception:
-                pass
-    except Exception as exc:
-        result.error = f"init_failed: {type(exc).__name__}: {exc}"
-        return result
+        board_static = initial_board_state_text(env, args.state_format)
+    finally:
+        env.close()
 
     # 2. Build prompt.
     user_prompt = build_user_prompt(board_static, examples)
@@ -816,7 +826,10 @@ def run_one_board(
             traceback.print_exc()
             return result
 
-    # 4. Replay each completion.
+    # 4. Replay each completion (a previous run's samples must not mix in).
+    for stale in board_dir.glob("sample_*"):
+        stale.unlink()
+    from pcb_world.engine.router_client import EngineServerCrashed
     for i, response in enumerate(responses):
         (board_dir / f"sample_{i:02d}.response.txt").write_text(response)
         actions = extract_action_sequence(response)
@@ -825,9 +838,11 @@ def run_one_board(
             metrics = _failure_metrics(error="no_actions_parsed")
             metrics["extras"] = {"actions_in_sequence": 0}
         else:
+            # A replayed sequence that crashes the engine is a failed sample; any
+            # other exception is a bug and fails the board (recorded by main()).
             try:
                 metrics = replay_actions_and_eval(src, actions, sample_pcb)
-            except Exception as exc:
+            except EngineServerCrashed as exc:
                 metrics = _failure_metrics(
                     error=f"replay_failed: {type(exc).__name__}: {exc}"
                 )
@@ -836,12 +851,10 @@ def run_one_board(
         with (board_dir / f"sample_{i:02d}.json").open("w") as f:
             json.dump(metrics, f, indent=2)
         result.samples.append(metrics)
+    if not result.samples:
+        result.error = _NO_SAMPLES
 
-    # 5. Per-board aggregate.
-    agg = result.aggregate(args.num_samples)
-    with (board_dir / "aggregate.json").open("w") as f:
-        json.dump(agg, f, indent=2)
-
+    # 5. The per-board aggregate.json is written by main() on every exit path.
     return result
 
 
@@ -885,32 +898,42 @@ def reaggregate_from_disk(out_root: Path) -> list[BoardResult]:
         if not board_dir.is_dir():
             continue
         board_id = board_dir.name
-        sample_files = sorted(board_dir.glob("sample_*.json"))
-        source_path = ""
         agg_json = board_dir / "aggregate.json"
-        if agg_json.exists():
-            try:
-                source_path = json.loads(agg_json.read_text()).get("source_path", "")
-            except Exception:
-                pass
+        if not agg_json.exists():
+            # main() writes it on every exit path: the run stopped inside this board.
+            results.append(BoardResult(
+                board_id=board_id, source_path="", requested_k=None,
+                error="incomplete: no aggregate.json",
+            ))
+            continue
+        agg = json.loads(agg_json.read_text())
+        source_path, requested_k = agg["source_path"], agg["k"]
+        if agg["error"]:
+            results.append(BoardResult(
+                board_id=board_id, source_path=source_path, requested_k=requested_k,
+                error=agg["error"],
+            ))
+            continue
+        sample_files = sorted(board_dir.glob("sample_*.json"))
         if not sample_files:
             results.append(BoardResult(
-                board_id=board_id, source_path=source_path,
-                error="no_samples_found",
+                board_id=board_id, source_path=source_path, requested_k=requested_k,
+                error=_NO_SAMPLES,
             ))
             continue
         samples: list[dict] = []
         for sf in sample_files:
             try:
                 samples.append(json.loads(sf.read_text()))
-            except Exception as exc:
+            except (OSError, json.JSONDecodeError) as exc:
                 samples.append({
                     "success": False, "routability": 0.0,
                     "drv_count": 0, "wirelength_mm": 0.0,
                     "error": f"unreadable: {type(exc).__name__}: {exc}",
                 })
         results.append(BoardResult(
-            board_id=board_id, source_path=source_path, samples=samples,
+            board_id=board_id, source_path=source_path, requested_k=requested_k,
+            samples=samples,
         ))
     return results
 
@@ -954,25 +977,37 @@ def _pass_at_k_unbiased(n: int, c: int, k: int) -> float:
     return 1.0 - p
 
 
+def _in_k_denominator(r: BoardResult, k: int) -> bool:
+    """Whether board ``r`` enters the @k rates: a board with samples when it has
+    at least ``k``; an errored one (or one without samples) as a failure when
+    ``k`` is at most the k it was asked for (always, if that is unknown)."""
+    if r.error or not r.samples:
+        return r.requested_k is None or k <= r.requested_k
+    return len(r.samples) >= k
+
+
 def overall_stats_multi_k(results: list[BoardResult], ks: list[int]) -> dict:
-    """Per-k overall stats from a single shared sample pool per board."""
+    """Per-k overall stats from a single shared sample pool per board, over the
+    boards ``_in_k_denominator``; ``boards_failed`` counts the errored ones."""
     out: dict = {"ks": ks, "per_k": {}}
     for k in ks:
         first_k_aggs: list[dict] = []
         unbiased_pk: list[float] = []
         failed = 0
         for r in results:
+            if not _in_k_denominator(r, k):
+                continue
             if r.error or not r.samples:
                 failed += 1
+                first_k_aggs.append(_per_board_at_k([], k))
+                unbiased_pk.append(0.0)
                 continue
             n = len(r.samples)
-            if n < k:
-                continue
             first_k_aggs.append(_per_board_at_k(r.samples, k))
             unbiased_pk.append(_pass_at_k_unbiased(n, r.successes, k))
         if not first_k_aggs:
             out["per_k"][str(k)] = {
-                "k": k, "boards_evaluated": 0, "boards_failed": failed,
+                "k": k, "boards_total": 0, "boards_evaluated": 0, "boards_failed": failed,
             }
             continue
         pass_k = [a["pass_at_k"] for a in first_k_aggs]
@@ -981,7 +1016,8 @@ def overall_stats_multi_k(results: list[BoardResult], ks: list[int]) -> dict:
         mean_per_board = [a["routability_at_k_mean"] for a in first_k_aggs]
         out["per_k"][str(k)] = {
             "k": k,
-            "boards_evaluated": len(first_k_aggs),
+            "boards_total": len(first_k_aggs),
+            "boards_evaluated": len(first_k_aggs) - failed,
             "boards_failed": failed,
             "pass_at_k": sum(pass_k) / len(pass_k),
             "success_rate_at_k": sum(pass_k) / len(pass_k),
@@ -999,10 +1035,20 @@ def overall_stats_multi_k(results: list[BoardResult], ks: list[int]) -> dict:
     return out
 
 
+_SUMMARY_K_FIELDS = [
+    "board_id", "source_path", "num_samples", "k", "error", "successes", "pass_at_k",
+    "mean_success_rate", "routability_at_k_best", "routability_at_k_mean",
+    "drv_at_k_min", "wirelength_at_k_best",
+]
+
+
 def write_multi_k_summaries(results: list[BoardResult], out_root: Path, ks: list[int]) -> None:
+    """One row per board in overall_multi_k.json's @k denominator."""
     for k in ks:
         rows: list[dict] = []
         for r in results:
+            if not _in_k_denominator(r, k):
+                continue
             base = {
                 "board_id": r.board_id,
                 "source_path": r.source_path,
@@ -1010,7 +1056,7 @@ def write_multi_k_summaries(results: list[BoardResult], out_root: Path, ks: list
                 "k": k,
                 "error": r.error,
             }
-            if r.error or not r.samples or r.num_samples < k:
+            if r.error or not r.samples:
                 base.update({
                     "successes": 0,
                     "pass_at_k": 0,
@@ -1027,24 +1073,25 @@ def write_multi_k_summaries(results: list[BoardResult], out_root: Path, ks: list
             rows.append(base)
         path = out_root / f"summary_k{k}.csv"
         with path.open("w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+            w = csv.DictWriter(f, fieldnames=_SUMMARY_K_FIELDS)
             w.writeheader()
             for row in rows:
                 w.writerow(row)
 
 
 def overall_stats(results: list[BoardResult], k: int) -> dict:
-    aggs = [r.aggregate(k) for r in results if not r.error]
+    """Overall stats over every board: an errored board (no samples) stays in
+    each rate's denominator as a failure; ``boards_failed`` counts those boards."""
+    aggs = [r.aggregate(k) for r in results]
     failed = sum(1 for r in results if r.error)
-    if not aggs:
-        return {"k": k, "boards_evaluated": 0, "boards_failed": failed}
     pass_k = [a["pass_at_k"] for a in aggs]
     mean_succ = [a["mean_success_rate"] for a in aggs]
     best = [a["routability_at_k_best"] for a in aggs]
     mean = [a["routability_at_k_mean"] for a in aggs]
     return {
         "k": k,
-        "boards_evaluated": len(aggs),
+        "boards_total": len(aggs),
+        "boards_evaluated": len(aggs) - failed,
         "boards_failed": failed,
         "pass_at_k": sum(pass_k) / len(pass_k),
         "success_rate_at_k": sum(pass_k) / len(pass_k),
@@ -1061,7 +1108,8 @@ def overall_stats(results: list[BoardResult], k: int) -> dict:
 # ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(
+    from configs.loader.cli import StrictArgumentParser
+    p = StrictArgumentParser(
         description="LLM-only API-Seq routing eval (zero-shot / few-shot).",
     )
     p.add_argument("inputs", nargs="*", type=Path, default=[],
@@ -1122,6 +1170,18 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def _exit_code(results: list[BoardResult]) -> int:
+    """1 when any board errored (crashed / api_failed / unhandled): its rates
+    count it as a failure, and a 0 exit would read as a clean run."""
+    errored = [r.board_id for r in results if r.error]
+    if errored:
+        print(f"[ERROR] {len(errored)} of {len(results)} boards errored (counted as "
+              f"failures in every rate; see the `error` column of summary.csv): "
+              f"{', '.join(errored)}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main() -> int:
     args = parse_args()
     args.output = args.output.resolve()
@@ -1177,7 +1237,7 @@ def main() -> int:
                 print(f"  {k_:<32} {v}")
         print(f"\n  summary  -> {summary_path}")
         print(f"  overall  -> {args.output / 'overall.json'}")
-        return 0
+        return _exit_code(results)
 
     if not args.inputs:
         print("[ERROR] inputs required (or pass --reaggregate)", file=sys.stderr)
@@ -1242,10 +1302,17 @@ def main() -> int:
         except Exception as exc:
             traceback.print_exc()
             r = BoardResult(
-                board_id=src.stem,
+                board_id=board_id_for(src, src_root),
                 source_path=str(src),
+                requested_k=args.num_samples,
                 error=f"unhandled: {type(exc).__name__}: {exc}",
             )
+        # Every board gets its aggregate.json (``error`` set for a failed one), so
+        # --reaggregate counts each board the way this run did.
+        board_dir = args.output / "per_board" / r.board_id
+        board_dir.mkdir(parents=True, exist_ok=True)
+        with (board_dir / "aggregate.json").open("w") as f:
+            json.dump(r.aggregate(args.num_samples), f, indent=2)
         results.append(r)
 
     summary_path = write_summary(results, args.output, args.num_samples)
@@ -1304,18 +1371,18 @@ def main() -> int:
             f"{'pass@k_unb':>10}  {'rb_best':>8}  {'rb_mean':>8}"
         )
         for k_str, st in multi["per_k"].items():
-            if st.get("boards_evaluated", 0) == 0:
+            if st["boards_total"] == 0:
                 print(f"  {k_str:>3}  {0:>6}  (no boards with >= k samples)")
                 continue
             print(
-                f"  {k_str:>3}  {st['boards_evaluated']:>6}  "
+                f"  {k_str:>3}  {st['boards_total']:>6}  "
                 f"{st['pass_at_k']:>8.4f}  {st['pass_at_k_unbiased']:>10.4f}  "
                 f"{st['routability_at_k_best_mean']:>8.4f}  "
                 f"{st['routability_at_k_mean_mean']:>8.4f}"
             )
         print(f"\n  multi_k -> {args.output / 'overall_multi_k.json'}")
 
-    return 0
+    return _exit_code(results)
 
 
 if __name__ == "__main__":

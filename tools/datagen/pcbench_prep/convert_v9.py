@@ -28,6 +28,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -88,7 +89,11 @@ def convert_sample(name: str, pcbs_dir: Path, out_dir: Path, helper: Path) -> di
 
 
 def main():
-    p = argparse.ArgumentParser(
+    repo_dir = str(Path(__file__).resolve().parents[3])  # configs.loader when run as a script
+    if repo_dir not in sys.path:
+        sys.path.insert(0, repo_dir)
+    from configs.loader.cli import StrictArgumentParser
+    p = StrictArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

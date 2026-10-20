@@ -34,7 +34,6 @@ Exit code 0 = every check that ran passed.
 """
 from __future__ import annotations
 
-import argparse
 import hashlib
 import os
 import re
@@ -286,7 +285,10 @@ def check_runtime_maps(evidence_dir: Path | None) -> None:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
+    if str(REPO) not in sys.path:  # configs.loader when run as a script
+        sys.path.insert(0, str(REPO))
+    from configs.loader.cli import StrictArgumentParser
+    ap = StrictArgumentParser(description=__doc__)
     ap.add_argument("--runtime", action="store_true",
                     help="also run the live /proc/<pid>/maps proof")
     ap.add_argument("--evidence-dir", type=Path, default=None,

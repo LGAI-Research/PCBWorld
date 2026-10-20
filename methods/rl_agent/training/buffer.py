@@ -3,7 +3,7 @@
 The single flat-buffer layout shared by PPO (per-step GAE) and GRPO (grouped
 group-relative advantage): GRPO per-env trajectories and PPO ``(T, N)`` collector
 output both flatten into :class:`FlatBuffer`; PPO additionally carries
-``returns``/``old_values`` (§3.5 invariant — same layout, only the advantage differs).
+``returns`` (§3.5 invariant — same layout, only the advantage differs).
 Carved from ``decoder_common`` (C1-b).
 """
 from __future__ import annotations
@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, TypedDict
 
 import numpy as np
 
-from pcb_world.core.masking import NUM_ACTIONS
+from methods.rl_agent.models.v1.spec import Transition
 
 if TYPE_CHECKING:
     from methods.rl_agent.training.collect import (
@@ -26,15 +26,12 @@ class FlatBuffer(TypedDict, total=False):
     # carried (dispatch_update obs-strip) — the walked= update path never
     # reads obs.
     obs_list: list[dict] | None
-    actions: np.ndarray         # (N, 3) int64
-    old_log_probs: np.ndarray   # (N,)   float32
-    action_masks: np.ndarray    # (N, NUM_ACTIONS) bool
-    pointer_masks: np.ndarray   # (N, K) int64 — start_route cand idxs (-1 pad)
-    mode_masks: np.ndarray      # (N, 3) bool — routing-mode mask
-    net_valid_masks: np.ndarray # (N, M_max) bool — policy-driven net_select only
+    # Row-aligned with obs_list: the act-time DistInputs + action, old
+    # log-prob/value (+ kl_mask) — what the update re-scores, as one bundle.
+    transition: Transition
     advantages: np.ndarray      # (N,)   float32
     returns: np.ndarray         # (N,)   float32 — PPO only
-    old_values: np.ndarray      # (N,)   float32 — PPO only
+    returns_mc: np.ndarray      # (N,)   float32 — PPO only (diagnostic)
     # Flat batched walk over the whole buffer (one walk dict, B == N,
     # row-aligned with obs_list) — the collect-time cached tokenize walk the
     # update index-gathers per minibatch (see PPOCollectorOutput.walk_flat).
@@ -52,72 +49,19 @@ def flatten_group_to_buffer(
     Each step in episode i broadcasts the same scalar advantage
     ``per_episode_advantages[i]``.
     """
-    obs_list: list[dict] = []
-    actions: list[np.ndarray] = []
-    old_lp: list[float] = []
-    masks: list[np.ndarray] = []
-    ptr_masks: list[np.ndarray] = []
-    m_masks: list[np.ndarray] = []
-    nvm_list: list[np.ndarray] = []
-    has_nvm = False
-    advs: list[float] = []
-
-    for i, traj in enumerate(trajectories):
-        for step in traj:
-            obs_list.append(step["obs"])
-            actions.append(step["action"])
-            old_lp.append(step["log_prob"])
-            masks.append(step["action_mask"])
-            pm = step.get("pointer_mask")
-            if pm is None:
-                pm = np.zeros((0,), dtype=np.int64)
-            else:
-                pm = np.asarray(pm, dtype=np.int64).reshape(-1)
-            ptr_masks.append(pm)
-            m_masks.append(step.get(
-                "mode_mask", np.ones(3, dtype=bool),
-            ))
-            if "net_valid_mask" in step:
-                has_nvm = True
-                nvm_list.append(step["net_valid_mask"])
-            advs.append(float(per_episode_advantages[i]))
-
-    if len(obs_list) == 0:
-        return {
-            "obs_list": [],
-            "actions": np.zeros((0, 3), dtype=np.int64),
-            "old_log_probs": np.zeros((0,), dtype=np.float32),
-            "action_masks": np.zeros((0, NUM_ACTIONS), dtype=bool),
-            "pointer_masks": np.zeros((0, 0), dtype=np.int64),
-            "mode_masks": np.zeros((0, 3), dtype=bool),
-            "advantages": np.zeros((0,), dtype=np.float32),
-        }
-
-    K_max = max((p.shape[0] for p in ptr_masks), default=0)
-    if K_max == 0:
-        ptr_masks_arr = np.full((len(ptr_masks), 0), -1, dtype=np.int64)
-    else:
-        ptr_masks_arr = np.full((len(ptr_masks), K_max), -1, dtype=np.int64)
-        for j, p in enumerate(ptr_masks):
-            if p.shape[0]:
-                ptr_masks_arr[j, : p.shape[0]] = p
-
-    out: FlatBuffer = {
-        "obs_list": obs_list,
-        "actions": np.stack(actions, axis=0).astype(np.int64),
-        "old_log_probs": np.asarray(old_lp, dtype=np.float32),
-        "action_masks": np.stack(masks, axis=0).astype(bool),
-        "pointer_masks": ptr_masks_arr,
-        "mode_masks": np.stack(m_masks, axis=0).astype(bool),
-        "advantages": np.asarray(advs, dtype=np.float32),
+    steps = [(i, step) for i, traj in enumerate(trajectories) for step in traj]
+    if not steps:
+        raise ValueError(
+            f"GRPO group of {len(trajectories)} trajectories has no steps — a "
+            "collect yields >= 1 step per env, so the collector returned nothing"
+        )
+    return {
+        "obs_list": [step["obs"] for _, step in steps],
+        "transition": Transition.concat([step["transition"] for _, step in steps]),
+        "advantages": np.asarray(
+            [per_episode_advantages[i] for i, _ in steps], dtype=np.float32,
+        ),
     }
-    if has_nvm:
-        M_max = max(m.shape[0] for m in nvm_list)
-        nvm_arr = np.zeros((len(nvm_list), M_max), dtype=bool)
-        for i, m in enumerate(nvm_list):
-            nvm_arr[i, : m.shape[0]] = m
-        out["net_valid_masks"] = nvm_arr
-    return out
 
 
 def compute_gae_flat(
@@ -204,37 +148,17 @@ def ppo_collector_to_buffer(
 ) -> FlatBuffer:
     """Flatten a (T, N) PPO rollout into a flat replay buffer.
 
-    Row-major order matches ``coll.obs_list``.
+    Row-major order matches ``coll.obs_list`` and ``coll.transition``.
     """
     T, N = advantages.shape
     assert len(coll.obs_list) == T * N
 
-    actions = coll.actions.reshape(T * N, 3)
-    log_probs = coll.log_probs.reshape(T * N)
-    masks = coll.action_masks.reshape(T * N, NUM_ACTIONS)
-    K = coll.pointer_masks.shape[-1] if coll.pointer_masks.ndim == 3 else 0
-    ptr_masks = coll.pointer_masks.reshape(T * N, K)
-    m_masks = coll.mode_masks.reshape(T * N, 3)
-    advs = advantages.reshape(T * N)
-    rets = returns.reshape(T * N)
-    old_vals = coll.values.reshape(T * N)
-
     out: FlatBuffer = {
         "obs_list": coll.obs_list,
-        "actions": actions.astype(np.int64),
-        "old_log_probs": log_probs.astype(np.float32),
-        "action_masks": masks.astype(bool),
-        "pointer_masks": ptr_masks.astype(np.int64),
-        "mode_masks": m_masks.astype(bool),
-        "advantages": advs.astype(np.float32),
-        "returns": rets.astype(np.float32),
-        "old_values": old_vals.astype(np.float32),
+        "transition": coll.transition,
+        "advantages": advantages.reshape(T * N).astype(np.float32),
+        "returns": returns.reshape(T * N).astype(np.float32),
     }
-    if coll.net_valid_masks is not None:
-        M_max = coll.net_valid_masks.shape[-1]
-        out["net_valid_masks"] = (
-            coll.net_valid_masks.reshape(T * N, M_max).astype(bool)
-        )
     if coll.walk_flat is not None:
         assert coll.walk_flat["B"] == T * N
         out["walk_flat"] = coll.walk_flat

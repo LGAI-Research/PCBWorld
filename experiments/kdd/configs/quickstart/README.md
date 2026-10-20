@@ -24,11 +24,11 @@ tells you where to go.
 
 | Pipeline | reward / masking | boards | source of truth |
 |---|---|---|---|
-| RL eval ([eval/pipeline.py](../../../../eval/pipeline.py)) | DRC scoring reward = [drc_dense_errors_only_eval](../reward/drc_dense_errors_only_eval.yaml); env/masking are inherited from the ckpt. The rules come from each board's native `.kicad_pro` | per experiment (table above) | [defaults/rl_eval.yaml](../../../../configs/pcbworld.yaml) |
-| LLM eval (Table 1 LLM rows) | reward = [grpo_final](../reward/grpo_final.yaml), masking = `strict` (compatibility-resolved to [default](../masking/default.yaml)) | [splits.json](splits.json) alias: d2a → [d2a.json](../datasets/d2a.json), d3a/b/c → [d3_v2.json](../../../../configs/datasets/d3.json) | [defaults/llm.yaml](../../../../configs/pcbworld.yaml) · [table1_llm/run.sh](../../table1_llm/run.sh) |
+| RL eval ([eval/pipeline.py](../../../../eval/pipeline.py)) | DRC scoring reward = [drc_dense_promoted](../reward/drc_dense_promoted.yaml) without the training wirelength/via overrides, `--check-angle 45` (D2/D3) or `90` (D1); env/masking are inherited from the ckpt. The rules come from each board's native `.kicad_pro` | per experiment (table above) | [paper_train_flags.sh](../paper_train_flags.sh) `PAPER_ROLLOUT_FLAGS`/`PAPER_SCORING_FLAGS` + each recipe's `run.sh eval` |
+| LLM eval (Table 1 LLM rows) | reward = [grpo_final](../reward/grpo_final.yaml), masking = `strict` (compatibility-resolved to [default](../masking/default.yaml)) | [splits.json](splits.json) alias: d2a → [d2a.json](../datasets/d2a.json), d3a/b/c → [d3_v2.json](../../../../configs/datasets/d3.json) | [configs/llm.yaml (llm:)](../../../../configs/llm.yaml) · [table1_llm/run.sh](../../table1_llm/run.sh) |
 
 > **Note**: the `reward_rule: pcbworld_reward` / `masking_rule: pcbworld_masking` in
-> [configs/pcbworld.yaml (env:)](../../../../configs/pcbworld.yaml) are **not the KDD settings** — they are the current
+> [configs/env.yaml](../../../../configs/env.yaml) are **not the KDD settings** — they are the current
 > development defaults. The KDD rules live in [experiments/kdd/configs/](..) and
 > still resolve by name (the loaders search `configs/` first, then `experiments/kdd/configs/`). KDD reproduction must always go through each experiment's `run.sh` (→ `cases.sh` overrides).
 > Full reproduction procedure: [docs/QUICKSTART.md](../../../../docs/QUICKSTART.md).

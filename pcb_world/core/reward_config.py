@@ -1,24 +1,20 @@
 """Reward configuration system with YAML-based config loading.
 
-Mirrors the masking rule pattern: Protocol + YAML loader + registry + auto-discovery.
+Mirrors the masking rule pattern: schema + YAML loader + registry + auto-discovery.
 
-YAML format (unified potential):
+YAML format (validated by :class:`RewardRuleSchema`; every key below except the
+optional ``PotentialReward`` arguments is required):
     name: default
     mode: terminal     # "terminal" or "per_step"
-    potential:
+    potential:         # PotentialReward arguments (absent ones keep its defaults) + the four penalties
       completion_bonus: 5.0
       unconnected_penalty: 1.0
-      wirelength_penalty: 0.0
       drc_penalty: 0.5
-      step_penalty: 0.01
       truncation_mode: none
-
-Legacy YAML format (still supported):
-    name: default
-    mode: terminal
-    step_penalty: 0.01
-    step_reward: { ... }
-    final_reward: { ... }
+      step_penalty: 0.01
+      invalid_action_penalty: 0.01
+      parse_fail_penalty: 0.2
+      mask_reject_penalty: 0.09
 
 Usage:
     cfg = get_reward_config("default")
@@ -28,8 +24,12 @@ Usage:
 from __future__ import annotations
 
 import copy
+import typing
 import warnings
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Protocol
 
 from pcb_world.core.reward import FinalOnlyReward, PotentialReward, RewardFunction
@@ -111,87 +111,87 @@ class RewardConfig(Protocol):
 # YAML-based reward config
 # ---------------------------------------------------------------------------
 
-class YamlRewardConfig:
-    """Reward configuration loaded from a YAML config dict.
+# Mode names of older rules, read as the paper terms.
+_MODE_MIGRATIONS = {
+    "final_only": "terminal",
+    "sparse": "terminal",
+    "combined": "per_step",
+    "step": "per_step",
+    "dense": "per_step",
+}
 
-    Supports both the new unified ``potential:`` format and the legacy
-    ``step_reward:`` / ``final_reward:`` format.  Legacy configs use
-    ``final_reward`` weights as the ground truth for the unified potential.
+# Penalties every rule states under ``potential:``. The env applies them; only
+# step_penalty is also a PotentialReward argument.
+_RULE_PENALTIES = ("step_penalty", "invalid_action_penalty", "parse_fail_penalty", "mask_reject_penalty")
+
+
+def is_old_reward_format(raw: Any) -> bool:
+    """A reward rule in the format before ``potential:`` — the old loader read any mapping without
+    it (top-level ``step_reward:`` / ``final_reward:`` / penalties, or only ``name`` / ``mode``).
+    Converted for a rule outside the tracked tree (``configs.loader.load_rule_file``), refused in
+    a tracked one."""
+    return isinstance(raw, Mapping) and "potential" not in raw
+
+
+@dataclass(frozen=True)
+class RewardRuleSchema:
+    """Schema of one reward rule YAML — see the module docstring for the layout.
+
+    ``potential`` holds the :class:`PotentialReward` arguments the rule sets plus the
+    four penalties of ``_RULE_PENALTIES`` (required). Build it with :meth:`from_dict`.
     """
 
-    def __init__(self, config: dict[str, Any]) -> None:
-        self._name: str = config.get("name", "yaml_custom")
-        self._mode: str = config.get("mode", "terminal")
+    name: str
+    mode: str
+    potential: Mapping[str, Any]
 
-        # Migrate legacy mode names (paper terms: terminal / per_step).
-        _MODE_MIGRATIONS = {
-            "final_only": "terminal",
-            "sparse": "terminal",
-            "combined": "per_step",
-            "step": "per_step",
-            "dense": "per_step",
-        }
-        if self._mode in _MODE_MIGRATIONS:
-            new_mode = _MODE_MIGRATIONS[self._mode]
+    @classmethod
+    def from_dict(cls, raw: Any, source: str | Path) -> "RewardRuleSchema":
+        """Validate a parsed rule YAML; any unknown, missing or mistyped key raises ``ValueError`` naming *source*."""
+        from configs.loader import check_mapping
+
+        where = f"reward rule {source}"
+        if is_old_reward_format(raw):
+            raise ValueError(
+                f"{where}: old reward format (no `potential:`; top-level keys {sorted(raw)}) is read only for "
+                f"a rule outside the tracked tree — rewrite it as a `potential:` rule."
+            )
+        top = check_mapping(raw, _SCHEMA_TYPES, where=where)
+        check_mapping(top["potential"], _POTENTIAL_TYPES, required=_RULE_PENALTIES, where=f"{where} potential")
+        mode = top["mode"]
+        if mode in _MODE_MIGRATIONS:
             warnings.warn(
-                f"Reward mode {self._mode!r} is deprecated, treating as {new_mode!r}.",
+                f"Reward mode {mode!r} is deprecated, treating as {_MODE_MIGRATIONS[mode]!r} ({source}).",
                 DeprecationWarning,
                 stacklevel=2,
             )
-            self._mode = new_mode
+            mode = _MODE_MIGRATIONS[mode]
+        if mode not in VALID_MODES:
+            raise ValueError(f"{where}: invalid mode={mode!r}. Must be one of {VALID_MODES}.")
+        return cls(name=top["name"], mode=mode, potential=MappingProxyType(dict(top["potential"])))
 
-        if self._mode not in VALID_MODES:
-            raise ValueError(
-                f"Invalid reward mode={self._mode!r}. "
-                f"Must be one of {VALID_MODES}."
-            )
 
-        if "potential" in config:
-            # New unified format
-            self._potential_cfg: dict[str, Any] = dict(config["potential"])
-            self._potential_cfg.pop("use_drc", None)  # deprecated, ignored
-            self._step_penalty: float = self._potential_cfg.pop(
-                "step_penalty", 0.01,
-            )
-            self._invalid_action_penalty: float = self._potential_cfg.pop(
-                "invalid_action_penalty", 0.01,
-            )
-            # Penalty for unparseable agent output (LLM env only). Default
-            # matches the legacy env_manager parse_reward (-0.2) so existing
-            # configs see no behavior change.
-            self._parse_fail_penalty: float = self._potential_cfg.pop(
-                "parse_fail_penalty", 0.2,
-            )
-            self._mask_reject_penalty: float = self._potential_cfg.pop(
-                "mask_reject_penalty", 0.09,
-            )
-            self._potential_cfg.setdefault("step_penalty", self._step_penalty)
-        else:
-            # Legacy format: step_reward + final_reward
-            self._step_penalty = config.get("step_penalty", 0.01)
-            self._invalid_action_penalty = config.get(
-                "invalid_action_penalty", 0.01,
-            )
-            self._parse_fail_penalty = config.get("parse_fail_penalty", 0.2)
-            self._mask_reject_penalty = config.get("mask_reject_penalty", 0.09)
-            final_cfg = dict(config.get("final_reward", {}))
-            # Build potential config from final_reward weights (ground truth).
-            # Legacy use_drc=False is preserved by forcing drc_penalty=0 so the
-            # resulting potential has no DRC contribution.
-            legacy_use_drc = final_cfg.get("use_drc", False)
-            drc_pen = final_cfg.get("drc_penalty", 0.5) if legacy_use_drc else 0.0
-            self._potential_cfg = {
-                "completion_bonus": final_cfg.get("completion_bonus", 5.0),
-                "unconnected_penalty": final_cfg.get("unconnected_penalty", 1.0),
-                "wirelength_penalty": final_cfg.get("wirelength_penalty", 0.0),
-                "via_penalty": final_cfg.get("via_penalty", 0.0),
-                "drc_penalty": drc_pen,
-                "step_penalty": self._step_penalty,
-                "truncation_mode": final_cfg.get("truncation_mode", "none"),
-                "wire_via_emission": final_cfg.get(
-                    "wire_via_emission", "per_step",
-                ),
-            }
+_SCHEMA_TYPES = typing.get_type_hints(RewardRuleSchema)
+# ``potential:`` keys: the PotentialReward arguments + the env penalties.
+_POTENTIAL_TYPES = {
+    **{k: v for k, v in typing.get_type_hints(PotentialReward.__init__).items() if k != "return"},
+    **dict.fromkeys(_RULE_PENALTIES, float),
+}
+
+
+class YamlRewardConfig:
+    """Reward configuration built from a validated :class:`RewardRuleSchema`."""
+
+    def __init__(self, rule: RewardRuleSchema) -> None:
+        self.rule = rule
+        self._name: str = rule.name
+        self._mode: str = rule.mode
+        # PotentialReward arguments; the three env-only penalties are split off.
+        self._potential_cfg: dict[str, Any] = dict(rule.potential)
+        self._step_penalty: float = self._potential_cfg["step_penalty"]
+        self._invalid_action_penalty: float = self._potential_cfg.pop("invalid_action_penalty")
+        self._parse_fail_penalty: float = self._potential_cfg.pop("parse_fail_penalty")
+        self._mask_reject_penalty: float = self._potential_cfg.pop("mask_reject_penalty")
 
     @property
     def name(self) -> str:
@@ -304,9 +304,86 @@ def load_reward_config(path: str | Path) -> YamlRewardConfig:
     Returns:
         Instantiated YamlRewardConfig.
     """
-    from configs.loader import load_config
+    from configs.loader import load_rule_file
 
-    return YamlRewardConfig(load_config(path))
+    rule = RewardRuleSchema.from_dict(load_rule_file(path, "reward"), path)
+    _warn_linear_ladder(rule, path)
+    return YamlRewardConfig(rule)
+
+
+# Rules already reported by _warn_linear_ladder in this process (resolved path).
+_LINEAR_LADDER_WARNED: set[str] = set()
+
+
+def _warn_linear_ladder(rule: RewardRuleSchema, path: str | Path) -> None:
+    """Name the rule when it turns the linear per-net ladder weighting on.
+
+    Once per distinct rule file and process (path-loaded rules are not cached,
+    so eval would otherwise repeat it per board).
+    """
+    # Optional key: absent means the PotentialReward default (0.0, off).
+    scale = rule.potential.get("net_bonus_size_linear_scale")
+    if scale is None or not scale > 0:
+        return
+    key = str(Path(path).resolve())
+    if key not in _LINEAR_LADDER_WARNED:
+        _LINEAR_LADDER_WARNED.add(key)
+        warnings.warn(
+            f"reward rule {rule.name!r} ({key}): net_bonus_size_linear_scale="
+            f"{scale} > 0 weights the per-net ladder by pad groups "
+            f"(w_i = scale * pg_i); configs that reproduce runs before "
+            f"2026-10-09 use 0.0.",
+            UserWarning,
+            stacklevel=3,
+        )
+
+
+def reward_rule_path(name: str) -> Path | None:
+    """The YAML file the reward rule *name* resolves to (an explicit path, else ``{name}.yaml``
+    under the search dirs after the name mapping); None when no file has that name (a rule
+    registered in-process only)."""
+    if name.endswith((".yaml", ".yml")):
+        return Path(name)
+    name = _NAME_COMPAT.get(name, name)
+    return next((d / f"{name}.yaml" for d in _REWARD_SEARCH_DIRS if (d / f"{name}.yaml").exists()), None)
+
+
+#: The per-run reward overrides a run trains with — ``RewardOverrides`` field (= the flat
+#: checkpoint / run-record key) -> :class:`PotentialReward` argument; ``None`` keeps the rule's.
+REWARD_OVERRIDE_ARGS: Mapping[str, str] = MappingProxyType({
+    "reward_step_penalty": "step_penalty", "via_penalty": "via_penalty",
+    "wirelength_penalty": "wirelength_penalty", "drc_penalty": "drc_penalty",
+    "drc_log_scale": "drc_log_scale", "drc_log_agg_scale": "drc_log_agg_scale",
+    "drc_log_offset": "drc_log_offset", "wire_via_emission": "wire_via_emission",
+})
+#: :class:`PotentialReward` arguments that shape the reward but not Φ itself.
+_NON_PHI_ARGS = ("step_penalty", "truncation_mode", "wire_via_emission", "jumanji_connector_dense",
+                 "jumanji_connector_dense_flat", "jumanji_connector_wirelength_dense")
+
+
+def effective_reward_config(rule: str, overrides: Mapping[str, Any]) -> RewardConfig:
+    """The reward a run trains with: the rule *rule* with the run's overrides (*overrides* holds
+    every :data:`REWARD_OVERRIDE_ARGS` key, e.g. ``RewardOverrides`` as a dict or a checkpoint's
+    args)."""
+    return get_reward_config(rule).with_overrides(
+        **{arg: overrides[key] for key, arg in REWARD_OVERRIDE_ARGS.items()})
+
+
+def phi_diff(a: YamlRewardConfig, b: YamlRewardConfig) -> dict[str, tuple[Any, Any]]:
+    """``{argument: (a's value, b's value)}`` of the :class:`PotentialReward` arguments that define
+    Φ where the reward configs *a* and *b* differ — an argument a config leaves out read as its
+    default; names, ``mode``, the env penalties and :data:`_NON_PHI_ARGS` are not Φ. Empty = the
+    same Φ."""
+    import inspect
+
+    defaults = {k: p.default for k, p in inspect.signature(PotentialReward.__init__).parameters.items()
+                if p.default is not inspect.Parameter.empty}
+
+    def phi(cfg: YamlRewardConfig) -> dict[str, Any]:
+        return {k: v for k, v in {**defaults, **cfg._potential_cfg}.items() if k not in _NON_PHI_ARGS}
+
+    pa, pb = phi(a), phi(b)
+    return {k: (pa[k], pb[k]) for k in pa if pa[k] != pb[k]}
 
 
 def get_reward_config(name: str = "default") -> RewardConfig:
@@ -332,12 +409,11 @@ def get_reward_config(name: str = "default") -> RewardConfig:
         return _REWARD_CONFIG_CACHE[name]
 
     # 4. Auto-discover {name}.yaml from the search dirs
-    for d in _REWARD_SEARCH_DIRS:
-        yaml_path = d / f"{name}.yaml"
-        if yaml_path.exists():
-            config = load_reward_config(yaml_path)
-            _REWARD_CONFIG_CACHE[name] = config
-            return config
+    yaml_path = reward_rule_path(name)
+    if yaml_path is not None:
+        config = load_reward_config(yaml_path)
+        _REWARD_CONFIG_CACHE[name] = config
+        return config
 
     raise KeyError(
         f"Unknown reward config '{name}'. No cached config and no {name}.yaml under "

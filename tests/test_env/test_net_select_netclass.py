@@ -14,9 +14,10 @@ Three layers of coverage:
 
 3. **``PCBWorld`` integration** (requires the C++ binding) — run
    ``reset`` + ``step(net_select)`` on the crossover fixture and assert
-   that the engine's ``set_track_width`` / ``set_via_diameter`` /
-   ``set_via_drill`` are invoked with values from the resolved
-   netclass. Skipped when the binding is unavailable.
+   that the env pushes no sizes into the engine (the engine imports them
+   from the start item's net class at ``start_route``) and that the
+   router then holds the resolved netclass values. Skipped when the
+   binding is unavailable.
 
 The fallback-logic paths in :meth:`PCBWorld._resolve_netclass` (engine
 without ``get_netclass_for_net``, name-equality heuristic) are covered
@@ -31,7 +32,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from configs.loader.schema import EnvConfig
 from tests.helpers.pro_sidecar import write_default_pro
+from tests.helpers.engine import open_engine
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
 CROSSOVER_FIXTURE = FIXTURES_DIR / "crossover_board.kicad_pcb"
@@ -51,9 +54,8 @@ class TestParserOnCrossover:
 
     @pytest.fixture
     def parsed(self):
-        from pcb_world.engine.kicad_engine import KiCadEngine
         from pcb_world.engine.pcb_file_parser import parse_pcb_file
-        engine = KiCadEngine(str(CROSSOVER_FIXTURE))
+        engine = open_engine(str(CROSSOVER_FIXTURE))
         try:
             return parse_pcb_file(CROSSOVER_FIXTURE, engine)
         finally:
@@ -129,9 +131,8 @@ class TestNpthRoutesToObstacles:
 
     @pytest.fixture
     def parsed(self, synth_board):
-        from pcb_world.engine.kicad_engine import KiCadEngine
         from pcb_world.engine.pcb_file_parser import parse_pcb_file
-        engine = KiCadEngine(str(synth_board))
+        engine = open_engine(str(synth_board))
         try:
             return parse_pcb_file(synth_board, engine)
         finally:
@@ -186,11 +187,10 @@ def _mk_rules(
 ):
     """Lightweight RLDesignRules stand-in.
 
-    BDS global minima default to ``-1.0`` (unset) so existing tests keep
-    their un-clamped expectations. Pass positive values to exercise the
-    clamp path in :meth:`PCBWorld._resolve_net_rule_values`. Every floor
-    attribute the resolver reads MUST exist here (it accesses them
-    without a getattr default on purpose — a missing floor is loud).
+    BDS global minima default to ``-1.0`` (unset). The env-side resolver
+    (:meth:`PCBWorld._resolve_net_rule_values`) does not read them — a
+    class value below a board minimum is refused at load time by
+    ``verify_netclass_rules`` instead of being clamped.
     """
     return SimpleNamespace(
         default_netclass=default_nc,
@@ -203,14 +203,11 @@ def _mk_rules(
 
 
 class _RecordingEngine:
-    """Captures ``set_*`` calls so assertions can inspect the invocation order."""
+    """Engine stand-in serving design rules and the per-net class lookup."""
 
     def __init__(self, rules, net_to_class_name=None):
         self._rules = rules
         self._net_to_class_name = net_to_class_name or {}
-        self.set_track_width_calls: list = []
-        self.set_via_diameter_calls: list = []
-        self.set_via_drill_calls: list = []
 
     # engine API surface needed by the env ----------------------------------
 
@@ -229,19 +226,10 @@ class _RecordingEngine:
                 return nc
         return _mk_nc("")
 
-    def set_track_width(self, v):
-        self.set_track_width_calls.append(v)
-
-    def set_via_diameter(self, v):
-        self.set_via_diameter_calls.append(v)
-
-    def set_via_drill(self, v):
-        self.set_via_drill_calls.append(v)
-
 
 def _mk_env_with_engine(engine, nets):
     """Instantiate ``PCBWorld`` without running ``__init__`` and wire the
-    minimal state ``_resolve_netclass`` / ``_apply_net_constraints`` touch.
+    minimal state ``_resolve_netclass`` / ``_resolve_net_rule_values`` touch.
     """
     from pcb_world.core.env import PCBWorld
     env = PCBWorld.__new__(PCBWorld)
@@ -292,9 +280,6 @@ class TestResolveNetclassFallback:
 
         class _OldEngine:
             def get_design_rules(self): return rules
-            def set_track_width(self, v): pass
-            def set_via_diameter(self, v): pass
-            def set_via_drill(self, v): pass
 
         engine = _OldEngine()
         nets = {5: SimpleNamespace(net_name="HighSpeed")}
@@ -314,115 +299,6 @@ class TestResolveNetclassFallback:
 
         nc = env._resolve_netclass(3, rules)
         assert nc.name == "Default"
-
-
-class TestApplyNetConstraints:
-    """``_apply_net_constraints`` should feed values into the engine."""
-
-    def test_matched_class_values_pushed(self):
-        default = _mk_nc("Default", tw=0.25, vd=0.8, dr=0.4)
-        hv = _mk_nc("HighSpeed", tw=0.15, vd=0.6, dr=0.3)
-        rules = _mk_rules(default, [hv])
-
-        engine = _RecordingEngine(
-            rules, net_to_class_name={7: "HighSpeed"},
-        )
-        nets = {7: SimpleNamespace(net_name="/CLK")}
-        env = _mk_env_with_engine(engine, nets)
-
-        env._apply_net_constraints(7)
-
-        assert engine.set_track_width_calls == [0.15]
-        assert engine.set_via_diameter_calls == [0.6]
-        assert engine.set_via_drill_calls == [0.3]
-
-    def test_inherit_unset_fields_from_default(self):
-        """A non-Default class that leaves drill unset (-1) inherits
-        ``via_drill_mm`` from Default — mirrors KiCad's resolution."""
-        default = _mk_nc("Default", tw=0.25, vd=0.8, dr=0.4)
-        partial = _mk_nc("Partial", tw=0.18, vd=0.7, dr=-1.0)  # drill unset
-        rules = _mk_rules(default, [partial])
-
-        engine = _RecordingEngine(
-            rules, net_to_class_name={2: "Partial"},
-        )
-        nets = {2: SimpleNamespace(net_name="/PWR")}
-        env = _mk_env_with_engine(engine, nets)
-
-        env._apply_net_constraints(2)
-
-        assert engine.set_track_width_calls == [0.18]
-        assert engine.set_via_diameter_calls == [0.7]
-        assert engine.set_via_drill_calls == [0.4]   # inherited from Default
-
-    def test_negative_values_skipped(self):
-        """If both the matched class AND Default leave a field unset
-        (stays negative), that setter is never called."""
-        default = _mk_nc("Default", tw=0.25, vd=0.8, dr=-1.0)
-        partial = _mk_nc("Partial", tw=0.18, vd=-1.0, dr=-1.0)
-        rules = _mk_rules(default, [partial])
-
-        engine = _RecordingEngine(
-            rules, net_to_class_name={2: "Partial"},
-        )
-        nets = {2: SimpleNamespace(net_name="/PWR")}
-        env = _mk_env_with_engine(engine, nets)
-
-        env._apply_net_constraints(2)
-
-        assert engine.set_track_width_calls == [0.18]
-        assert engine.set_via_diameter_calls == [0.8]     # Default's positive
-        assert engine.set_via_drill_calls == []           # both unset → skipped
-
-    def test_clamped_to_bds_global_min(self):
-        """Values below the BDS global minimum are lifted up to the
-        minimum — matches KiCad's own DRC floor."""
-        default = _mk_nc("Default", tw=0.25, vd=0.8, dr=0.4)
-        # Non-Default class deliberately below every min.
-        sub_min = _mk_nc("Sub", tw=0.10, vd=0.50, dr=0.20)
-        rules = _mk_rules(
-            default, [sub_min],
-            min_tw=0.20,
-            min_vd=0.60,
-            min_th=0.30,
-        )
-
-        engine = _RecordingEngine(
-            rules, net_to_class_name={3: "Sub"},
-        )
-        nets = {3: SimpleNamespace(net_name="/LOGIC")}
-        env = _mk_env_with_engine(engine, nets)
-
-        env._apply_net_constraints(3)
-
-        # Each value gets clamped up to the BDS floor, not the raw class value.
-        assert engine.set_track_width_calls == [0.20]
-        assert engine.set_via_diameter_calls == [0.60]
-        assert engine.set_via_drill_calls == [0.30]
-
-    def test_clamp_is_noop_when_class_exceeds_min(self):
-        """Clamp only lifts values below the floor — larger class values
-        pass through unchanged."""
-        default = _mk_nc("Default", tw=0.25, vd=0.8, dr=0.4)
-        wide = _mk_nc("Wide", tw=0.50, vd=1.20, dr=0.60)
-        rules = _mk_rules(
-            default, [wide],
-            min_tw=0.20,
-            min_vd=0.60,
-            min_th=0.30,
-        )
-
-        engine = _RecordingEngine(
-            rules, net_to_class_name={4: "Wide"},
-        )
-        nets = {4: SimpleNamespace(net_name="/PWR")}
-        env = _mk_env_with_engine(engine, nets)
-
-        env._apply_net_constraints(4)
-
-        assert engine.set_track_width_calls == [0.50]
-        assert engine.set_via_diameter_calls == [1.20]
-        assert engine.set_via_drill_calls == [0.60]
 
 
 # ---------------------------------------------------------------------------
@@ -448,23 +324,21 @@ def _binding_available() -> bool:
 class TestNetSelectIntegration:
     """Reset on crossover + a ``net_select`` step.
 
-    The crossover fixture has no non-Default netclasses, so every net
-    resolves to Default. The env's ``_apply_net_constraints`` fast-paths
-    that case — it does **not** re-push values the engine already holds
-    from ``__init__``. We verify that behaviour here, and pin the
-    underlying invariant: a ``net_select`` step must never leave the
-    router with zero/invalid track_width or via sizes regardless of
-    whether the setters were called.
+    The env pushes no sizes into the engine: ``start_route`` imports
+    track width / via diameter / via drill from the start item's net
+    class on every call. The crossover fixture has no non-Default
+    netclasses, so every net resolves to Default and the router must hold
+    the Default values once a route is started.
     """
 
     @pytest.fixture
     def env(self):
         from pcb_world.core.env import PCBWorld
-        env = PCBWorld(board_path=str(CROSSOVER_FIXTURE), max_steps=5)
+        env = PCBWorld(str(CROSSOVER_FIXTURE), EnvConfig.with_overrides(max_steps=5))
         yield env
         env.close()
 
-    def test_default_netclass_takes_fast_path(self, env, monkeypatch):
+    def test_net_select_pushes_no_sizes(self, env, monkeypatch):
         env.reset()
 
         calls = {"tw": [], "vd": [], "vdr": []}
@@ -484,12 +358,35 @@ class TestNetSelectIntegration:
         net_id = next(iter(env._board_info.nets))
         env.step({"action_type": 0, "net_id": int(net_id)})  # 0 = ACT_NET_SELECT
 
-        # Fast path: Default netclass resolution must NOT re-push values
-        # — re-pushing identical widths mid-episode was observed to
-        # perturb PNS state on DRC-boundary boards.
+        # The setters are a per-session override only; the env never calls
+        # them — sizing is the engine's job at start_route.
         assert calls["tw"] == []
         assert calls["vd"] == []
         assert calls["vdr"] == []
+
+    def test_started_route_holds_resolved_class_sizes(self, env):
+        """After ``net_select`` + a successful ``start_route`` the router
+        holds exactly the values the env resolves for that net."""
+        from pcb_world.core.action_schema import ACT_NET_SELECT, ACT_START_ROUTE
+
+        obs, _ = env.reset()
+        rules = env._engine.get_design_rules()
+        net_id = next(iter(env._board_info.nets))
+        expected = env._resolve_net_rule_values(net_id, rules)
+
+        env.step({"action_type": ACT_NET_SELECT, "net_id": int(net_id)})
+        pad = next(iter(
+            obs["board_static"]["nets"][f"net_{net_id}"]["pads"].values()))
+        x, y = pad["center"]["xy"]
+        _, _, _, _, info = env.step({
+            "action_type": ACT_START_ROUTE, "x_mm": x, "y_mm": y,
+            "layer": pad["layer"] or 1,  # 0 = thru-hole sentinel → Top
+        })
+        assert info["action_success"]
+
+        held = env._engine.get_route_sizes()
+        for k in ("track_width", "via_diameter", "via_drill"):
+            assert held[k] == pytest.approx(expected[k]), k
 
     def test_resolved_class_is_default_on_crossover(self, env):
         env.reset()
@@ -500,44 +397,6 @@ class TestNetSelectIntegration:
             "crossover fixture has no custom netclasses; every net should "
             f"resolve to Default, got {nc.name!r}"
         )
-
-    def test_non_default_class_triggers_setters(self, env, monkeypatch):
-        """When _resolve_netclass returns a non-Default class, the setters
-        must be called with that class's values. Simulated by stubbing the
-        resolver to return a synthetic 'HighSpeed' class."""
-        env.reset()
-
-        rules = env._engine.get_design_rules()
-        hs = SimpleNamespace(
-            name="HighSpeed",
-            track_width_mm=0.33,
-            via_diameter_mm=0.77,
-            via_drill_mm=0.41,
-        )
-        monkeypatch.setattr(
-            env, "_resolve_netclass", lambda nid, r: hs,
-        )
-
-        calls = {"tw": [], "vd": [], "vdr": []}
-        monkeypatch.setattr(
-            env._engine, "set_track_width",
-            lambda v, _c=calls: _c["tw"].append(v),
-        )
-        monkeypatch.setattr(
-            env._engine, "set_via_diameter",
-            lambda v, _c=calls: _c["vd"].append(v),
-        )
-        monkeypatch.setattr(
-            env._engine, "set_via_drill",
-            lambda v, _c=calls: _c["vdr"].append(v),
-        )
-
-        net_id = next(iter(env._board_info.nets))
-        env.step({"action_type": 0, "net_id": int(net_id)})
-
-        assert calls["tw"] == [pytest.approx(0.33)]
-        assert calls["vd"] == [pytest.approx(0.77)]
-        assert calls["vdr"] == [pytest.approx(0.41)]
 
 
 # ---------------------------------------------------------------------------
@@ -577,8 +436,8 @@ class TestThtPadInLLMProjection:
         }
 
     def test_sexpr_emits_th_tag(self, board_static):
-        from methods.llm_agent.wrappers.state_converter import _board_static_to_sexpr
-        out = _board_static_to_sexpr(board_static)
+        from methods.llm_agent.wrappers.state_converter import _board_static_to_sexpr, obs_elements
+        out = _board_static_to_sexpr(board_static, obs_elements("v7"))
         assert "(pad D1" in out
         # The THT pad line ends with the ``th`` tag; the SMD pad keeps its
         # numeric layer.

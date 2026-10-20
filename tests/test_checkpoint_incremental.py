@@ -10,8 +10,8 @@ correctness (toAdd / toRemove / unchanged-skip + full==incremental agreement).
 import os
 
 import pytest
+from tests.helpers.engine import open_engine
 
-from pcb_world.engine.kicad_engine import KiCadEngine
 
 BOARD = "tests/fixtures/simple_routing_board.kicad_pcb"
 PIC = "build_rl/kicad_src/demos/pic_programmer/pic_programmer.kicad_pcb"
@@ -47,7 +47,7 @@ def _route(e, sx, sy, tx, ty, layer=1):
 
 @pytest.fixture
 def engine():
-    e = KiCadEngine(BOARD)
+    e = open_engine(BOARD)
     e.build_connectivity()
     yield e
     if e.is_routing():
@@ -117,7 +117,7 @@ def test_incremental_reopens_session(engine):
 def test_scale_oracle_pic_programmer():
     """On a real board (370 tracks, 247 pads), incremental restore reproduces
     the full-swap board exactly with a many-track 'unchanged' majority."""
-    e = KiCadEngine(PIC)
+    e = open_engine(PIC)
     e.build_connectivity()
     s0 = _snap(e)
     assert len(s0[0]) > 300

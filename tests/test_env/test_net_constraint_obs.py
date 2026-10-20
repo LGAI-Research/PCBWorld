@@ -2,15 +2,16 @@
 
 Contract under test: with the knob ON every ``board_static`` net carries a
 ``constraints`` dict of resolved netclass values (track_width / clearance /
-via_diameter / via_drill; KiCad inherit → Default fallback, BDS global-min
-clamp) **identical to what ``net_select`` pushes into the engine** — the
-policy observes the exact widths/clearances it will route with. With the
+via_diameter / via_drill; KiCad inherit → Default fallback) **identical to
+what the engine imports at ``start_route``** — the policy observes the
+exact widths/clearances it will route with. A board whose class values sit
+below its own minima is refused at load time, never clamped. With the
 knob OFF (default) the observation stays byte-identical to the legacy
 schema (no ``constraints`` key anywhere).
 
 Layers:
 
-1. **Unit** (no C++) — ``PCBWorld._resolve_net_rule_values`` raw/clamped
+1. **Unit** (no C++) — ``PCBWorld._resolve_net_rule_values``
    resolution and ``_fill_net_constraint_obs`` population + loud failure,
    on the lightweight engine stand-ins from ``test_net_select_netclass``.
 2. **Containers** (no C++) — ``NetContext.to_dict`` emission contract, the
@@ -24,7 +25,7 @@ Layers:
    fixtures (crossover / simple_routing) ignore a sibling pro's netclasses,
    so the modern board is required to exercise the per-net path. Also pins
    the tokenizer NET-channel normalization (tw/cl/vd ==
-   clamped/norm_scale·100) and knob-on ≡ knob-off behavioural equivalence
+   resolved/norm_scale·100) and knob-on ≡ knob-off behavioural equivalence
    (obs minus ``constraints``, rewards, termination, masks) over a
    scripted routing episode.
 4. **Eval drift guard** (no C++) — ``eval.rollout.rl.eval_transformer``
@@ -42,6 +43,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from configs.loader.schema import EnvConfig
 from tests.test_env.test_net_select_netclass import (
     _RecordingEngine,
     _mk_env_with_engine,
@@ -61,9 +63,10 @@ CONSTRAINT_KEYS = {"track_width", "clearance", "via_diameter", "via_drill"}
 
 class TestResolveNetRuleValues:
 
-    def test_inherit_and_clamp(self):
-        """Unset (-1) class fields inherit from Default; BDS floors lift
-        raw values in ``clamped`` only."""
+    def test_inherit_without_clamp(self):
+        """Unset (-1) class fields inherit from Default; the result is the
+        class value as written — board minima never alter it (a class
+        below a minimum is refused at load by ``verify_netclass_rules``)."""
         default = _mk_nc("Default", tw=0.25, vd=0.8, dr=0.4)
         default.clearance_mm = 0.2
         fast = _mk_nc("Fast", tw=0.15, vd=-1.0, dr=0.3)  # vd inherits
@@ -73,23 +76,15 @@ class TestResolveNetRuleValues:
         engine = _RecordingEngine(rules, net_to_class_name={7: "Fast"})
         env = _mk_env_with_engine(engine, {7: SimpleNamespace(net_name="/CLK")})
 
-        raw, clamped, is_default = env._resolve_net_rule_values(7, rules)
-
-        assert not is_default
-        assert raw == {
-            "track_width": 0.15,   # class value
-            "clearance": 0.2,      # inherited from Default
+        assert env._resolve_net_rule_values(7, rules) == {
+            "track_width": 0.15,   # class value (not lifted to min_tw 0.2)
+            "clearance": 0.2,      # inherited from Default (not lifted)
             "via_diameter": 0.8,   # inherited from Default
             "via_drill": 0.3,      # class value
         }
-        # track_width sits below its floor (0.15 < min_tw 0.2) and the
-        # inherited clearance below min_cl (0.2 < 0.25) — both lifted;
-        # the other fields have no floor declared and pass through.
-        assert clamped == {**raw, "track_width": 0.2, "clearance": 0.25}
 
     def test_default_class_identity(self):
-        """A net resolving to Default: is_default=True, raw == clamped ==
-        the Default values when no floor is declared."""
+        """A net resolving to Default gets the Default values."""
         default = _mk_nc("Default", tw=0.25, vd=0.8, dr=0.4)
         default.clearance_mm = 0.2
         rules = _mk_rules(default, [])
@@ -97,10 +92,7 @@ class TestResolveNetRuleValues:
         engine = _RecordingEngine(rules)  # no match anywhere → Default
         env = _mk_env_with_engine(engine, {3: SimpleNamespace(net_name="/D")})
 
-        raw, clamped, is_default = env._resolve_net_rule_values(3, rules)
-
-        assert is_default
-        assert raw == clamped == {
+        assert env._resolve_net_rule_values(3, rules) == {
             "track_width": 0.25, "clearance": 0.2,
             "via_diameter": 0.8, "via_drill": 0.4,
         }
@@ -108,7 +100,7 @@ class TestResolveNetRuleValues:
 
 class TestFillNetConstraintObs:
 
-    def test_populates_every_net_with_clamped_values(self):
+    def test_populates_every_net_with_resolved_values(self):
         default = _mk_nc("Default", tw=0.25, vd=0.8, dr=0.4)
         default.clearance_mm = 0.2
         fast = _mk_nc("Fast", tw=0.35, vd=0.9, dr=0.45)
@@ -134,9 +126,9 @@ class TestFillNetConstraintObs:
         }
 
     def test_loud_failure_on_unresolvable_field(self):
-        """A field with no netclass value, no Default value and no BDS
-        floor must raise — never a silent 0 observation. The message
-        labels the -1-through-the-chain case as "unset"."""
+        """A field with no netclass value and no Default value must raise
+        — never a silent 0 observation. The message names the net, the
+        field and its unresolved (-1) value."""
         default = _mk_nc("Default", tw=0.25, vd=0.8, dr=-1.0)  # drill unset
         default.clearance_mm = 0.2
         rules = _mk_rules(default, [])
@@ -145,13 +137,12 @@ class TestFillNetConstraintObs:
         nets = {5: SimpleNamespace(net_name="/PWR", constraints=None)}
         env = _mk_env_with_engine(engine, nets)
 
-        with pytest.raises(RuntimeError, match=r"/PWR.*via_drill.*unset"):
+        with pytest.raises(RuntimeError, match=r"/PWR.*via_drill.*-1\.0"):
             env._fill_net_constraint_obs()
 
     def test_loud_failure_reports_explicit_zero_distinctly(self):
         """An explicit 0.0 field (legal in KiCad, distinct from unset -1)
-        also fails loud, and the message shows the actual 0.0 rather than
-        claiming the field was unset."""
+        also fails loud, and the message shows the actual 0.0."""
         default = _mk_nc("Default", tw=0.25, vd=0.8, dr=0.4)
         default.clearance_mm = 0.0  # explicit zero, not inherit
         rules = _mk_rules(default, [])
@@ -226,21 +217,22 @@ class TestIndexedPassthrough:
 
 class TestCheckpointRoundTrip:
     """ckpt args (saved ``vars(args)``) → ``RLEnvConfig.from_checkpoint``:
-    the True leg of the knob round-trip. Bypassing this mapper (hand-built
-    ``make_decoder_env`` kwargs) silently evals knob-off, so the official
+    the True leg of the knob round-trip. Bypassing this mapper (a hand-built
+    ``make_decoder_env`` config) silently evals knob-off, so the official
     eval path must carry a knob-trained checkpoint's True through to the
-    env kwargs. The False-fallback legs (knob absent in pre-knob ckpts)
+    env config. The False-fallback legs (knob absent in pre-knob ckpts)
     are pinned by tests/test_env_config.py — placed here rather than there
     because that file's collected-test count is frozen (see its trailing
     NOTE on the native double-init landmine)."""
 
-    def test_true_round_trips_into_env_kwargs(self):
+    def test_true_round_trips_into_env_config(self):
         from configs.loader.schema import RLEnvConfig
+        from tests.helpers.ckpt_payload import ckpt_config
 
         got = RLEnvConfig.from_checkpoint(
-            {"net_constraint_obs": True}, max_steps=64,
-        ).to_pool_kwargs()
-        assert got["net_constraint_obs"] is True
+            ckpt_config(net_constraint_obs=True), max_steps=64,
+        )
+        assert got.env.net_constraint_obs is True
 
 
 # ---------------------------------------------------------------------------
@@ -255,46 +247,72 @@ def _binding_available() -> bool:
         return False
 
 
-# Expected values declared by the rewritten .kicad_pro below. BDS
-# min_via_diameter (0.7) and min_clearance (0.22) deliberately sit ABOVE
-# the Default class values (0.6 / 0.2) to pin both clamp paths against
-# the real engine; the Fast class clears every floor and passes through.
-_DEFAULT_VALS = {"track_width": 0.3,
-                 "clearance": 0.22,    # class 0.2 clamped up to BDS min
-                 "via_diameter": 0.7,  # class 0.6 clamped up to BDS min
-                 "via_drill": 0.3}
+# Expected values declared by the rewritten .kicad_pro below: every class
+# value sits at or above the board minimum of the same quantity, so the
+# engine routes with the class values as written.
+_DEFAULT_VALS = {"track_width": 0.3, "clearance": 0.2,
+                 "via_diameter": 0.6, "via_drill": 0.3}
 _FAST_VALS = {"track_width": 0.35, "clearance": 0.25,
               "via_diameter": 0.8, "via_drill": 0.4}
+_BOARD_MINIMA = {"min_clearance": 0.15, "min_track_width": 0.1,
+                 "min_via_diameter": 0.5, "min_through_hole_diameter": 0.2}
 
 
-@pytest.fixture(scope="module")
-def multiclass_board(tmp_path_factory):
-    """Jumanji board + rewritten pro: Default/Fast classes, NET2 → Fast."""
-    if not (JUMANJI_DIR / "board_00000.kicad_pcb").exists():
-        pytest.skip(f"jumanji fixture missing: {JUMANJI_DIR}")
-    tmp = tmp_path_factory.mktemp("netconstraint_board")
+def _write_multiclass_board(tmp: Path, **minima_overrides) -> Path:
+    """Jumanji board + rewritten pro: Default/Fast classes, NET2 → Fast.
+    ``minima_overrides`` replace entries of ``_BOARD_MINIMA``."""
     pcb = tmp / "b.kicad_pcb"
     shutil.copy(JUMANJI_DIR / "board_00000.kicad_pcb", pcb)
 
     pro = json.loads((JUMANJI_DIR / "board_00000.kicad_pro").read_text())
     base = pro["net_settings"]["classes"][0]
     pro["net_settings"]["classes"] = [
-        dict(base, name="Default", clearance=0.2, track_width=0.3,
-             via_diameter=0.6, via_drill=0.3),
-        dict(base, name="Fast", clearance=0.25, track_width=0.35,
-             via_diameter=0.8, via_drill=0.4),
+        dict(base, name="Default", clearance=_DEFAULT_VALS["clearance"],
+             track_width=_DEFAULT_VALS["track_width"],
+             via_diameter=_DEFAULT_VALS["via_diameter"],
+             via_drill=_DEFAULT_VALS["via_drill"]),
+        dict(base, name="Fast", clearance=_FAST_VALS["clearance"],
+             track_width=_FAST_VALS["track_width"],
+             via_diameter=_FAST_VALS["via_diameter"],
+             via_drill=_FAST_VALS["via_drill"]),
     ]
     pro["net_settings"]["netclass_patterns"] = [
         {"netclass": "Fast", "pattern": "NET2"},
     ]
-    pro["board"]["design_settings"]["rules"].update({
-        "min_clearance": 0.22,          # > Default's 0.2 → clamp case
-        "min_track_width": 0.1,
-        "min_via_diameter": 0.7,        # > Default's 0.6 → clamp case
-        "min_through_hole_diameter": 0.2,
-    })
+    pro["board"]["design_settings"]["rules"].update(
+        {**_BOARD_MINIMA, **minima_overrides})
     (tmp / "b.kicad_pro").write_text(json.dumps(pro, indent=2))
     return pcb
+
+
+def _start_route_on(env, net_id: int) -> None:
+    """net_select + a successful start_route on one of the net's pads."""
+    from pcb_world.core.action_schema import ACT_NET_SELECT, ACT_START_ROUTE
+
+    pad = next(iter(env.board_static["nets"][f"net_{net_id}"]["pads"].values()))
+    x, y = pad["center"]["xy"]
+    env.step({"action_type": ACT_NET_SELECT, "net_id": net_id})
+    _, _, _, _, info = env.step({"action_type": ACT_START_ROUTE, "x_mm": x, "y_mm": y,
+                                 "layer": pad["layer"] or 1})
+    assert info["action_success"], net_id
+
+
+def _assert_route_sizes(env, net_id: int, vals: dict) -> None:
+    """The net's observed constraints are ``vals`` and the router holds those sizes."""
+    observed = env.board_static["nets"][f"net_{net_id}"]["constraints"]
+    assert observed == pytest.approx(vals), net_id
+    held = env._engine.get_route_sizes()
+    for k in ("track_width", "via_diameter", "via_drill"):
+        assert held[k] == pytest.approx(observed[k]), (net_id, k)
+
+
+@pytest.fixture(scope="module")
+def multiclass_board(tmp_path_factory):
+    """Consistent two-class board (see ``_write_multiclass_board``)."""
+    if not (JUMANJI_DIR / "board_00000.kicad_pcb").exists():
+        pytest.skip(f"jumanji fixture missing: {JUMANJI_DIR}")
+    return _write_multiclass_board(
+        tmp_path_factory.mktemp("netconstraint_board"))
 
 
 @pytest.mark.skipif(not _binding_available(),
@@ -304,20 +322,23 @@ class TestPCBWorldIntegration:
     @pytest.fixture
     def env_on(self, multiclass_board):
         from pcb_world.core.env import PCBWorld
-        env = PCBWorld(board_path=str(multiclass_board), max_steps=5,
-                       net_constraint_obs=True)
+        env = PCBWorld(
+            str(multiclass_board),
+            EnvConfig.with_overrides(max_steps=5, net_constraint_obs=True),
+        )
         yield env
         env.close()
 
     @pytest.fixture
     def env_off(self, multiclass_board):
         from pcb_world.core.env import PCBWorld
-        env = PCBWorld(board_path=str(multiclass_board), max_steps=5)
+        env = PCBWorld(str(multiclass_board),
+                       EnvConfig.with_overrides(max_steps=5, net_constraint_obs=False))
         yield env
         env.close()
 
     def test_knob_off_keeps_legacy_obs(self, env_off):
-        """Default off: no ``constraints`` key anywhere, even on a board
+        """Knob off: no ``constraints`` key anywhere, even on a board
         that DOES declare custom netclasses (byte-identical legacy obs)."""
         obs, _ = env_off.reset()
         for net in obs["board_static"]["nets"].values():
@@ -325,7 +346,7 @@ class TestPCBWorldIntegration:
 
     def test_knob_on_per_net_values(self, env_on):
         """NET2 carries the Fast class values; every other net carries the
-        Default values with the BDS via clamp applied."""
+        Default class values."""
         obs, _ = env_on.reset()
         nets = obs["board_static"]["nets"]
         assert set(nets["net_2"]["constraints"]) == CONSTRAINT_KEYS
@@ -335,23 +356,51 @@ class TestPCBWorldIntegration:
                 continue
             assert net["constraints"] == pytest.approx(_DEFAULT_VALS), key
 
-    def test_obs_matches_engine_push(self, env_on, monkeypatch):
-        """The observed values equal what net_select pushes into the
-        engine — the policy sees the widths it will actually route with."""
-        env_on.reset()
-        pushed = {}
-        monkeypatch.setattr(env_on._engine, "set_track_width",
-                            lambda v: pushed.__setitem__("track_width", v))
-        monkeypatch.setattr(env_on._engine, "set_via_diameter",
-                            lambda v: pushed.__setitem__("via_diameter", v))
-        monkeypatch.setattr(env_on._engine, "set_via_drill",
-                            lambda v: pushed.__setitem__("via_drill", v))
+    def test_route_sizes_follow_reset_restore_and_net_switch(
+            self, multiclass_board, engine_mode):
+        """The observed values equal what the engine routes with: after net_select
+        + a successful start_route on a net, the router holds exactly that net's
+        observed track width / via sizes — through reset, checkpoint restore
+        (incremental and full) and switching between nets of different classes,
+        over the IPC proxy (whose query cache must not hand back an earlier
+        session's sizes) and in-process."""
+        from pcb_world.core.env import PCBWorld
 
-        env_on.step({"action_type": 0, "net_id": 2})  # 0 = ACT_NET_SELECT
+        env = PCBWorld(str(multiclass_board),
+                       EnvConfig.with_overrides(max_steps=20, net_constraint_obs=True))
+        try:
+            env.reset()
+            bare = env.checkpoint()
+            # Each checkpoint is taken before the sizes are read, so the read
+            # right before a restore is the one a stale cache would replay.
+            _start_route_on(env, 2)
+            on_fast = env.checkpoint()
+            _assert_route_sizes(env, 2, _FAST_VALS)
+            env.restore(bare)
+            _start_route_on(env, 1)
+            on_default = env.checkpoint()
+            _assert_route_sizes(env, 1, _DEFAULT_VALS)
+            env.restore(on_fast)
+            _assert_route_sizes(env, 2, _FAST_VALS)
+            env.restore(on_default, incremental=False)
+            _assert_route_sizes(env, 1, _DEFAULT_VALS)
+            env.reset()
+            _start_route_on(env, 2)
+            _assert_route_sizes(env, 2, _FAST_VALS)
+        finally:
+            env.close()
 
-        expected = env_on.board_static["nets"]["net_2"]["constraints"]
-        for k in ("track_width", "via_diameter", "via_drill"):
-            assert pushed[k] == pytest.approx(expected[k]), k
+    def test_inconsistent_board_raises(self, tmp_path):
+        """A board minimum above a class value (min_via_diameter 0.7 >
+        Default's 0.6, min_clearance 0.22 > Default's 0.2) is refused at
+        env construction."""
+        from pcb_world.core.env import PCBWorld
+        if not (JUMANJI_DIR / "board_00000.kicad_pcb").exists():
+            pytest.skip(f"jumanji fixture missing: {JUMANJI_DIR}")
+        pcb = _write_multiclass_board(
+            tmp_path, min_clearance=0.22, min_via_diameter=0.7)
+        with pytest.raises(ValueError, match="inconsistent design rules"):
+            PCBWorld(str(pcb), EnvConfig.with_overrides(max_steps=5))
 
     def test_set_target_nets_refills_constraints(self, env_on):
         """The set_target_nets rebuild path re-populates constraints for
@@ -367,8 +416,10 @@ class TestPCBWorldIntegration:
         """Knob off + indexed format: the net_constraints column stays the
         legacy all-None passthrough."""
         from pcb_world.core.env import PCBWorld
-        env = PCBWorld(board_path=str(multiclass_board), max_steps=5,
-                       obs_format="indexed")
+        env = PCBWorld(
+            str(multiclass_board),
+            EnvConfig.with_overrides(max_steps=5, obs_format="indexed", net_constraint_obs=False),
+        )
         try:
             obs, _ = env.reset()
             assert all(c is None
@@ -378,8 +429,10 @@ class TestPCBWorldIntegration:
 
     def test_indexed_format_carries_constraints(self, multiclass_board):
         from pcb_world.core.env import PCBWorld
-        env = PCBWorld(board_path=str(multiclass_board), max_steps=5,
-                       net_constraint_obs=True, obs_format="indexed")
+        env = PCBWorld(
+            str(multiclass_board),
+            EnvConfig.with_overrides(max_steps=5, net_constraint_obs=True, obs_format="indexed"),
+        )
         try:
             obs, _ = env.reset()
             bs = obs["board_static"]
@@ -395,7 +448,7 @@ class TestPCBWorldIntegration:
 
     def test_tokenizer_net_channels_pin_board_scale_norm(self, env_on):
         """The NET token's tw/cl/vd channels are exactly
-        ``clamped / norm_scale * 100`` — norm_scale (the exact bbox
+        ``resolved / norm_scale * 100`` — norm_scale (the exact bbox
         half-extent) recomputed here from the board bbox, independently of
         the tokenizer's own NormContext, so a board-scale normalization
         regression breaks numerically rather than cancelling out."""
@@ -407,6 +460,7 @@ class TestPCBWorldIntegration:
         norm_scale = max(bs["bbox_w"], bs["bbox_h"]) / 2
 
         walk = BatchedStateTokenizer(
+            disable_slot_emb=False,
             d_model=32, n_freq=4, mlp_hidden=16)._walk_obs([obs])
         net_tw, net_cl, net_vd = walk["net"][0], walk["net"][1], walk["net"][2]
 
@@ -437,7 +491,7 @@ class TestPCBWorldIntegration:
         )
         from pcb_world.core.env import PCBWorld
 
-        env = PCBWorld(board_path=str(board_path), max_steps=5, **env_kwargs)
+        env = PCBWorld(str(board_path), EnvConfig.with_overrides(max_steps=5, **env_kwargs))
         try:
             obs0, _ = env.reset()
             pads = obs0["board_static"]["nets"]["net_1"]["pads"]
@@ -470,7 +524,8 @@ class TestPCBWorldIntegration:
         ``constraints`` obs field — reset obs (minus that key), rewards,
         termination and action masks stay identical (regression guard for
         the audited "observation-only" contract)."""
-        obs_off, trace_off = self._scripted_episode(multiclass_board)
+        obs_off, trace_off = self._scripted_episode(
+            multiclass_board, net_constraint_obs=False)
         obs_on, trace_on = self._scripted_episode(
             multiclass_board, net_constraint_obs=True)
 
@@ -511,10 +566,11 @@ class TestEvalTransformerDriftGuard:
     disagrees with the loaded checkpoint's stamp — both directions are
     silent obs drift (resolved NET channels vs constant 0)."""
 
-    def _run(self, policy, env_kwargs, monkeypatch):
+    def _run(self, policy, env_flat, monkeypatch):
         import torch
 
         import eval.rollout.rl as rl_mod
+        from configs.loader.schema import RLEnvConfig
         from methods._shared.board_loader import BoardSpec
         from methods.rl_agent.wrappers import factory
 
@@ -530,7 +586,7 @@ class TestEvalTransformerDriftGuard:
         boards = [BoardSpec(index=0, board_id="b0", path="missing.kicad_pcb")]
         return rl_mod.eval_transformer(
             policy, torch.device("cpu"), boards,
-            env_kwargs=env_kwargs, n_rollouts=1, n_envs=1,
+            env_config=RLEnvConfig().with_flat(env_flat), n_rollouts=1, n_envs=1,
             base_seed=0, max_steps=4, skip_aggregation=True,
         )
 
@@ -540,13 +596,6 @@ class TestEvalTransformerDriftGuard:
         with pytest.raises(RuntimeError, match="net_constraint_obs mismatch"):
             self._run(policy, {"net_constraint_obs": not ckpt_on}, monkeypatch)
 
-    def test_missing_env_key_counts_as_off(self, monkeypatch):
-        """Hand-built env_kwargs without the key = factory default (off) —
-        a knob-trained ckpt must still fail loud."""
-        policy = _StubPolicy(net_constraint_obs=True)
-        with pytest.raises(RuntimeError, match="net_constraint_obs mismatch"):
-            self._run(policy, {}, monkeypatch)
-
     @pytest.mark.parametrize("on", [True, False])
     def test_match_passes(self, on, monkeypatch):
         result = self._run(_StubPolicy(net_constraint_obs=on),
@@ -555,7 +604,7 @@ class TestEvalTransformerDriftGuard:
 
     def test_unstamped_policy_skips_guard(self, monkeypatch):
         """A live training policy (no stamp — trainer inline val) is exempt:
-        its env_kwargs come from the same training args by construction."""
+        its env config comes from the same training args by construction."""
         result = self._run(_StubPolicy(), {"net_constraint_obs": True},
                            monkeypatch)
         assert result.per_rollout == []

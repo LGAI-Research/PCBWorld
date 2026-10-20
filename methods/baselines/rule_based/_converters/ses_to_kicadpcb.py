@@ -14,11 +14,13 @@ Coordinate convention: the SES files generated for these boards declare
 `(resolution um 10)`, i.e. one SES unit = 0.1 um. Therefore mm = unit / 10000.
 SES Y axis is inverted relative to KiCad; we negate Y when emitting.
 
+Layer names are mapped to the board's canonical copper names (F.Cu / B.Cu / In<n>.Cu): a
+Specctra export carries the user aliases (Top / Bottom ...), which KiCad does not accept in
+track tokens; a name that is not a copper layer of the board is an error.
+
 Via diameter/drill come from the padstack name `Via[0-1]_<dia>:<drill>_um`
-(values in um). If the name doesn't match, we fall back to the library_out
-circle radius (per Specctra: `(circle <layer> <diameter> ...)`).
+(values in um); a name that does not carry both is an error.
 """
-import argparse
 import json
 import re
 import sys
@@ -32,7 +34,7 @@ _TOKEN_RE = re.compile(r'''
     \s+                       |  # whitespace
     \(                        |  # open
     \)                        |  # close
-    "(?:[^"\\]|\\.)*"         |  # quoted string
+    "[^"]*"                   |  # quoted string (Specctra has no escapes)
     [^\s()"]+                    # bareword
 ''', re.VERBOSE)
 
@@ -103,17 +105,53 @@ def find_children(node, name):
 
 def unquote(s: str) -> str:
     if isinstance(s, str) and len(s) >= 2 and s[0] == '"' and s[-1] == '"':
-        return bytes(s[1:-1], 'utf-8').decode('unicode_escape')
+        # Specctra quotes without escape sequences; keep the text (non-ASCII names included).
+        return s[1:-1]
     return s
 
 
 # ---------- conversion ----------
 
+_PCB_LAYER = re.compile(r'\(\s*\d+\s+"([^"]+)"\s+\w+(?:\s+"([^"]+)")?\s*\)')
+_COPPER = re.compile(r'(?:F|B|In\d+)\.Cu')
+
+
+def pcb_layer_names(pcb_text: str) -> dict:
+    """{name or user alias: canonical KiCad layer name} from a .kicad_pcb (layers ...) table,
+    e.g. (0 "F.Cu" signal "Top") gives {"F.Cu": "F.Cu", "Top": "F.Cu"}. A Specctra export names
+    the copper layers by their user alias; KiCad needs the canonical name in track tokens."""
+    m = re.search(r'\(layers\b', pcb_text)
+    if not m:
+        raise ValueError('board has no (layers ...) table')
+    depth, end = 0, m.start()
+    for end in range(m.start(), len(pcb_text)):
+        depth += {'(': 1, ')': -1}.get(pcb_text[end], 0)
+        if depth == 0:
+            break
+    names = {}
+    for canon, alias in _PCB_LAYER.findall(pcb_text[m.end():end]):
+        for name in (canon, alias) if alias else (canon,):
+            if names.get(name, canon) != canon:
+                raise ValueError(f'layer name {name!r} names both {names[name]!r} and {canon!r}')
+            names[name] = canon
+    return names
+
+
+def canonical_copper_layer(names: dict, layer: str) -> str:
+    """``layer`` (a Specctra layer name) as the board's canonical copper layer name."""
+    canon = names.get(layer)
+    if canon is None or not _COPPER.fullmatch(canon):
+        raise ValueError(f'layer {layer!r} is not a copper layer of the board '
+                         f'(its layer table names {sorted(names)[:8]})')
+    return canon
+
+
 def parse_net_map(pcb_text: str):
     nets = {}
-    for m in re.finditer(r'\(net\s+(\d+)\s+"([^"]*)"\)', pcb_text):
+    # KiCad writes \\ and \" in a net name escaped (richio.cpp); undo those two for the SES match.
+    for m in re.finditer(r'\(net\s+(\d+)\s+"((?:[^"\\]|\\.)*)"\)', pcb_text):
         nid = int(m.group(1))
-        name = m.group(2)
+        name = re.sub(r'\\([\\"])', r'\1', m.group(2))
         if name and name not in nets:
             nets[name] = nid
     return nets
@@ -144,22 +182,6 @@ def parse_padstack_dim(name: str):
     if not m:
         return None, None
     return float(m.group(1)) / 1000.0, float(m.group(2)) / 1000.0
-
-
-def parse_via_dim_from_library(library_out, padstack_name: str, ses_unit_mm: float):
-    """Fallback: read padstack circle in library_out -> diameter (mm)."""
-    if library_out is None:
-        return None
-    for pad in find_children(library_out, 'padstack'):
-        nm = unquote(pad[1]) if len(pad) > 1 and isinstance(pad[1], str) else ''
-        if nm != padstack_name:
-            continue
-        for sh in find_children(pad, 'shape'):
-            for circ in find_children(sh, 'circle'):
-                # (circle <layer> <diameter> [x y])
-                if len(circ) >= 3:
-                    return float(circ[2]) * ses_unit_mm
-    return None
 
 
 def fmt_num(v):
@@ -198,6 +220,7 @@ def convert(ses_path: Path, base_pcb: Path, out_pcb: Path):
     ses_text = ses_path.read_text(encoding='utf-8')
     base_text = base_pcb.read_text(encoding='utf-8')
     net_map = parse_net_map(base_text)
+    layer_names = pcb_layer_names(base_text)
 
     tree = parse_ses(ses_text)
     if head(tree) != 'session':
@@ -207,9 +230,8 @@ def convert(ses_path: Path, base_pcb: Path, out_pcb: Path):
     if routes is None:
         raise RuntimeError(f'No (routes ...) section: {ses_path}')
 
-    # Resolution applies to coordinates inside routes (and library_out shapes).
+    # Resolution applies to coordinates inside routes.
     ses_unit_mm = parse_resolution(find_child(routes, 'resolution'))
-    library_out = find_child(routes, 'library_out')
     network_out = find_child(routes, 'network_out')
     if network_out is None:
         raise RuntimeError(f'No (network_out ...) section: {ses_path}')
@@ -221,13 +243,9 @@ def convert(ses_path: Path, base_pcb: Path, out_pcb: Path):
         if name in via_dim_cache:
             return via_dim_cache[name]
         dia, drill = parse_padstack_dim(name)
-        if dia is None:
-            dia = parse_via_dim_from_library(library_out, name, ses_unit_mm)
-            drill = None  # library shape doesn't carry drill
-        if dia is None:
-            dia = 0.6
-        if drill is None:
-            drill = max(dia * 0.5, 0.3)
+        if dia is None or drill is None:
+            # No guessed size: a via must carry its own diameter and drill (the DSN padstack name).
+            raise ValueError(f'via padstack {name!r} does not name its diameter and drill')
         via_dim_cache[name] = (dia, drill)
         return dia, drill
 
@@ -250,7 +268,7 @@ def convert(ses_path: Path, base_pcb: Path, out_pcb: Path):
             # path = ['path', layer, width, x1, y1, x2, y2, ...]
             if len(path) < 5:
                 continue
-            layer = path[1]
+            layer = canonical_copper_layer(layer_names, unquote(path[1]))
             width_units = float(path[2])
             width_mm = width_units * ses_unit_mm
             coords = [float(c) for c in path[3:]]
@@ -298,7 +316,8 @@ def convert(ses_path: Path, base_pcb: Path, out_pcb: Path):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    from configs.loader.cli import StrictArgumentParser
+    ap = StrictArgumentParser(description=__doc__)
     ap.add_argument('ses')
     ap.add_argument('base_pcb')
     ap.add_argument('output')

@@ -20,7 +20,6 @@ and skips elsewhere.
 """
 from __future__ import annotations
 
-import numpy as np
 import pytest
 import torch
 import torch.distributed as dist
@@ -28,9 +27,10 @@ import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from methods.rl_agent.algorithms._common import policy_update_loop
-from methods.rl_agent.models.v1.net import NUM_ACTION_TYPES, KiCadRLModel
+from methods.rl_agent.models.v1.net import KiCadRLModel
 from methods.rl_agent.training.ddp import DDPCtx
 from tests._mock_obs import make_mock_obs
+from tests.helpers.dist_inputs import permissive_buffer, permissive_dist
 
 D_MODEL, N_HEADS, N_LAYERS, D_FF = 32, 4, 2, 64
 B, L = 8, 24
@@ -44,6 +44,8 @@ def _tiny_model(device: str) -> KiCadRLModel:
     vacuous (identity passthrough). Same pattern as test_incremental_decode."""
     torch.manual_seed(0)
     m = KiCadRLModel(
+        disable_slot_emb=False,
+        policy_net_select=False,
         d_model=D_MODEL, n_heads=N_HEADS, n_layers=N_LAYERS, d_ff=D_FF,
         max_seq_len=2000, n_freq=4, use_critic=True, same_net_bias=True,
     ).to(device)
@@ -216,16 +218,10 @@ def _loop_buffer(n: int) -> dict:
     ]
     policy = _tiny_model("cpu")
     with torch.no_grad():
-        acts, old_lp, _ = policy.act_and_value(obs_list, deterministic=True)
-    rng = np.random.default_rng(0)
-    return {
-        "obs_list": obs_list,
-        "actions": acts.cpu().numpy(),
-        "old_log_probs": old_lp.cpu().numpy().astype(np.float32),
-        "action_masks": np.ones((n, NUM_ACTION_TYPES), dtype=bool),
-        "advantages": rng.standard_normal(n).astype(np.float32),
-        "returns": rng.standard_normal(n).astype(np.float32),
-    }
+        acts, old_lp, _ = policy.act_and_value(
+            obs_list, dist=permissive_dist(policy, obs_list), deterministic=True,
+        )
+    return permissive_buffer(obs_list, acts, old_lp)
 
 
 def _loop_run(n: int, device: str, ddp: DDPCtx | None, *,

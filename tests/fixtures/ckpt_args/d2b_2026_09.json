@@ -1,0 +1,177 @@
+{
+ "args": {
+  "action_history_len": 1,
+  "connectivity_filter": true,
+  "coord_encoding": "fourier",
+  "corner_mode": 45,
+  "d_ff": 512,
+  "d_model": 128,
+  "detach_critic": false,
+  "directional_candidates": "multi_resolution",
+  "disable_slot_emb": true,
+  "drc_config_path": null,
+  "drc_log_agg_scale": null,
+  "drc_log_offset": null,
+  "drc_log_scale": null,
+  "drc_penalty": null,
+  "engine_seed": 77,
+  "followbranch_iter_limit": 1000000,
+  "force_walkaround": false,
+  "gamma": 0.995,
+  "legacy_edge_encoding": false,
+  "masking_rule": "masking_netfree_nofinish",
+  "max_seq_len": 10000,
+  "max_steps": 1024,
+  "mlp_hidden": 128,
+  "n_freq": 32,
+  "n_heads": 8,
+  "n_layers": 4,
+  "n_max_slots": 512,
+  "net_constraint_obs": true,
+  "no_drc_tokens": false,
+  "no_mask_start_point": false,
+  "obstacle_obs": true,
+  "offboard_mask": true,
+  "outline_obs": "arc",
+  "pad_graze_margin_mm": 0.0,
+  "policy_net_select": true,
+  "reward_rule": "reward_w7a_linear_ladder",
+  "reward_step_penalty": null,
+  "same_net_bias": true,
+  "seed": 42,
+  "shape_obs": true,
+  "shove_iter_limit": 250,
+  "simplify_outline": true,
+  "time_feature": "sin_remaining",
+  "time_feature_cap": 10000,
+  "use_yaml_drc_fallback": false,
+  "via_penalty": null,
+  "wire_via_emission": null,
+  "wirelength_penalty": null
+ },
+ "expected": {
+  "env": {
+   "aug_bbox_shifted": false,
+   "aug_flip": false,
+   "aug_rotate": false,
+   "aug_trans": false,
+   "aug_zoom": false,
+   "connectivity_filter": true,
+   "directional_candidates": "multi_resolution",
+   "env": {
+    "action_history_len": 1,
+    "corner_mode": 45,
+    "drc_config_path": null,
+    "drc_incremental": true,
+    "drc_promoted_codes": [
+     12,
+     13,
+     37
+    ],
+    "emit_drc_tokens": true,
+    "engine_seed": 77,
+    "followbranch_iter_limit": 1000000,
+    "keep_routing_fraction": null,
+    "masking_rule": "masking_netfree_nofinish",
+    "max_steps": 1024,
+    "net_constraint_obs": true,
+    "net_reselect": false,
+    "obs_format": "json",
+    "outline_obs": "arc",
+    "reject_if_stuck": true,
+    "reward": {
+     "drc_log_agg_scale": null,
+     "drc_log_offset": null,
+     "drc_log_scale": null,
+     "drc_penalty": null,
+     "reward_step_penalty": null,
+     "via_penalty": null,
+     "wire_via_emission": null,
+     "wirelength_penalty": null
+    },
+    "reward_noise_clip_sigma": 4.0,
+    "reward_noise_std": 0.0,
+    "reward_rule": "reward_w7a_linear_ladder",
+    "rules_source": "board",
+    "shove_iter_limit": 250,
+    "simplify_outline": true,
+    "trim_at_contact": false
+   },
+   "force_walkaround": false,
+   "mask_start_point": true,
+   "offboard_mask": true,
+   "pad_graze_margin_mm": 0.0,
+   "slot_perm": false
+  },
+  "policy": {
+   "action_history_len": 1,
+   "coord_encoding": "fourier",
+   "d_ff": 512,
+   "d_model": 128,
+   "detach_critic": false,
+   "disable_slot_emb": true,
+   "legacy_action_history": false,
+   "legacy_edge_encoding": false,
+   "legacy_net_encoding": false,
+   "legacy_pad_layer_encoding": false,
+   "max_seq_len": 10000,
+   "mlp_hidden": 128,
+   "n_freq": 32,
+   "n_heads": 8,
+   "n_layers": 4,
+   "n_max_slots": 512,
+   "obstacle_obs": true,
+   "policy_net_select": true,
+   "same_net_bias": true,
+   "shape_obs": true,
+   "time_feature": "sin_remaining",
+   "time_feature_cap": 10000,
+   "use_critic": true
+  },
+  "sources": {
+   "drc_incremental": "legacy",
+   "drc_promoted_codes": "legacy",
+   "legacy_action_history": "derived",
+   "legacy_net_encoding": "derived",
+   "legacy_pad_layer_encoding": "derived",
+   "net_reselect": "legacy",
+   "reject_if_stuck": "legacy:proxy",
+   "rules_source": "renamed",
+   "trim_at_contact": "legacy",
+   "use_critic": "derived"
+  }
+ },
+ "obs_probe": true,
+ "provenance": {
+  "repo_version": "1.3.0"
+ },
+ "shapes": {
+  "critic_head.0.weight": [
+   128
+  ],
+  "tokenizer.vocab.edge_mid_proj.weight": [
+   128,
+   128
+  ],
+  "tokenizer.vocab.history_age_proj.weight": [
+   128,
+   12
+  ],
+  "tokenizer.vocab.net_proj.weight": [
+   128,
+   512
+  ],
+  "tokenizer.vocab.pad_proj.weight": [
+   128,
+   769
+  ],
+  "tokenizer.vocab.shape_embed.weight": [
+   6,
+   128
+  ],
+  "tokenizer.vocab.slot_emb_table": [
+   512,
+   128
+  ]
+ }
+}

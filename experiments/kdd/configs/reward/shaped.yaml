@@ -17,3 +17,6 @@ potential:
   drc_penalty: 0.0
   step_penalty: 0.01
   truncation_mode: none    # "none" | "penalty_only" | "full"
+  invalid_action_penalty: 0.01
+  parse_fail_penalty: 0.2
+  mask_reject_penalty: 0.09

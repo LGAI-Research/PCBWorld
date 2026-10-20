@@ -8,9 +8,10 @@ import torch
 
 from tests.test_speed_knobs._helpers import assert_compile_matches_eager
 
-pytestmark = pytest.mark.skipif(
-    not torch.cuda.is_available(), reason="speed knobs are CUDA-only",
-)
+pytestmark = [
+    pytest.mark.skipif(not torch.cuda.is_available(), reason="speed knobs are CUDA-only"),
+    pytest.mark.slow,   # inductor compile
+]
 
 
 def test_decode_matches_eager():

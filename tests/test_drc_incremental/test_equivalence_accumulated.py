@@ -1,8 +1,8 @@
 """C++ run_drc_incremental() == run_drc(): accumulated snapshots and the real
 RL ADD action (make_line commit path). Per-step variant: test_equivalence.py
 (loadfile split)."""
-from pcb_world.engine.kicad_engine import KiCadEngine
 from tests.helpers.drc_keying import _assert_eq, _full, _incr
+from tests.helpers.engine import open_engine
 
 
 def test_run_drc_incremental_accumulated(engine):
@@ -18,7 +18,7 @@ def test_run_drc_incremental_accumulated(engine):
 def test_run_drc_incremental_make_line():
     """Routing a new track (the real RL ADD action) → incremental == full, end-to-end.
     Exercises the commit path (fix_route) feeding the snapshot diff, on a routable board."""
-    e = KiCadEngine("tests/fixtures/simple_routing_board.kicad_pcb")
+    e = open_engine("tests/fixtures/simple_routing_board.kicad_pcb")
     e.build_connectivity()
     try:
         e.run_drc()                                    # baseline + snapshot

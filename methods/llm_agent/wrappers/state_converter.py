@@ -5,16 +5,187 @@ the RL codec ``methods.rl_agent.models.v1.encoding``. Encodes a PCBWorld observa
 into the prompt-facing string, plus the inverse split helpers and the
 valid-action presentation derived from the action mask.
 
-Public: format_state / format_state_split / format_state_sexpr /
+What reaches the text is decided per JSON obs element by :data:`OBS_ELEMENTS`
+(render or drop, and for which prompt versions): the frozen ``legacy`` versions
+render a fixed set, so a new obs field never changes their text; ``latest``
+renders that set plus the elements marked ``latest``. An element a knob-gated
+obs field feeds is rendered only when the env produced it: the per-net
+``constraints`` need ``net_constraint_obs``, which every serializer takes from
+the env's :class:`~configs.loader.schema.EnvConfig`.
+
+Public: OBS_ELEMENTS / obs_elements / serialize_obs /
+format_state / format_state_split / format_state_sexpr /
 format_state_split_sexpr / format_valid_actions / split_board_static.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from functools import lru_cache
+from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Tuple
 
+from methods.llm_agent.wrappers.prompts.dispatcher import LATEST, PCBWORLD_PROMPT_VERSIONS
 from pcb_world.core.action_schema import MODE_INT_TO_LETTER as _MODE_INT_TO_LETTER
+
+
+# ===========================================================================
+# Obs element table — which JSON obs elements reach the prompt text
+# ===========================================================================
+
+class ObsElement(NamedTuple):
+    """One JSON obs element: ``kind`` ``render`` (``note`` = how it is drawn) or
+    ``drop`` (``note`` = why not; its whole subtree is dropped); ``versions``
+    ``legacy`` (every prompt version, v1–v7 included) or ``latest`` (only
+    ``latest``)."""
+
+    kind: str
+    note: str
+    versions: str
+
+
+def _r(note: str, versions: str = "legacy") -> ObsElement:
+    return ObsElement("render", note, versions)
+
+
+def _d(reason: str) -> ObsElement:
+    return ObsElement("drop", reason, "legacy")
+
+
+# Keys are JSON paths: ``.`` between dict keys, ``*`` for the numbered key of a
+# dict entry (``net_3`` -> ``net_*``), ``[]`` for a list item. Every key of an
+# all-obs-knobs-on observation must be listed here or under a dropped parent
+# (test_llm_prompt_render.py) — a new obs field needs a decision before it ships.
+# The serializers consult the table only for the per-net ``constraints`` today
+# (the one ``latest``-only element); every other entry records what the fixed
+# legacy rendering draws or why it drops the element, and the rendered set feeds
+# each prompt bundle's ``content_hash``.
+OBS_ELEMENTS: Dict[str, ObsElement] = {
+    "board_static": _r("board_static section"),
+    "board_static.bbox_x": _r("bbox"), "board_static.bbox_y": _r("bbox"),
+    "board_static.bbox_w": _r("bbox"), "board_static.bbox_h": _r("bbox"),
+    "board_static.scale": _r("scale"),
+    "board_static.net_count": _r("net_count"),
+    "board_static.copper_layers": _r("copper_layers"),
+    "board_static.boardlines": _r("boardlines"),
+    "board_static.boardlines.edge_*": _r("edge, or arc when it has a mid point"),
+    "board_static.boardlines.edge_*.id": _r("edge / arc id"),
+    "board_static.boardlines.edge_*.p1": _r("p1"),
+    "board_static.boardlines.edge_*.p1.id": _r("p1 id"),
+    "board_static.boardlines.edge_*.p1.xy": _r("p1 x y"),
+    "board_static.boardlines.edge_*.p2": _r("p2"),
+    "board_static.boardlines.edge_*.p2.id": _r("p2 id"),
+    "board_static.boardlines.edge_*.p2.xy": _r("p2 x y"),
+    "board_static.boardlines.edge_*.mid": _r("mid (arc outline)"),
+    "board_static.boardlines.edge_*.mid.id": _r("mid id"),
+    "board_static.boardlines.edge_*.mid.xy": _r("mid x y"),
+    "board_static.boardlines.edge_*.width": _d("outline stroke width does not bound routing"),
+    "board_static.nets": _r("nets"),
+    "board_static.nets.net_*": _r("net code + name"),
+    "board_static.nets.net_*.net_name": _r("net name"),
+    "board_static.nets.net_*.pads": _r("pads"),
+    "board_static.nets.net_*.pads.pad_*": _r("pad"),
+    "board_static.nets.net_*.pads.pad_*.id": _r("pad id"),
+    "board_static.nets.net_*.pads.pad_*.center": _r("pad x y"),
+    "board_static.nets.net_*.pads.pad_*.center.xy": _r("pad x y"),
+    "board_static.nets.net_*.pads.pad_*.center.id": _d("the pad id names the pad"),
+    "board_static.nets.net_*.pads.pad_*.layer": _r("pad layer (th = through-hole)"),
+    "board_static.nets.net_*.pads.pad_*.width": _d("pad extent: routing targets the pad center"),
+    "board_static.nets.net_*.pads.pad_*.height": _d("pad extent: routing targets the pad center"),
+    "board_static.nets.net_*.pads.pad_*.shape": _d("pad extent: routing targets the pad center"),
+    "board_static.nets.net_*.constraints": _r("constraints", LATEST),
+    "board_static.nets.net_*.constraints.track_width": _r("track_width", LATEST),
+    "board_static.nets.net_*.constraints.clearance": _r("clearance", LATEST),
+    "board_static.nets.net_*.constraints.via_diameter": _r("via_diameter", LATEST),
+    "board_static.nets.net_*.constraints.via_drill": _r("via_drill", LATEST),
+    "board_static.obstacles": _r("obstacles"),
+    "board_static.obstacles.obs_*": _r("obs"),
+    "board_static.obstacles.obs_*.id": _r("obs id"),
+    "board_static.obstacles.obs_*.center": _r("obs x y"),
+    "board_static.obstacles.obs_*.center.xy": _r("obs x y"),
+    "board_static.obstacles.obs_*.center.id": _d("the obs id names the obstacle"),
+    "board_static.obstacles.obs_*.width": _r("size w"),
+    "board_static.obstacles.obs_*.height": _r("size h"),
+    "board_static.obstacles.obs_*.layer": _r("obs layer"),
+    "board_static.obstacles.obs_*.shape": _d("drawn as its bounding box"),
+    "board_static.obstacles.obs_*.pts": _d("keepout polygon drawn as its bounding box"),
+    "board_static.unconnected_pads": _d("no-net pads; the ratsnest points carry the targets"),
+    "board_static.board_constraints": _r("board_constraints"),
+    "board_static.board_constraints.clearance_mm": _r("clearance"),
+    "board_static.board_constraints.track_width_mm": _r("track_width"),
+    "board_static.board_constraints.via_diameter_mm": _r("via_diameter"),
+    "board_static.board_constraints.via_drill_mm": _r("via_drill"),
+    "board_static.board_constraints.uvia_diameter_mm": _r("uvia_diameter"),
+    "board_static.board_constraints.uvia_drill_mm": _r("uvia_drill"),
+    "routing_geometry": _r("routing_geometry section"),
+    "routing_geometry.net_*": _r("net code"),
+    "routing_geometry.net_*.tracks": _r("tracks"),
+    "routing_geometry.net_*.tracks.track_*": _r("track"),
+    "routing_geometry.net_*.tracks.track_*.id": _r("track id"),
+    "routing_geometry.net_*.tracks.track_*.layer": _r("track layer"),
+    "routing_geometry.net_*.tracks.track_*.p1": _r("p1"),
+    "routing_geometry.net_*.tracks.track_*.p1.id": _r("p1 id"),
+    "routing_geometry.net_*.tracks.track_*.p1.xy": _r("p1 x y"),
+    "routing_geometry.net_*.tracks.track_*.p2": _r("p2"),
+    "routing_geometry.net_*.tracks.track_*.p2.id": _r("p2 id"),
+    "routing_geometry.net_*.tracks.track_*.p2.xy": _r("p2 x y"),
+    "routing_geometry.net_*.tracks.track_*.width": _d("set by the net's design rules, not by the agent"),
+    "routing_geometry.net_*.vias": _r("vias"),
+    "routing_geometry.net_*.vias.via_*": _r("via"),
+    "routing_geometry.net_*.vias.via_*.id": _r("via id"),
+    "routing_geometry.net_*.vias.via_*.center": _r("center"),
+    "routing_geometry.net_*.vias.via_*.center.id": _r("center id"),
+    "routing_geometry.net_*.vias.via_*.center.xy": _r("center x y"),
+    "routing_geometry.net_*.vias.via_*.layer_start": _r("layers start"),
+    "routing_geometry.net_*.vias.via_*.layer_end": _r("layers end"),
+    "routing_geometry.net_*.vias.via_*.via_width": _d("set by the net's design rules, not by the agent"),
+    "routing_geometry.net_*.points": _r("points"),
+    "routing_geometry.net_*.points[].id": _r("point id"),
+    "routing_geometry.net_*.points[].xy": _r("point x y"),
+    "routing_geometry.net_*.points[].layer": _d("the prompt asks the agent to infer it from the pad"),
+    "router_head": _r("router_head section"),
+    "router_head.current_xy": _r("xy"),
+    "router_head.current_layer": _r("layer"),
+    "router_head.current_net": _r("net"),
+    "router_head.current_net_phase": _r("phase"),
+    "router_head.is_routing": _r("is_routing"),
+    "router_head.routing_mode": _r("routing_mode letter"),
+    "router_head.step": _r("step"),
+    "router_head.step_ratio": _r("step ratio"),
+    "router_head.steps_remaining": _d("step + ratio already give the budget"),
+    "router_head.router_state_code": _d("engine-internal state"),
+    "router_head.via_toggle": _d("engine-internal state"),
+    "router_head.is_dragging": _d("engine-internal state"),
+    "drc_violations": _d("the prompt never carried DRC markers; rejections reach the agent as feedback"),
+    "action_history": _d("the prompt's History block comes from the rollout memory"),
+    "closed_nets": _d("a closed net drops out of the valid net_select targets"),
+}
+
+
+@lru_cache(maxsize=None)
+def obs_elements(prompt_version: str) -> FrozenSet[str]:
+    """The rendered element paths of ``prompt_version`` (case-insensitive, like
+    ``get_pcbworld_prompts``): the ``legacy`` set for every version, plus the
+    ``latest`` elements for ``latest``."""
+    key = prompt_version.lower()
+    if key not in PCBWORLD_PROMPT_VERSIONS:
+        raise ValueError(f"unknown prompt version {prompt_version!r}; "
+                         f"choose from: {', '.join(PCBWORLD_PROMPT_VERSIONS)}")
+    allowed = ("legacy", LATEST) if key == LATEST else ("legacy",)
+    return frozenset(path for path, e in OBS_ELEMENTS.items()
+                     if e.kind == "render" and e.versions in allowed)
+
+
+_NET_CONSTRAINTS = "board_static.nets.net_*.constraints"
+_NET_CONSTRAINT_KEYS = ("track_width", "clearance", "via_diameter", "via_drill")
+_NET_CONSTRAINT_PATHS = frozenset(p for p in OBS_ELEMENTS
+                                  if p == _NET_CONSTRAINTS or p.startswith(_NET_CONSTRAINTS + "."))
+
+
+def _rendered(prompt_version: str, net_constraint_obs: bool) -> FrozenSet[str]:
+    """:func:`obs_elements` of ``prompt_version`` minus the elements the env did not
+    produce: the per-net ``constraints`` exist only with ``net_constraint_obs`` on."""
+    elements = obs_elements(prompt_version)
+    return elements if net_constraint_obs else elements - _NET_CONSTRAINT_PATHS
 
 
 # ===========================================================================
@@ -164,7 +335,7 @@ def _pad_layer_attr(layer: Any) -> str:
     return f'"{pl}"' if not str(pl).isdigit() else str(pl)
 
 
-def _board_static_to_xml(bs: Dict[str, Any], ind: int = 0) -> str:
+def _board_static_to_xml(bs: Dict[str, Any], elements: FrozenSet[str], ind: int = 0) -> str:
     """Hand-rolled XML serializer for board_static.
 
     Applies the **same simplifications** as
@@ -243,6 +414,10 @@ def _board_static_to_xml(bs: Dict[str, Any], ind: int = 0) -> str:
                 lines.append(f"{p3}</pads>")
             else:
                 lines.append(f"{p3}<pads />")
+            if _NET_CONSTRAINTS in elements:
+                c = net_val["constraints"]
+                lines.append(f"{p3}<constraints " + " ".join(
+                    f"{k}={_fmt(float(c[k]))}" for k in _NET_CONSTRAINT_KEYS) + " />")
             lines.append(f"{p2}</net>")
         lines.append(f"{p1}</nets>")
     else:
@@ -392,7 +567,8 @@ def _router_head_to_xml(rh: Dict[str, Any], ind: int = 0) -> str:
     )
 
 
-def format_state(obs: Dict[str, Any]) -> str:
+def format_state(obs: Dict[str, Any], prompt_version: str, *,
+                 net_constraint_obs: bool) -> str:
     """Convert build_json_observation() output to an XML-like string.
 
     Carries the same information as :func:`format_state_sexpr` — the
@@ -401,6 +577,9 @@ def format_state(obs: Dict[str, Any]) -> str:
 
     Args:
         obs: Dict with keys board_static, routing_geometry, router_head.
+        prompt_version: selects the rendered elements (:func:`obs_elements`).
+        net_constraint_obs: the env's ``EnvConfig.net_constraint_obs`` — whether
+            the per-net ``constraints`` exist to be rendered.
 
     Returns:
         Multi-line XML-like string.
@@ -408,7 +587,8 @@ def format_state(obs: Dict[str, Any]) -> str:
     obs = dict(obs)
     sections = []
     if "board_static" in obs:
-        sections.append(_board_static_to_xml(obs["board_static"]))
+        sections.append(_board_static_to_xml(obs["board_static"],
+                                             _rendered(prompt_version, net_constraint_obs)))
     if "routing_geometry" in obs:
         sections.append(_routing_geometry_to_xml(obs["routing_geometry"]))
     if "router_head" in obs:
@@ -416,18 +596,24 @@ def format_state(obs: Dict[str, Any]) -> str:
     return "\n".join(sections)
 
 
-def format_state_split(obs: Dict[str, Any]) -> Tuple[str, str]:
+def format_state_split(obs: Dict[str, Any], prompt_version: str, *,
+                       net_constraint_obs: bool) -> Tuple[str, str]:
     """Like :func:`format_state`, but returns board_static separately.
 
     Args:
         obs: Dict with keys board_static, routing_geometry, router_head.
+        prompt_version: selects the rendered elements (:func:`obs_elements`).
+        net_constraint_obs: the env's ``EnvConfig.net_constraint_obs`` — whether
+            the per-net ``constraints`` exist to be rendered.
 
     Returns:
         (board_static_xml, dynamic_xml) where dynamic_xml contains
         routing_geometry and router_head.
     """
     obs = dict(obs)
-    static = _board_static_to_xml(obs["board_static"]) if "board_static" in obs else ""
+    static = (_board_static_to_xml(obs["board_static"],
+                                   _rendered(prompt_version, net_constraint_obs))
+              if "board_static" in obs else "")
     dynamic_sections = []
     if "routing_geometry" in obs:
         dynamic_sections.append(_routing_geometry_to_xml(obs["routing_geometry"]))
@@ -453,13 +639,14 @@ def _sindent(level: int) -> str:
     return "  " * level
 
 
-def _board_static_to_sexpr(bs: Dict[str, Any], ind: int = 0) -> str:
+def _board_static_to_sexpr(bs: Dict[str, Any], elements: FrozenSet[str], ind: int = 0) -> str:
     """Convert board_static dict to S-expression.
 
     Simplifications vs raw dict:
       - bbox_x/y/w/h merged into (bbox x y w h)
       - pad: (pad <id> <x> <y> <layer>), dropping width/height/center-id
-      - per-net constraints removed
+      - per-net constraints as (constraints ...) only when ``elements``
+        holds them (``latest`` on an env with ``net_constraint_obs``)
       - board_constraints emitted as (board_constraints ...); fields
         unset across BDS and every netclass (value < 0) are omitted so
         the prompt only mentions real constraints (e.g. uvia_* on boards
@@ -507,7 +694,7 @@ def _board_static_to_sexpr(bs: Dict[str, Any], ind: int = 0) -> str:
     else:
         lines.append(f"{p1}(boardlines)")
 
-    # nets — pad simplified to (pad <id> <x> <y>), constraints removed
+    # nets — pad simplified to (pad <id> <x> <y> <layer>)
     nets = bs.get("nets", {})
     if nets:
         lines.append(f"{p1}(nets")
@@ -526,6 +713,10 @@ def _board_static_to_sexpr(bs: Dict[str, Any], ind: int = 0) -> str:
                 lines.append(f"{p3})")
             else:
                 lines.append(f"{p3}(pads)")
+            if _NET_CONSTRAINTS in elements:
+                c = net_val["constraints"]
+                lines.append(f"{p3}(constraints " + " ".join(
+                    f"({k} {_fmt(float(c[k]))})" for k in _NET_CONSTRAINT_KEYS) + ")")
             lines.append(f"{p2})")
         lines.append(f"{p1})")
     else:
@@ -668,11 +859,15 @@ def _router_head_to_sexpr(rh: Dict[str, Any], ind: int = 0) -> str:
     return "\n".join(lines)
 
 
-def format_state_sexpr(obs: Dict[str, Any]) -> str:
+def format_state_sexpr(obs: Dict[str, Any], prompt_version: str, *,
+                       net_constraint_obs: bool) -> str:
     """Convert build_json_observation() output to S-expression string.
 
     Args:
         obs: Dict with keys board_static, routing_geometry, router_head.
+        prompt_version: selects the rendered elements (:func:`obs_elements`).
+        net_constraint_obs: the env's ``EnvConfig.net_constraint_obs`` — whether
+            the per-net ``constraints`` exist to be rendered.
 
     Returns:
         Multi-line S-expression string.
@@ -685,7 +880,8 @@ def format_state_sexpr(obs: Dict[str, Any]) -> str:
         }
     sections = []
     if "board_static" in obs:
-        sections.append(_board_static_to_sexpr(obs["board_static"]))
+        sections.append(_board_static_to_sexpr(obs["board_static"],
+                                               _rendered(prompt_version, net_constraint_obs)))
     if "routing_geometry" in obs:
         sections.append(_routing_geometry_to_sexpr(obs["routing_geometry"]))
     if "router_head" in obs:
@@ -693,11 +889,15 @@ def format_state_sexpr(obs: Dict[str, Any]) -> str:
     return "\n".join(sections)
 
 
-def format_state_split_sexpr(obs: Dict[str, Any]) -> Tuple[str, str]:
+def format_state_split_sexpr(obs: Dict[str, Any], prompt_version: str, *,
+                             net_constraint_obs: bool) -> Tuple[str, str]:
     """Like format_state_sexpr(), but returns board_static separately.
 
     Args:
         obs: Dict with keys board_static, routing_geometry, router_head.
+        prompt_version: selects the rendered elements (:func:`obs_elements`).
+        net_constraint_obs: the env's ``EnvConfig.net_constraint_obs`` — whether
+            the per-net ``constraints`` exist to be rendered.
 
     Returns:
         (board_static_sexpr, dynamic_sexpr) where dynamic_sexpr contains
@@ -709,13 +909,25 @@ def format_state_split_sexpr(obs: Dict[str, Any]) -> Tuple[str, str]:
             net_key: _normalize_net(net_val)
             for net_key, net_val in obs["routing_geometry"].items()
         }
-    static = _board_static_to_sexpr(obs["board_static"]) if "board_static" in obs else ""
+    static = (_board_static_to_sexpr(obs["board_static"],
+                                     _rendered(prompt_version, net_constraint_obs))
+              if "board_static" in obs else "")
     dynamic_sections = []
     if "routing_geometry" in obs:
         dynamic_sections.append(_routing_geometry_to_sexpr(obs["routing_geometry"]))
     if "router_head" in obs:
         dynamic_sections.append(_router_head_to_sexpr(obs["router_head"]))
     return static, "\n".join(dynamic_sections)
+
+
+_FORMAT_FUNCS = {"xml": format_state, "sexpr": format_state_sexpr}
+
+
+def serialize_obs(obs: Dict[str, Any], state_format: str, prompt_version: str, *,
+                  net_constraint_obs: bool) -> str:
+    """Observation dict → prompt text in ``state_format`` (``sexpr`` | ``xml``)."""
+    return _FORMAT_FUNCS[state_format](obs, prompt_version,
+                                       net_constraint_obs=net_constraint_obs)
 
 
 # ===========================================================================

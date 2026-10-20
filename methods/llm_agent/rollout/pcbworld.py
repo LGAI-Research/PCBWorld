@@ -62,10 +62,13 @@ Usage:
 
 from __future__ import annotations
 
-import argparse
 import sys
 import os
+import time
+from typing import Any
 
+from methods._shared.early_stop import NoGeometryProgressGuard
+from methods.llm_agent.policy.model_provider import FatalAPIError
 from methods.llm_agent.wrappers.action_converter import pcbworld_projection
 from methods.llm_agent.training.manager import KiCadLLMRolloutManager
 
@@ -85,9 +88,10 @@ if REPO_ROOT not in sys.path:
 # Argument parsing
 # ---------------------------------------------------------------------------
 
-def parse_args() -> argparse.Namespace:
-    from eval.args import build_eval_parser
-    return build_eval_parser(description="pcbworld environment eval").parse_args()
+def parse_args() -> Any:
+    """The command line, resolved once into the run's frozen config (``eval.args.resolve_eval_args``)."""
+    from eval.args import resolve_eval_args
+    return resolve_eval_args(description="pcbworld environment eval")
 
 
 # ---------------------------------------------------------------------------
@@ -106,26 +110,19 @@ def _build_envs(args, board_path: str | None = None):
     When ``board_path`` is ``None`` the workers are built against
     ``args.board_path`` (legacy single-board behaviour).
     """
+    from eval.args import llm_env_config
     from methods.llm_agent.wrappers.factory import KiCadLLMVecEnv
 
     return KiCadLLMVecEnv(
+        env_config=llm_env_config(args),
+        state_format=args.state_format,
+        prompt_version=args.prompt_version,
         board_path=board_path if board_path is not None else args.board_path,
         seed=args.seed,
         env_num=args.env_num,
         group_n=1,
         resources_per_worker={"num_cpus": args.num_cpus_per_worker, "num_gpus": 0},
         is_train=False,
-        env_kwargs={
-            "max_steps":             args.max_steps,
-            "masking_rule":          args.masking_rule,
-            "reward_rule":           args.reward_rule,
-            "state_format":          args.state_format,
-            "corner_mode":           args.corner_mode,
-            "via_penalty":           args.via_penalty,
-            "reward_noise_std":      args.reward_noise_std,
-            "emit_drc_tokens":       not args.no_drc_tokens,
-            "use_yaml_drc_fallback": args.use_yaml_drc_fallback,
-        },
     )
 
 
@@ -232,7 +229,8 @@ def _mean_std(values: list) -> tuple[float, float]:
 
 
 def _result_to_canonical_row(
-    result: dict, *, board_index: int, board_path: str, rollout_idx: int
+    result: dict, *, board_index: int, board_path: str, rollout_idx: int,
+    check_angle: int,
 ) -> dict:
     """Map one LLM episode result dict to a canonical ``PER_ROLLOUT_FIELDS`` row.
 
@@ -252,6 +250,8 @@ def _result_to_canonical_row(
     ``wirelength_mm``, ``won`` -> ``success``/``terminated`` (success/clean_pass
     go through the shared semantics helpers in :mod:`eval.eval_utils`).
     RL-only columns are left blank (parsed as NaN, excluded from means).
+    ``check_angle`` is the angle the episode was scored at (the manager's, i.e. the
+    env ``corner_mode``) — Stage 2 re-scoring reads it from the row.
     """
     from configs.loader.schema import DEFAULTS
     from eval import eval_utils as u
@@ -293,13 +293,21 @@ def _result_to_canonical_row(
             "track_count": result.get("track_count", ""),
             "final_potential": result.get("final_potential", ""),
             "early_stop": bool(result.get("early_stopped", False)),
+            "early_stop_reason": result.get("early_stop_reason", ""),
             "system_tokens": result.get("system_tokens", ""),
             "user_tokens": result.get("user_tokens", ""),
             "response_tokens": result.get("response_tokens", ""),
             "call_count": result.get("call_count", ""),
+            # Blank (not recorded) stays distinct from 0 (recorded, none failed).
+            "api_failed_calls": (
+                "" if result.get("api_failed_calls") is None
+                else int(result["api_failed_calls"])
+            ),
+            "rules_digest": result.get("rules_digest", ""),
+            "rules_substitution": result.get("rules_substitution", ""),
         },
         reward_config=DEFAULTS.reward_config,
-        check_angle=DEFAULTS.check_angle,
+        check_angle=check_angle,
     )
 
 
@@ -320,7 +328,8 @@ def _crashed_result(board_id: str, env_i: int) -> dict:
         "final_potential": nan,
         "system_tokens": nan, "user_tokens": nan,
         "response_tokens": nan, "call_count": 0,
-        "early_stopped": False, "crashed": True,
+        "api_failed_calls": None,   # not recorded: the episode's counter died with it
+        "early_stopped": False, "early_stop_reason": "", "crashed": True,
     }
 
 
@@ -368,11 +377,20 @@ def _load_episode_results(
             "user_tokens": res.get("user_tokens", nan),
             "response_tokens": res.get("response_tokens", nan),
             "call_count": res.get("call_count", 0),
+            # None for dumps written before it was recorded (blank column).
+            "api_failed_calls": res.get("api_failed_calls"),
+            # Blank for dumps written before they were recorded.
+            "rules_digest": res.get("rules_digest", ""),
+            "rules_substitution": res.get("rules_substitution", ""),
             "early_stopped": bool(res.get("early_stopped", False)),
+            "early_stop_reason": res.get("early_stop_reason", ""),
             # None for dumps written before episode-end scoring existed —
             # the canonical-row mapper then falls back to the env-info
             # fields above, keeping old dump dirs resumable.
             "eval_metrics": res.get("eval_metrics"),
+            # Episode-level provider usage (same in every env's dump); None for
+            # dumps written before it was recorded.
+            "episode_token_usage": doc.get("token_usage"),
             "resumed": True,
         })
     return rows
@@ -476,7 +494,7 @@ class _EvalRolloutManager(KiCadLLMRolloutManager):
     """``KiCadLLMRolloutManager`` subclass that reads CLI argparse args.
 
     The base's default ``_resolve_*`` hooks expect verl-agent's nested
-    OmegaConf shape (``config.env.pcbworld.prompt_version``); eval scripts
+    OmegaConf shape (``config.env.max_steps``); eval scripts
     pass a flat argparse Namespace, so each hook is overridden to read the
     matching CLI flag directly. Multi-board cycling is handled externally
     by ``_iter_boards_with_reload`` (not the base's ``_board_scheduler``),
@@ -490,9 +508,6 @@ class _EvalRolloutManager(KiCadLLMRolloutManager):
             envs, pcbworld_projection, args, board_scheduler=None,
             score_episodes=True,
         )
-
-    def _resolve_prompt_version(self, args) -> str:
-        return args.prompt_version
 
     def _resolve_base_max_steps(self, args) -> int:
         return int(args.max_steps)
@@ -588,6 +603,7 @@ def run_fixed(args) -> None:
 def _run_one_episode(
     args, provider, mgr, envs, board_id, board_path, ep,
     prompts_version, extract_think_action, is_no_progress,
+    *, started_at: float | None = None,
 ) -> list[dict]:
     """Run a single episode (all envs) and return per-env result rows.
 
@@ -598,11 +614,23 @@ def _run_one_episode(
     ``{stem}.kicad_pcb`` per env (when ``--dump_dir`` is set), which the
     resume path keys off of. A crash raises before the dump, so the episode
     stays un-dumped and a later resume re-attempts it.
+
+    With an API provider each row (and each env's dump, as ``token_usage``)
+    carries the episode's provider-reported usage — the change of the
+    provider's cumulative totals over the episode — plus ``wall_time_s`` from
+    ``started_at`` (default: entry). The rollout sums these per board.
     """
     import json
 
+    t_start = time.monotonic() if started_at is None else started_at
+    usage_totals = _provider_usage_totals(provider)
+    usage_before = dict(usage_totals) if usage_totals is not None else None
     ep_results: list[dict] = []
+    from eval.eval_utils import rules_columns
+
     obs_dict, info_list = mgr.reset()
+    # The rules ride the reset info: an early-stopped episode has no terminal info.
+    rules = [rules_columns(info) for info in info_list]
     text_obs_list = list(obs_dict["anchor"])
     effective_max_steps = mgr.effective_max_steps
     if effective_max_steps != args.max_steps:
@@ -618,8 +646,23 @@ def _run_one_episode(
     # final obs/info are frozen so later batch steps don't overwrite
     # the reported metrics.
     no_progress_streak = [0] * args.env_num
+    # Geometry-stall guard — the same NoGeometryProgressGuard the RL rollout
+    # uses. It watches the board-state signature (track/via counts, wirelength,
+    # ratsnest_reduction) and fires after N consecutive steps that changed none
+    # of them, catching accepted-but-unproductive routing that the validity-based
+    # streak above resets.
+    geometry_guards = [
+        NoGeometryProgressGuard(
+            threshold=int(args.early_stop_no_geometry_progress)
+        )
+        for _ in range(args.env_num)
+    ]
     frozen_obs: list[str | None] = [None] * args.env_num
     frozen_info: list[dict | None] = [None] * args.env_num
+    # Which guard stopped each env: "no_progress" | "no_geometry_progress" | "".
+    # Written to the shared per_rollout ``early_stop_reason`` column, where the
+    # RL rollout writes "finish_no_progress" | "no_geometry_progress".
+    early_stop_reason = [""] * args.env_num
     # PCBWorld only stamps board-state measures (track_count,
     # via_count, wirelength, ratsnest_reduction) on VALID steps — at episode
     # end (terminated / truncated / early-stop on invalid step) the
@@ -639,6 +682,12 @@ def _run_one_episode(
     ep_user_tokens = 0
     ep_response_tokens = 0
     ep_call_count = 0
+    # Steps per env whose provider call fell back to idle; None when the
+    # provider keeps no such record (local vLLM, RL serving agent).
+    api_failed = (
+        [0] * args.env_num if _provider_last_call_failed(provider) is not None
+        else None
+    )
     step = 0
 
     # Per-env rollout dumps — eval-exp.sh's visualiser step consumes
@@ -671,6 +720,11 @@ def _run_one_episode(
 
         # Provider call (vLLM batched / API per-prompt).
         llm_outputs, token_counts = provider.generate(prompt_pairs)
+        if api_failed is not None:
+            # Only envs still running take the idle step in their episode.
+            for i, failed in enumerate(_provider_last_call_failed(provider)):
+                if failed and not dones[i]:
+                    api_failed[i] += 1
 
         # mgr.step does projection + envs.step + memory/streak update,
         # then returns the next obs_dict (system/user prompts already
@@ -736,20 +790,29 @@ def _run_one_episode(
             no_progress_streak[i] = (
                 0 if progressed else no_progress_streak[i] + 1
             )
-            if (args.early_stop_no_progress > 0
-                    and no_progress_streak[i] >= args.early_stop_no_progress
-                    and not step_dones[i]):
-                print(
-                    f"  [early-stop][env {i}] non-progress streak "
-                    f"{no_progress_streak[i]} >= "
-                    f"{args.early_stop_no_progress} → marking done"
+            geometry_stalled = geometry_guards[i].update(info=info_list[i])
+            hit_no_progress = (
+                args.early_stop_no_progress > 0
+                and no_progress_streak[i] >= args.early_stop_no_progress
+            )
+            if (hit_no_progress or geometry_stalled) and not step_dones[i]:
+                reason = (
+                    f"no geometry progress for {geometry_guards[i].count} "
+                    f"steps >= {args.early_stop_no_geometry_progress}"
+                    if geometry_stalled else
+                    f"non-progress streak {no_progress_streak[i]} >= "
+                    f"{args.early_stop_no_progress}"
                 )
+                print(f"  [early-stop][env {i}] {reason} → marking done")
                 # Score at the stop decision (before the freeze copy) so the
                 # canonical metrics capture the board state being frozen and
                 # ``eval_metrics`` lands inside the frozen info snapshot.
                 mgr.mark_episode_done([i], infos=info_list)
                 frozen_obs[i] = text_obs_list[i]
                 frozen_info[i] = dict(info_list[i])
+                early_stop_reason[i] = (
+                    "no_geometry_progress" if geometry_stalled else "no_progress"
+                )
                 dones[i] = True
 
         for i in range(args.env_num):
@@ -762,6 +825,11 @@ def _run_one_episode(
     # Defensive: score any env the loop left unfinished (no env-side
     # done, no early stop) so every episode leaves with canonical metrics.
     mgr.finalize_episode(infos=info_list)
+
+    episode_usage = None
+    if usage_before is not None:
+        episode_usage = {k: usage_totals[k] - usage_before[k] for k in usage_totals}
+        episode_usage["wall_time_s"] = round(time.monotonic() - t_start, 1)
 
     # Restore frozen snapshots for envs early-stopped on no-progress.
     for i in range(args.env_num):
@@ -811,10 +879,14 @@ def _run_one_episode(
             "final_potential": final_phi,
             "system_tokens": ep_system_tokens, "user_tokens": ep_user_tokens,
             "response_tokens": ep_response_tokens, "call_count": ep_call_count,
+            "api_failed_calls": None if api_failed is None else api_failed[i],
+            **rules[i],
             "early_stopped": early_stopped,
+            "early_stop_reason": early_stop_reason[i],
             # Nested canonical scoring (compute_metrics) from the manager's
             # episode-end hook; None if scoring failed for this env.
             "eval_metrics": mgr.episode_scored[i],
+            "episode_token_usage": episode_usage,
         }
         ep_results.append(result)
         tag = "  [early-stop]" if early_stopped else ""
@@ -862,15 +934,23 @@ def _run_one_episode(
                     final_phi if _is_finite(final_phi) else None
                 ),
                 "early_stopped": result_i.get("early_stopped", False),
+                "early_stop_reason": result_i.get("early_stop_reason", ""),
                 "system_tokens": result_i.get("system_tokens", 0),
                 "user_tokens": result_i.get("user_tokens", 0),
                 "response_tokens": result_i.get("response_tokens", 0),
                 "call_count": result_i.get("call_count", 0),
+                "api_failed_calls": result_i.get("api_failed_calls"),
+                "rules_digest": result_i.get("rules_digest", ""),
+                "rules_substitution": result_i.get("rules_substitution", ""),
                 # Canonical scoring block — lets a resume rebuild the same
                 # canonical row without re-scoring, and downstream tools read
                 # KiCad-measured metrics straight from the dump.
                 "eval_metrics": result_i.get("eval_metrics"),
             }
+            if episode_usage is not None:
+                # Episode-level (shared by all envs); a resume sums these into
+                # the board's token_usage.json.
+                rollout_dumps[i]["token_usage"] = episode_usage
             stem = f"{board_id}_episode_{ep:02d}_env_{i:02d}"
             fpath = os.path.join(args.dump_dir, f"{stem}.json")
             with open(fpath, "w") as f:
@@ -903,8 +983,13 @@ def _run_rollout(args, provider) -> None:
     per-board / per-episode summary printing + CSV.
     """
     import json
+
     from methods.llm_agent.wrappers.action_converter import extract_think_action
     from methods.llm_agent.wrappers.feedback import is_no_progress
+
+    # Wall clock for the whole rollout, reported next to the token totals so a
+    # run's throughput (calls/s) is recorded alongside its cost.
+    _t0 = time.monotonic()
 
     eval_boards = _resolve_eval_boards(args)
     envs = _build_envs(args, board_path=eval_boards[0][1])
@@ -926,6 +1011,15 @@ def _run_rollout(args, provider) -> None:
 
     canonical_rows: list[dict] = []
     boards: list[BoardSpec] = []
+    # Providers that keep billed-token totals (APIProvider) get one
+    # token_usage.json per board, summed from the per-episode usage each
+    # episode dump carries — so it covers every recorded episode across runs.
+    backend = getattr(provider, "backend", provider)
+    track_usage = _provider_usage_totals(provider) is not None
+    # An episode's wall time runs from the end of the previous episode (the
+    # rollout start for the first), so the env build / board reload lands on
+    # the first episode run after it.
+    mark = _t0
     for board_idx, board_id, _board_path in _iter_boards_with_reload(
         envs, eval_boards, args.env_num
     ):
@@ -933,6 +1027,12 @@ def _run_rollout(args, provider) -> None:
             _print_section(f"Board {board_idx + 1}/{len(eval_boards)}: {board_id}")
 
         board_results: list[dict] = []
+        # One entry per episode: its recorded usage, None when the dump has
+        # none (written before usage was recorded); a crash leaves the board
+        # incomplete.
+        episode_usages: list[dict | None] = []
+        n_crashed = 0
+        stale_usage_cleared = False
 
         for ep in range(args.rollout_episodes):
             # Resume: skip episodes already fully dumped (both .json and
@@ -948,16 +1048,44 @@ def _run_rollout(args, provider) -> None:
                         f"{args.rollout_episodes} already complete — skipping"
                     )
                     board_results.extend(cached)
+                    episode_usages.append(cached[0].get("episode_token_usage"))
+                    mark = time.monotonic()
                     continue
 
             _print_section(f"Episode {ep + 1}/{args.rollout_episodes}")
 
+            if args.dump_dir and not stale_usage_cleared:
+                # An episode runs, so the board's dumps changed since any
+                # token_usage file was written: drop it now, so an interrupted
+                # run cannot leave it marking the cell as finished.
+                stale = _token_usage_path(args.dump_dir, board_id, len(eval_boards))
+                if os.path.exists(stale):
+                    os.remove(stale)
+                    print(f"  [token usage] {board_id}: removed {stale} "
+                          "(an episode is being re-run)")
+                stale_usage_cleared = True
+
+            totals = _provider_usage_totals(provider)
+            usage_before = dict(totals) if totals is not None else None
             try:
                 ep_results = _run_one_episode(
                     args, provider, mgr, envs, board_id, _board_path, ep,
                     prompts_version, extract_think_action, is_no_progress,
+                    started_at=mark,
                 )
                 board_results.extend(ep_results)
+                episode_usages.append(ep_results[0].get("episode_token_usage"))
+                mark = time.monotonic()
+            except FatalAPIError:
+                # Out of credit / bad key / no model access: every later call
+                # fails the same way, so end the run here. The episode is not
+                # dumped and no token_usage.json is written for this board, so
+                # the cell reads as unfinished and a resume re-runs it (and
+                # exports the run's artifacts once every board is done).
+                _print_unrecorded_usage(board_id, ep, usage_before, totals)
+                _print_provider_usage(provider, wall_time_s=time.monotonic() - _t0)
+                mgr.close()   # shut the workers + engine servers down before exiting
+                raise
             except Exception as e:  # noqa: BLE001
                 # Worker death (native router SIGSEGV / OOM) or any unexpected
                 # error: record this episode as crashed (NaN), rebuild the dead
@@ -969,9 +1097,12 @@ def _run_rollout(args, provider) -> None:
                     f"{args.rollout_episodes}: {type(e).__name__}: {e}"
                 )
                 traceback.print_exc()
+                _print_unrecorded_usage(board_id, ep, usage_before, totals)
                 board_results.extend(
                     _crashed_result(board_id, i) for i in range(args.env_num)
                 )
+                n_crashed += 1
+                mark = time.monotonic()
                 try:
                     envs.rebuild_workers()
                 except Exception as rebuild_err:  # noqa: BLE001
@@ -981,12 +1112,29 @@ def _run_rollout(args, provider) -> None:
                     )
                 continue
 
+        if args.dump_dir and track_usage and args.rollout_episodes > 0:
+            if n_crashed:
+                print(f"  [token usage] {board_id}: not written — {n_crashed} "
+                      "crashed episode(s) unrecorded; a resume re-runs them")
+            elif any(u is None for u in episode_usages):
+                print(f"  [token usage] {board_id}: not written — episodes "
+                      "dumped without per-episode usage (older run); an "
+                      "existing token_usage file is kept if no episode re-ran")
+            else:
+                written = _write_token_usage(
+                    args.dump_dir, board_id, len(eval_boards),
+                    _sum_usage(episode_usages),
+                    model=getattr(backend, "model", None),
+                    reasoning_effort=getattr(backend, "reasoning_effort", None),
+                )
+                print(f"  token usage -> {written}")
         _print_board_summary(board_id, board_results, args)
         boards.append(BoardSpec(board_idx, board_id, _board_path or ""))
         for rollout_idx, result in enumerate(board_results):
             canonical_rows.append(_result_to_canonical_row(
                 result, board_index=board_idx,
                 board_path=_board_path or "", rollout_idx=rollout_idx,
+                check_angle=mgr._eval_check_angle,
             ))
 
     # Aggregate + export through the single shared evaluator handler so the LLM
@@ -997,13 +1145,127 @@ def _run_rollout(args, provider) -> None:
         from eval.metrics import EvalSummary
 
         metrics = EvalSummary.from_rollouts(canonical_rows, boards)
-        export_csv(metrics, args.dump_dir)
+        # manifest.json records the run's whole EnvConfig and the prompt it was
+        # rendered with (version + content hash: templates + rendered obs elements).
+        export_csv(metrics, args.dump_dir, env_kwargs=envs.env_config.to_env_kwargs(),
+                   args_meta={"prompt_version": mgr._prompts.version,
+                              "prompt_content_hash": mgr._prompts.content_hash,
+                              "state_format": envs.state_format})
         print(
             f"\n  eval artifacts -> {args.dump_dir}/"
-            "{per_rollout.csv, per_board.csv, eval_overall_summary.json}"
+            "{per_rollout.csv, per_board.csv, eval_overall_summary.json, manifest.json}"
         )
 
+    _print_provider_usage(provider, wall_time_s=time.monotonic() - _t0)
+    _warn_api_failures(canonical_rows)
     mgr.close()
+
+
+def _provider_usage_totals(provider) -> dict | None:
+    """The provider's cumulative billed-token counters (APIProvider), else None."""
+    return getattr(getattr(provider, "backend", provider), "usage_totals", None)
+
+
+def _provider_last_call_failed(provider) -> list[bool] | None:
+    """Per prompt pair of the provider's latest call, whether it fell back to
+    idle (APIProvider / RemoteLLMProvider), else None (no record kept)."""
+    return getattr(getattr(provider, "backend", provider), "last_call_failed", None)
+
+
+def _warn_api_failures(rows: list[dict]) -> None:
+    """Warn once at rollout end when any episode step fell back to idle after a
+    failed provider call; those steps stay in the scored episodes."""
+    from eval.aggregation import api_failure_summary, api_failure_warning
+
+    warning = api_failure_warning(api_failure_summary(rows, board_key="board_id"))
+    if warning:
+        print(f"\n  [WARN] {warning}")
+
+
+def _sum_usage(episode_usages: list[dict]) -> dict:
+    """Sum per-episode usage dicts (counters + ``wall_time_s``) key by key."""
+    total: dict = {}
+    for usage in episode_usages:
+        for k, v in usage.items():
+            total[k] = total.get(k, 0) + v
+    return total
+
+
+def _token_usage_path(dump_dir: str, board_id: str, n_boards: int) -> str:
+    """``token_usage.json`` for a single-board run (one cell per board), else
+    ``{board_id}_token_usage.json``."""
+    name = "token_usage.json" if n_boards == 1 else f"{board_id}_token_usage.json"
+    return os.path.join(dump_dir, name)
+
+
+def _print_unrecorded_usage(board_id: str, ep: int, before: dict | None,
+                            totals: dict | None) -> None:
+    """Report what an episode that left no dump was billed: its calls are in
+    no ``token_usage.json`` (a resume re-runs the episode and bills it again)."""
+    if before is None or totals is None:
+        return
+    calls = totals["calls"] - before["calls"]
+    if calls:
+        failed = totals["failed_calls"] - before["failed_calls"]
+        print(f"  [token usage] {board_id} episode {ep + 1}: {calls} calls "
+              f"({failed} failed with no usage reported; "
+              f"{totals['input_tokens'] - before['input_tokens']:,} input / "
+              f"{totals['output_tokens'] - before['output_tokens']:,} output "
+              "tokens) are not in any token_usage file")
+
+
+def _write_token_usage(
+    dump_dir: str, board_id: str, n_boards: int, usage: dict, *,
+    model: str | None, reasoning_effort: str | None,
+) -> str:
+    """Write one board's provider-reported token totals next to its dumps.
+
+    ``usage`` = the board's summed per-episode usage (counters +
+    ``wall_time_s``); the file name is :func:`_token_usage_path`. ``uncached_input_tokens`` =
+    input - cache reads, so it still contains the cache writes. Written even
+    when the recorded episodes made no call (the file marks the board done).
+    Returns the path written.
+    """
+    import json
+    payload = {k: v for k, v in usage.items() if k != "wall_time_s"}
+    payload["uncached_input_tokens"] = (
+        usage["input_tokens"] - usage["cached_input_tokens"]
+    )
+    payload["model"] = model
+    payload["reasoning_effort"] = reasoning_effort
+    payload["wall_time_s"] = round(usage.get("wall_time_s", 0.0), 1)
+    path = _token_usage_path(dump_dir, board_id, n_boards)
+    with open(path, "w") as f:
+        f.write(json.dumps(payload, indent=2) + "\n")
+    return path
+
+
+def _print_provider_usage(provider, *, wall_time_s: float | None = None) -> None:
+    """Print the provider's billed-token totals for the whole run.
+
+    Only API providers accumulate these — the local/remote LLM backends have
+    no billing surface, so this is a no-op for them. The numbers come from the
+    provider's own usage field per call, not from the per-prompt-pair
+    system/user split (which is a character-ratio estimate). The per-board
+    files are written by :func:`_write_token_usage`.
+    """
+    totals = _provider_usage_totals(provider)
+    if not totals:
+        return
+    billed_input = totals["input_tokens"] - totals["cached_input_tokens"]
+    _print_section("TOKEN USAGE (provider-reported)")
+    print(f"  API calls        : {totals['calls']}"
+          f"  (failed: {totals['failed_calls']})")
+    print(f"  Input   total    : {totals['input_tokens']:,}")
+    print(f"    cache read     : {totals['cached_input_tokens']:,}")
+    print(f"    cache write    : {totals['cache_write_tokens']:,}")
+    print(f"    uncached       : {billed_input:,}")
+    print(f"  Output  total    : {totals['output_tokens']:,}")
+    print(f"    reasoning      : {totals['reasoning_tokens']:,}")
+    if wall_time_s:
+        print(f"  Wall time        : {wall_time_s:,.1f}s "
+              f"({totals['calls'] / wall_time_s:.3f} calls/s, "
+              f"{wall_time_s / max(totals['calls'], 1):.2f}s per call)")
 
 
 def run_llm(args) -> None:
@@ -1067,6 +1329,18 @@ def main() -> None:
     if not os.path.isfile(args.board_path):
         print(f"\n[ERROR] Board file not found: {args.board_path}")
         sys.exit(1)
+
+    # The run record, before any env exists (so a crash still leaves it): next to the
+    # per-episode dumps. Without --dump_dir the run keeps no files, so no record either.
+    if args.dump_dir:
+        from configs.loader.record import board_record, write_run_record
+        write_run_record(args.dump_dir, args, boards=board_record(
+            [p for _, p in _resolve_eval_boards(args)], board_path=args.board_path,
+            boards_json=args.boards_json))
+    else:
+        print("[config] no --dump_dir: no run record is written (the provenance table follows)")
+        from configs.loader.explain import format_table
+        print(format_table(args.provenance))
 
     if args.mode == "fixed":
         run_fixed(args)

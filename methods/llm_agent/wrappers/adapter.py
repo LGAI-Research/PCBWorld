@@ -13,20 +13,10 @@ Note on RLRouter singleton:
 
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import Any, Dict, Optional
 
-from configs.loader.schema import EnvConfig, RewardOverrides
-from methods.llm_agent.wrappers.state_converter import (
-    format_state, format_state_split,
-    format_state_sexpr, format_state_split_sexpr,
-)
-
-# Supported state serialization formats
-_FORMAT_FUNCS = {
-    "xml":   (format_state, format_state_split),
-    "sexpr": (format_state_sexpr, format_state_split_sexpr),
-}
+from configs.loader.schema import EnvConfig
+from methods.llm_agent.wrappers.state_converter import serialize_obs
 
 
 # ---------------------------------------------------------------------------
@@ -52,22 +42,6 @@ def _count_board_nets(obs_dict: Optional[Dict[str, Any]]) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Observation serialiser
-# ---------------------------------------------------------------------------
-
-def _serialize_obs(obs: dict, state_format: str = "sexpr") -> str:
-    """Convert a PCBWorld observation dict to a string."""
-    fmt, _ = _FORMAT_FUNCS[state_format]
-    return fmt(obs)
-
-
-def _serialize_obs_split(obs: dict, state_format: str = "sexpr") -> tuple:
-    """Convert a PCBWorld observation dict to (board_static, dynamic) strings."""
-    _, fmt_split = _FORMAT_FUNCS[state_format]
-    return fmt_split(obs)
-
-
-# ---------------------------------------------------------------------------
 # Ray remote worker
 # ---------------------------------------------------------------------------
 
@@ -83,36 +57,19 @@ class KiCadLLMWrapper:
     def __init__(
         self,
         board_path: str,
-        max_steps: int,
-        masking_rule: str,
-        reward_rule: str,
         seed: int,
-        state_format: str = "sexpr",
-        corner_mode: int = 0,
-        via_penalty: Optional[float] = None,
-        reward_noise_std: float = 0.0,
-        emit_drc_tokens: bool = True,
-        use_yaml_drc_fallback: bool = False,
+        env_config: EnvConfig,
+        state_format: str,
+        prompt_version: str,
     ) -> None:
         self.state_format = state_format
+        self.prompt_version = prompt_version
         # Store seed so every reset() re-seeds the env — required for GiGPO
         # group-shared start states (workers sharing the same group_idx are
         # constructed with the same seed in KiCadLLMVecEnv.__init__).
         self._seed = seed
-        # Canonical env-core config (shared schema with the RL factory) so
-        # reload_board() can rebuild the underlying PCBWorld in place for a
-        # different board. Fields the LLM path does not set (wirelength/drc
-        # penalties, etc.) stay at the EnvConfig defaults = PCBWorld defaults.
-        self._env_config = EnvConfig(
-            max_steps=max_steps,
-            masking_rule=masking_rule,
-            reward_rule=reward_rule,
-            corner_mode=corner_mode,
-            reward_noise_std=reward_noise_std,
-            emit_drc_tokens=emit_drc_tokens,
-            use_yaml_drc_fallback=use_yaml_drc_fallback,
-            reward=RewardOverrides(via_penalty=via_penalty),
-        )
+        # Kept so reload_board() can rebuild the PCBWorld in place for another board.
+        self._env_config = env_config
         self._board_path = board_path
         self.env = self._build_env(board_path)
 
@@ -140,7 +97,8 @@ class KiCadLLMWrapper:
         # ``get_last_obs_dict`` without re-running the env.
         self._last_obs_dict = obs
 
-        text_obs = _serialize_obs(obs, self.state_format)
+        text_obs = serialize_obs(obs, self.state_format, self.prompt_version,
+                                 net_constraint_obs=self._env_config.net_constraint_obs)
         # REVIEW(metric-semantics): bare ``terminated`` is NOT "fully routed"
         # since the voluntary all-nets-closed finish (v0.11.28) — give-up
         # episodes also terminate. Canonical success = env ``info["success"]``
@@ -168,7 +126,8 @@ class KiCadLLMWrapper:
         obs, info = self.env.reset(seed=self._seed)
         self._last_obs_dict = obs
 
-        text_obs = _serialize_obs(obs, self.state_format)
+        text_obs = serialize_obs(obs, self.state_format, self.prompt_version,
+                                 net_constraint_obs=self._env_config.net_constraint_obs)
         info["action_mask"] = self.env.action_masks().tolist()
         info["action_mask_dict"] = self.env.action_mask_dict()
 
@@ -193,18 +152,18 @@ class KiCadLLMWrapper:
         """Compute and apply ``max(base, pin*3 + net*2)`` for this worker.
 
         Reads pin / net counts from the worker's most recent observation
-        (cached as ``_last_obs_dict`` by ``reset`` / ``step``) and writes
-        the result onto ``PCBWorld.max_steps`` so the env's internal
-        ``self._step_count >= self.max_steps`` truncation respects the
-        adaptive budget. Returns the effective value.
+        (cached as ``_last_obs_dict`` by ``reset`` / ``step``) and sets
+        the result with ``PCBWorld.set_max_steps`` (the env's truncation cap
+        and its config together) and into the config ``reload_board`` rebuilds
+        from. Returns the effective value.
         """
         obs = getattr(self, "_last_obs_dict", None)
         effective = max(
             base_max_steps,
             _count_board_pins(obs) * 3 + _count_board_nets(obs) * 2,
         )
-        self._env_config = replace(self._env_config, max_steps=effective)
-        self.env.max_steps = effective
+        self._env_config = self._env_config.with_flat({"max_steps": effective})
+        self.env.set_max_steps(effective)
         return effective
 
     def reload_board(self, board_path: str, seed: Optional[int] = None) -> None:

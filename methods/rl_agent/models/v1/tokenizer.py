@@ -405,7 +405,6 @@ class BatchedStateTokenizer(nn.Module):
         max_seq_len: int = 10000,
         coord_encoding: str = "fourier",
         mlp_hidden: int = 128,
-        disable_slot_emb: bool = False,
         legacy_pad_layer_encoding: bool = False,
         legacy_net_encoding: bool = False,
         legacy_edge_encoding: bool = False,
@@ -416,6 +415,8 @@ class BatchedStateTokenizer(nn.Module):
         legacy_action_history: bool = False,
         obstacle_obs: bool = False,
         shape_obs: bool = False,
+        *,
+        disable_slot_emb: bool,
     ) -> None:
         super().__init__()
         if time_feature not in ("step_ratio", "log_remaining", "sin_remaining",

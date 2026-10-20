@@ -37,8 +37,8 @@ from pathlib import Path
 
 import pytest
 
-from pcb_world.engine import KiCadEngine
 from tests.helpers.pro_sidecar import materialize_pro_pair
+from tests.helpers.engine import open_engine
 
 BOARD_SIZE = 100.0
 PAD_SIZE = 1.0
@@ -139,21 +139,23 @@ def _xcross_board(tmp_path: Path,
 
 
 def _route_xcross(board_path: str, mode: int) -> dict:
-    e = KiCadEngine(board_path)
+    e = open_engine(board_path)
     try:
         def prep() -> None:
+            # No size setup: start_route imports width / clearance / via size
+            # from the start item's net class on every call.
             e.set_routing_mode(mode)
-            e.set_track_width(0)
-            e.reset_via_mode()
             e.clear_drc_cache()
 
         prep()
         ok1 = e.start_route(5.0, 5.0, 1)      # PNS layer 1 = F.Cu
+        sizes1 = e.get_route_sizes()
         e.move(95.0, 95.0)
         fin1 = e.finish()
 
         prep()
         ok2 = e.start_route(5.0, 95.0, 1)
+        sizes2 = e.get_route_sizes()
         e.move(95.0, 5.0)
         fin2 = e.finish()
 
@@ -168,6 +170,7 @@ def _route_xcross(board_path: str, mode: int) -> dict:
             "net2_ok": ok2 and fin2,
             "tracks": len(tracks),
             "track_widths": [t.width_mm for t in tracks],
+            "route_sizes": [sizes1, sizes2],
             "clearance_shorts": len(clearance_shorts),
             "violations": clearance_shorts,
         }
@@ -227,6 +230,12 @@ def test_pns_and_drc_agree_on_clearance(tmp_path: Path, mode_id: int,
         f"DRC disagreed on clearance.\n"
         + "\n".join(f"  {v}" for v in result["violations"])
     )
+
+    # The router itself must hold the declared net class values right after
+    # start_route (imported from the start item's net class, no setup call).
+    for sizes in result["route_sizes"]:
+        assert sizes["clearance"] == pytest.approx(clearance, abs=1e-6)
+        assert sizes["track_width"] == pytest.approx(trace_width, abs=1e-6)
 
     # Sanity-check every placed track uses the netclass trace_width (within a
     # tiny tolerance for internal-unit rounding). If PNS was using a different

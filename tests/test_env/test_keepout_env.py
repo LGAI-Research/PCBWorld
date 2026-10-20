@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from configs.loader.schema import EnvConfig
 from pcb_world.engine import engine_available
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -51,7 +52,7 @@ def env():
     _skip_if_unavailable()
     from pcb_world.core.env import PCBWorld
 
-    e = PCBWorld(board_path=str(BOARD_PATH), max_steps=60)
+    e = PCBWorld(str(BOARD_PATH), EnvConfig.with_overrides(max_steps=60))
     e.reset()
     yield e
     e.close()

@@ -31,16 +31,22 @@ PCBench/PCBs/<name>/processed.kicad_pcb   (public clone: KiCad 5 file format, no
    │  3. sort_prefix.py    PCBENCH_NEWDRC_OUT → PCBENCH_SORTED_OUT
    │     order = (pins, nets, components) ascending from final.json + the footprint count;
    │     folders copied as <NNNN>_<name>/ next to pcb_characteristics_exacad_sorted.csv
+   │  4. make_dsn_orp.py   PCBENCH_SORTED_OUT → PCBENCH_DSN_ROOT
+   │     the .dsn/.orp siblings the rule-based routers read: the engine's
+   │     engine/pcbnew_prep/make_dsn_orp_v3.py in the pcbnew interpreter, results in _results.json;
+   │     a board it cannot write exactly is a fail row (exit 3; on the full corpus 11, none in a
+   │     D3 eval set), and the chain stops only when the converter did not finish
    ▼
-exacad_sorted/   (consumed via configs/paths.yaml `pcbench_exacad`;
-                  split JSON: experiments/kdd/d3_dataset/build.py)
+exacad_sorted/       (consumed via configs/paths.yaml `pcbench_exacad`;
+                      split JSON: experiments/kdd/d3_dataset/build.py)
+exacad_sorted_dsn/   (configs/paths.yaml `pcbench_exacad_dsn`)
 ```
 
 ## Run
 
 ```bash
 export PCBWORLD_DATA_ROOT=/data/pcbworld     # your dataset root — everything lands under it
-bash tools/quickstart/prepare_pcbench.sh     # clone + all four steps, one command
+bash tools/quickstart/prepare_pcbench.sh     # clone + all five steps, one command
 ```
 
 [`prepare_pcbench.sh`](../../quickstart/prepare_pcbench.sh) clones PCBench (`main` @
@@ -68,9 +74,9 @@ shipped `d3` is that output, identical to the paper's set (UUIDs aside) but for 
 widths of 40 of the 679 guide boards, which predate these guards.
 
 `bash experiments/kdd/d3_dataset/run.sh --out /tmp/d3.json` rebuilds the split json from the
-CSV + layout, reproducing [d3.json](../../../configs/datasets/d3.json) up to two recorded
-manual edits: a zero-clearance autosave remnant dropped from `medium.train`, and the
-`medium.test` swap under the json's `_test_overrides` key.
+CSV + layout, reproducing [d3.json](../../../configs/datasets/d3.json) up to one recorded
+manual edit, the `medium.test` swap under the json's `_test_overrides` key (`dataset_dirs`
+comes out as the absolute corpus path; the shipped file spells it `${PCBWORLD_DATA_ROOT}/…`).
 
-Related: `engine/pcbnew_prep/` converts prepared boards to DSN/ORP for the rule-based
-baselines (it imports `pcbnew` directly, hence lives in the engine bundle).
+The DSN/ORP converter itself is in `engine/pcbnew_prep/` (it imports `pcbnew` directly, hence
+lives in the engine bundle); step 4 only runs it.

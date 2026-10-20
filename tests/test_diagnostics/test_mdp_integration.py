@@ -19,6 +19,7 @@ import pytest
 # Skip entire module if the C++ router build is absent — probed WITHOUT
 # importing the GPL module (import-hygiene gate).
 from pcb_world.engine import engine_available
+from tests.helpers.engine import open_engine
 
 HAS_KICAD = engine_available()
 
@@ -45,10 +46,9 @@ class TestPCBRenderer:
     """Test PCBRenderer with real KiCad engine."""
 
     def test_render_returns_array(self, board_path):
-        from pcb_world.engine.kicad_engine import KiCadEngine
         from pcb_world.rendering.renderer import PCBRenderer
 
-        engine = KiCadEngine(board_path)
+        engine = open_engine(board_path)
         renderer = PCBRenderer()
         try:
             frame = renderer.render(engine)
@@ -60,10 +60,9 @@ class TestPCBRenderer:
             renderer.close()
 
     def test_render_to_file(self, board_path, tmp_path):
-        from pcb_world.engine.kicad_engine import KiCadEngine
         from pcb_world.rendering.renderer import PCBRenderer
 
-        engine = KiCadEngine(board_path)
+        engine = open_engine(board_path)
         renderer = PCBRenderer()
         try:
             out_png = str(tmp_path / "test_render.png")
@@ -74,10 +73,9 @@ class TestPCBRenderer:
             renderer.close()
 
     def test_render_with_overlay(self, board_path):
-        from pcb_world.engine.kicad_engine import KiCadEngine
         from pcb_world.rendering.renderer import PCBRenderer
 
-        engine = KiCadEngine(board_path)
+        engine = open_engine(board_path)
         renderer = PCBRenderer()
         try:
             frame = renderer.render(engine, step_info={"Step": 1, "Tracks": 0})

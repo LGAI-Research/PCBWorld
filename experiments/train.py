@@ -31,7 +31,11 @@ TRAINERS = {
 
 
 def main(argv: list[str] | None = None) -> None:
-    ap = argparse.ArgumentParser(
+    repo_dir = str(Path(__file__).resolve().parents[1])  # configs.loader when run as a script
+    if repo_dir not in sys.path:
+        sys.path.insert(0, repo_dir)
+    from configs.loader.cli import StrictArgumentParser
+    ap = StrictArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("experiment", choices=sorted(TRAINERS),
                     help="which trainer to run")

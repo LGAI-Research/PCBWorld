@@ -31,7 +31,11 @@ FIGURES = {
 
 
 def main(argv: list[str] | None = None) -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    repo_dir = str(Path(__file__).resolve().parents[1])  # configs.loader when run as a script
+    if repo_dir not in sys.path:
+        sys.path.insert(0, repo_dir)
+    from configs.loader.cli import StrictArgumentParser
+    ap = StrictArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--figure", required=True, choices=[*sorted(FIGURES), "all"],
                     help="paper artifact to (re)generate")
     args, rest = ap.parse_known_args(argv)

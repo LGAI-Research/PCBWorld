@@ -14,6 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from pcb_world.engine.containers import RewardSnapshot  # noqa: E402
+from configs.loader.schema import EnvConfig  # noqa: E402
 from pcb_world.engine.drc import DRCUtils  # noqa: E402
 from pcb_world.core.reward import PotentialReward, RewardState  # noqa: E402
 
@@ -233,7 +234,7 @@ class _FakeViolation:
 
 
 def test_drchelper_groups_orphans_into_single_phantom_net():
-    helper = DRCUtils()
+    helper = DRCUtils(EnvConfig().drc_promoted_codes)
     helper.update([
         _FakeViolation(["NET1"]),
         _FakeViolation(["NET1", "NET2"]),  # multi-net: each gets +1
@@ -249,7 +250,7 @@ def test_drchelper_groups_orphans_into_single_phantom_net():
 
 
 def test_drchelper_all_orphans_single_phantom():
-    helper = DRCUtils()
+    helper = DRCUtils(EnvConfig().drc_promoted_codes)
     helper.update([_FakeViolation([]) for _ in range(3)])
     counts = helper.get_violation_counts_by_net()
     assert counts == {"<orphan>": 3}

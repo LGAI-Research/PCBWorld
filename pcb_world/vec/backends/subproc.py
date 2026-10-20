@@ -26,6 +26,7 @@ import cloudpickle
 import numpy as np
 
 from pcb_world import diag
+from pcb_world.vec import get_mp_context
 from pcb_world.engine.router_client import EngineServerCrashed
 from pcb_world.vec.backends.base import VecBackend
 
@@ -230,7 +231,7 @@ class SubprocDecoderVecEnv(VecBackend):
             forkserver_available = "forkserver" in mp.get_all_start_methods()
             start_method = "forkserver" if forkserver_available else "spawn"
 
-        self._ctx = mp.get_context(start_method)
+        self._ctx = get_mp_context(start_method)
         self.remotes: list[mp.connection.Connection] = []
         self.work_remotes: list[mp.connection.Connection] = []
         self.processes: list[mp.Process] = []

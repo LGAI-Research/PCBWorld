@@ -34,12 +34,14 @@ from __future__ import annotations
 import copy
 import os
 import re
+from dataclasses import replace
 from types import SimpleNamespace
 
 import gymnasium as gym
 import numpy as np
 import pytest
 
+from configs.loader.schema import EnvConfig
 from pcb_world.engine import engine_available
 import torch
 from gymnasium import spaces
@@ -53,7 +55,9 @@ from pcb_world.core.masking import (
     ACT_NET_SELECT,
     ACT_START_ROUTE,
 )
+from tests.helpers.dist_inputs import permissive_dist
 from tests.helpers.reference_tokenizer import StateTokenizer
+from methods.rl_agent.policy.agent import gather_dist
 from methods.rl_agent.wrappers.adapter import (
     KiCadRLWrapper,
     _cand_mm_list_from_obs,
@@ -91,7 +95,7 @@ def real_obs_states() -> dict[str, dict]:
     _skip_if_no_env()
     from pcb_world.core.env import PCBWorld
 
-    env = PCBWorld(board_path=_FIXTURE_BOARD, max_steps=20)
+    env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
     try:
         wrapper = KiCadRLWrapper(env)
 
@@ -135,6 +139,7 @@ class _StubEnv(gym.Env):
     """
 
     metadata = {"render_modes": []}
+    net_reselect = False   # PCBWorld property the wrapper's net_valid_mask reads
 
     def __init__(
         self, obs: dict, action_mask: np.ndarray | None = None,
@@ -509,7 +514,7 @@ class TestEndToEnd:
         _skip_if_no_env()
         from pcb_world.core.env import PCBWorld
 
-        env = PCBWorld(board_path=_FIXTURE_BOARD, max_steps=20)
+        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
         try:
             wrapper = KiCadRLWrapper(env)
             obs, info = wrapper.reset()
@@ -530,18 +535,22 @@ class TestEndToEnd:
         from pcb_world.core.env import PCBWorld
         from methods.rl_agent.models.v1.net import KiCadRLModel
 
-        env = PCBWorld(board_path=_FIXTURE_BOARD, max_steps=20)
+        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
         try:
             wrapper = KiCadRLWrapper(env)
             policy = KiCadRLModel(
+                disable_slot_emb=False,
+                policy_net_select=False,
                 d_model=32, n_heads=2, n_layers=2, d_ff=64,
             )
             policy.eval()
 
             obs, _ = wrapper.reset()
             for _ in range(3):
-                mask = torch.from_numpy(wrapper.action_masks()).unsqueeze(0)
-                actions, _log_probs = policy.act([obs], action_masks=mask)
+                dist = gather_dist(
+                    [wrapper], [0], policy_net_select=False, obs_list=[obs],
+                ).to("cpu")
+                actions, _log_probs = policy.act([obs], dist=dist)
                 assert actions.shape == (1, 3)
                 obs, _reward, terminated, truncated, _info = wrapper.step(
                     actions[0],
@@ -708,6 +717,8 @@ class TestStartPointMaskingPolicyIntegration:
 
         obs = real_obs_states["routing"]
         policy = KiCadRLModel(
+            disable_slot_emb=False,
+            policy_net_select=False,
             d_model=32, n_heads=2, n_layers=2, d_ff=64,
         )
         policy.eval()
@@ -716,24 +727,22 @@ class TestStartPointMaskingPolicyIntegration:
         at_mask = np.zeros(7, dtype=bool)
         at_mask[ACT_MAKE_LINE] = True
         at_mask[ACT_MAKE_VIA] = True
-        action_mask = torch.from_numpy(at_mask).unsqueeze(0)  # (1, 7)
+        dist = replace(
+            permissive_dist(policy, [obs]),
+            action=torch.from_numpy(at_mask).unsqueeze(0),  # (1, 7)
+        )
 
         # Baseline: no pointer masking — record the argmax cand.
-        actions_unmasked, _ = policy.act(
-            [obs], action_masks=action_mask, deterministic=True,
-        )
+        actions_unmasked, _ = policy.act([obs], dist=dist, deterministic=True)
         baseline_ptr = int(actions_unmasked[0, 1].item())
         assert baseline_ptr >= 0, (
             f"expected a valid cand index, got {baseline_ptr}"
         )
 
         # With pointer_masks: block that cand, the policy must pick another.
-        ptr_masks = torch.tensor([baseline_ptr], dtype=torch.long)
+        ptr_masks = torch.tensor([[baseline_ptr]], dtype=torch.long)
         actions_masked, _ = policy.act(
-            [obs],
-            action_masks=action_mask,
-            deterministic=True,
-            pointer_masks=ptr_masks,
+            [obs], dist=replace(dist, pointer=ptr_masks), deterministic=True,
         )
         masked_ptr = int(actions_masked[0, 1].item())
         assert masked_ptr != baseline_ptr, (
@@ -750,6 +759,8 @@ class TestStartPointMaskingPolicyIntegration:
 
         obs = real_obs_states["routing"]
         policy = KiCadRLModel(
+            disable_slot_emb=False,
+            policy_net_select=False,
             d_model=32, n_heads=2, n_layers=2, d_ff=64,
         )
         policy.eval()
@@ -758,13 +769,11 @@ class TestStartPointMaskingPolicyIntegration:
         action = torch.tensor(
             [[ACT_MAKE_LINE, 0, 2]], dtype=torch.long,
         )
-        action_mask = torch.ones(1, 7, dtype=torch.bool)
         # Block cand idx 0.
-        ptr_masks = torch.tensor([0], dtype=torch.long)
+        ptr_masks = torch.tensor([[0]], dtype=torch.long)
         log_prob, _entropy, _value = policy.evaluate_actions_and_value(
             [obs], action,
-            action_masks=action_mask,
-            pointer_masks=ptr_masks,
+            dist=replace(permissive_dist(policy, [obs]), pointer=ptr_masks),
         )
         # log_prob(masked action) = -inf. Note: -inf * 0 → NaN is NOT
         # what we'd want for the teacher-forced loss, but the collector
@@ -843,21 +852,19 @@ class TestPolicyNetSelectLogProb:
         n_nets = len(_sorted_net_codes_from_obs(obs))
         assert n_nets >= 2, "fixture must expose >=2 nets"
         policy = KiCadRLModel(
+            disable_slot_emb=False,
             d_model=32, n_heads=2, n_layers=2, d_ff=64,
             use_critic=True, policy_net_select=True,
         )
         policy.eval()
         am = torch.zeros(1, 7, dtype=torch.bool)
         am[0, ACT_NET_SELECT] = True
-        mode_mask = torch.tensor([[True, True, True]], dtype=torch.bool)
         # Mask every net except the last one.
         nvm = torch.zeros(1, n_nets, dtype=torch.bool)
         nvm[0, -1] = True
         acts, lp, _v = policy.act_and_value(
-            [obs], action_masks=am,
-            mode_mask=mode_mask,
-            net_valid_mask=nvm,
-            allow_net_select_lp=True,
+            [obs],
+            dist=replace(permissive_dist(policy, [obs]), action=am, net_valid=nvm),
             deterministic=True,
         )
         assert acts[0, 0].item() == ACT_NET_SELECT
@@ -884,7 +891,7 @@ class TestDirectionalCandidatesRegression:
         _skip_if_no_env()
         from pcb_world.core.env import PCBWorld
 
-        env = PCBWorld(board_path=_FIXTURE_BOARD, max_steps=20)
+        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
         try:
             wrapper = KiCadRLWrapper(env, directional_candidates="grid10")
             wrapper.reset()
@@ -938,7 +945,7 @@ class TestDirectionalCandidatesRegression:
             collect_raw_candidates,
         )
 
-        env = PCBWorld(board_path=_FIXTURE_BOARD, max_steps=20)
+        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
         try:
             wrapper = KiCadRLWrapper(env, directional_candidates="grid10")
             wrapper.reset()
@@ -986,7 +993,7 @@ class TestDirectionalCandidatesRegression:
         _skip_if_no_env()
         from pcb_world.core.env import PCBWorld
 
-        env = PCBWorld(board_path=_FIXTURE_BOARD, max_steps=20)
+        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
         try:
             wrapper = KiCadRLWrapper(env, directional_candidates="multi_resolution")
             wrapper.reset()
@@ -1020,7 +1027,7 @@ class TestDirectionalCandidatesRegression:
         from pcb_world.vec.candidate_pool import CTYPE_DIRECTIONAL
 
         for knob in (True, False):
-            env = PCBWorld(board_path=_FIXTURE_BOARD, max_steps=20)
+            env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
             try:
                 wrapper = KiCadRLWrapper(
                     env, directional_candidates="mres8", offboard_mask=knob,
@@ -1063,7 +1070,7 @@ class TestDirectionalCandidatesRegression:
         _skip_if_no_env()
         from pcb_world.core.env import PCBWorld
 
-        env = PCBWorld(board_path=_FIXTURE_BOARD, max_steps=20)
+        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
         try:
             wrapper = KiCadRLWrapper(env, directional_candidates="grid10")
             obs, _ = wrapper.reset()
@@ -1089,7 +1096,7 @@ class TestConnectivityFilterIntegration:
         _skip_if_no_env()
         from pcb_world.core.env import PCBWorld
 
-        env = PCBWorld(board_path=_FIXTURE_BOARD, max_steps=20)
+        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
         try:
             wrapper = KiCadRLWrapper(env)
             obs, _ = wrapper.reset()
@@ -1104,7 +1111,7 @@ class TestConnectivityFilterIntegration:
         _skip_if_no_env()
         from pcb_world.core.env import PCBWorld
 
-        env = PCBWorld(board_path=_FIXTURE_BOARD, max_steps=20)
+        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
         try:
             wrapper = KiCadRLWrapper(env)
             wrapper.reset()
@@ -1127,7 +1134,7 @@ class TestConnectivityFilterIntegration:
         _skip_if_no_env()
         from pcb_world.core.env import PCBWorld
 
-        env = PCBWorld(board_path=_FIXTURE_BOARD, max_steps=20)
+        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
         try:
             wrapper = KiCadRLWrapper(env, connectivity_filter=False)
             wrapper.reset()

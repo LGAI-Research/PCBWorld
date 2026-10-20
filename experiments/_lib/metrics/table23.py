@@ -5,8 +5,7 @@ For each (grid, method in {Ours/PPO, Jumanji A2C, SABLE}) reports
   clean_pass(@5) | potential | routability | WL
 as ``mean ± std`` across seeds (``†`` = single seed).
 
-NOTE: there is no D1 ``freerouting`` cell on disk, so the Freerouting column from
-the paper draft is omitted here (and flagged in the output).
+There is no D1 ``freerouting`` cell, so the table has no Freerouting column.
 
 Read-only: consumes per_rollout.csv; writes only under paper_outputs/.
 """
@@ -43,7 +42,7 @@ def main(argv=None) -> None:  # argv unused; uniform signature for draw_figure d
                         [C.fmt_pm(a[m][0], a[m][1], nd=ND[m]) for m in METRICS])
     C.write_table("table23_d1_gridsweep", header=HEADER, rows=rows,
                   title="Table 23 -- D1 grid sweep (best@5, mean ± std over seeds). "
-                        "Freerouting column omitted: no D1 freerouting cell on disk.")
+                        "No Freerouting column (no D1 freerouting cell).")
     print("[table23] rows:")
     for r in rows:
         print("   ", " | ".join(r))

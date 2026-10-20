@@ -32,8 +32,8 @@ datasets:
   pcbench_exacad:   {sub: pcbench/exacad_sorted}
   # DSN/ORP mirror of pcbench_exacad consumed by the rule-based runners.
   pcbench_exacad_dsn: {sub: pcbench/exacad_sorted_dsn}
-  # methods/llm_agent/rollout/plan_only.py (LLM response summaries replayed by the
-  # plan-only driver; the dirs inside keep their legacy apiseq_* names)
+  # Recorded plan-only LLM responses, kept as a data-layout record (user decision
+  # 2026-10-17); the dirs inside keep their legacy apiseq_* names
   plan_only_responses: {sub: pcbworld_baseline_summaries}
   # Grid-parameterized synth_1L v02 family (rule-based baselines; the runner's
   # --grid flag picks the pair via methods/baselines/rule_based/_lib/datasets.py).
@@ -49,9 +49,8 @@ datasets:
   synth_1L_grid500_5net_v02_dsn:  {sub: synthetic/synth_1L_grid500_5net_v02_dsn}
   # Fixed Connector-v2 instance arrays pinned by tests/test_d1_grid_scenarios_hybrid.py.
   d1_connector_arrays: {sub: d1/connector_arrays_v15}
-  # Read-only figure/table input trees + tool checkouts under the data root
+  # Read-only figure/table input trees under the data root
   # (each consumer keeps its own env-var override):
   kdd_bench:          {sub: KDD_benchmark}            # experiments/kdd figure scripts
   kdd_gym_summaries:  {sub: kdd_gym_summaries}        # experiments/kdd/table2/plot_gpt_levels.py
   wandb_curve_audit:  {sub: wandb_curve_audit}        # appendix plot_validation_curves.py
-  krt_tool:           {sub: tools/KiCadRoutingTools}  # KRT checkout fallback (external/KiCadRoutingTools wins)

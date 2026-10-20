@@ -480,15 +480,19 @@ def test_clean_pass_rate_counts_only_zero_drv_completions() -> None:
     assert agg["clean_pass_rate"] == pytest.approx(2 / 5)
 
 
-def test_clean_pass_excludes_failed_samples_from_denominator() -> None:
-    """``error`` samples don't pad the denominator — same as success_rate."""
+def test_failed_samples_count_in_the_rate_denominator() -> None:
+    """An ``error`` sample is a failed board: it passes nothing, so it is in the
+    rates' denominator (n_fail), while the means cover the scored boards only."""
     samples = [
         _sample(success=True, drv_err_prom=0, angle_count=0),
         {"board": "x", "pro": None, "error": "boom"},  # failed
     ]
     agg = aggregate(samples)
-    assert agg["n_ok"] == 1
-    assert agg["clean_pass_rate"] == pytest.approx(1.0)
+    assert (agg["n_total"], agg["n_ok"], agg["n_fail"]) == (2, 1, 1)
+    assert agg["success_rate"] == pytest.approx(0.5)
+    assert agg["clean_pass_rate"] == pytest.approx(0.5)
+    assert agg["mean"]["routability"] == pytest.approx(0.5)     # the failure routes nothing
+    assert agg["mean"]["wirelength_mm"] == pytest.approx(1.0)   # scored boards only
 
 
 def test_clean_pass_legacy_sample_treated_as_not_clean() -> None:
@@ -499,10 +503,37 @@ def test_clean_pass_legacy_sample_treated_as_not_clean() -> None:
     assert agg["clean_pass_rate"] == pytest.approx(0.0)
 
 
-def test_clean_pass_nan_when_all_samples_failed() -> None:
-    """Empty ok set → NaN (matches success_rate convention)."""
-    import math
+def test_rates_are_zero_when_all_samples_failed() -> None:
+    """Every board failed → the rates are 0 (a failed board passes nothing), not NaN."""
     samples = [{"board": "x", "pro": None, "error": "boom"}]
     agg = aggregate(samples)
-    assert math.isnan(agg["clean_pass_rate"])
-    assert math.isnan(agg["success_rate"])
+    assert agg["clean_pass_rate"] == 0.0
+    assert agg["success_rate"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# resolve_check_angle — the scoring angle every RL scorer derives
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("corner", [45, 90])
+def test_resolve_check_angle_is_the_env_corner_mode(corner):
+    from eval.eval_utils import resolve_check_angle
+
+    assert resolve_check_angle(corner, None) == corner
+    assert resolve_check_angle(corner, corner) == corner
+
+
+def test_resolve_check_angle_rejects_a_differing_explicit_angle():
+    from eval.eval_utils import resolve_check_angle
+
+    with pytest.raises(ValueError, match="--check-angle 45 differs from the env corner_mode 90"):
+        resolve_check_angle(90, 45)
+
+
+def test_resolve_check_angle_error_names_the_given_knob():
+    """A caller whose angle knob is not ``--check-angle`` gets that knob in the error."""
+    from eval.eval_utils import resolve_check_angle
+
+    with pytest.raises(ValueError, match=r"^COLLECT_CHECK_ANGLE 45 differs") as exc:
+        resolve_check_angle(90, 45, flag="COLLECT_CHECK_ANGLE")
+    assert "--check-angle" not in str(exc.value)

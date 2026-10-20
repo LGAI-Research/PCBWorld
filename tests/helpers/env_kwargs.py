@@ -1,10 +1,9 @@
-"""Complete env-contract kwarg surfaces for tests.
+"""Complete RL factory kwargs for tests.
 
-The factories have no signature defaults for env-contract knobs (see
-``methods.rl_agent.wrappers.factory._REQ``): a partial call raises instead of
-silently filling values in, which is what let five knobs drift between training
-and validation for months. Tests therefore build the whole surface and override
-only what they exercise.
+``make_decoder_env`` / ``make_decoder_env_pool`` take the whole
+:class:`~configs.loader.schema.RLEnvConfig` plus the per-call ``seed`` /
+``policy_net_select`` — none of them has a default. Tests build the YAML config
+and override only what they exercise.
 
 Mirrored by the ``pool_kwargs`` fixture in ``tests/conftest.py`` for tests that
 prefer fixture injection; both delegate here so there is one definition.
@@ -16,12 +15,10 @@ from typing import Any
 
 
 def full_env_kwargs(**overrides: Any) -> dict[str, Any]:
-    """``to_pool_kwargs()`` plus the two knobs both train and eval pass."""
+    """``env_config`` (``RLEnvConfig()`` with ``overrides`` applied — keys of
+    ``RLEnvConfig.to_record``) plus ``seed`` (0) / ``policy_net_select`` (False)."""
     from configs.loader.schema import RLEnvConfig
 
-    return {
-        **RLEnvConfig().to_pool_kwargs(),
-        "seed": 0,
-        "policy_net_select": False,
-        **overrides,
-    }
+    per_call = {"seed": 0, "policy_net_select": False}
+    per_call.update({k: overrides.pop(k) for k in list(overrides) if k in per_call})
+    return {"env_config": RLEnvConfig().with_flat(overrides), **per_call}

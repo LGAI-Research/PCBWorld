@@ -16,6 +16,7 @@ import os
 
 import pytest
 
+from configs.loader.schema import EnvConfig, RewardOverrides
 from pcb_world.core.env import PCBWorld
 from pcb_world.core.action_schema import (
     ACT_MAKE_LINE,
@@ -64,8 +65,11 @@ def _run_script(output_best_board: bool):
     wirelength_penalty>0 (the default drc_only_dense config has it at 0) so the
     partial NET2 track genuinely lowers Φ below the post-NET1 peak.
     """
-    env = PCBWorld(board_path=BOARD, max_steps=11, wirelength_penalty=0.002,
-                   output_best_board=output_best_board)
+    env = PCBWorld(
+        BOARD,
+        EnvConfig.with_overrides(max_steps=11, reward=RewardOverrides(wirelength_penalty=0.002)),
+        output_best_board=output_best_board,
+    )
     env.reset()
     _route_net1(env)
     _, _, _, truncated, info = _wander_net2(env)
@@ -98,8 +102,11 @@ def test_ratsnest_patience_truncates_on_stall():
     changing. With no connection ever made, the setup steps alone stall it: the
     guard fires within patience+1 steps."""
     patience = 2
-    env = PCBWorld(board_path=BOARD, max_steps=60,
-                   early_stop_ratsnest_patience=patience)
+    env = PCBWorld(
+        BOARD,
+        EnvConfig.with_overrides(max_steps=60),
+        early_stop_ratsnest_patience=patience,
+    )
     env.reset()
     truncated = False
     steps = 0
@@ -125,8 +132,12 @@ def test_reset_rearms_episode_tracking():
     with best-Φ / early-stop silently disabled — mcts_compare reuses one env for
     the MCTS arm and the plain arm, so the head-to-head would be skewed.
     """
-    env = PCBWorld(board_path=BOARD, max_steps=60,
-                   early_stop_ratsnest_patience=3, output_best_board=True)
+    env = PCBWorld(
+        BOARD,
+        EnvConfig.with_overrides(max_steps=60),
+        early_stop_ratsnest_patience=3,
+        output_best_board=True,
+    )
     env.reset()
     env._track_best_active = False                       # what a search leaves behind
     env.reset()
@@ -138,7 +149,7 @@ def test_reset_rearms_episode_tracking():
 def test_features_off_by_default():
     """Default construction leaves both features inert (no truncation from the
     guard, no best-board bookkeeping)."""
-    env = PCBWorld(board_path=BOARD, max_steps=60)
+    env = PCBWorld(BOARD, EnvConfig.with_overrides(max_steps=60))
     env.reset()
     assert env._ratsnest_patience == 0
     assert env._output_best_board is False

@@ -15,18 +15,20 @@ Usage::
 """
 from __future__ import annotations
 
-import argparse
 import logging
+from typing import Any
 
+from configs.loader.cli import REMOVED_TRAIN_OPTIONS, StrictArgumentParser
 from methods.rl_agent.training.args import add_shared_args
 
 
-def build_arg_parser() -> argparse.ArgumentParser:
+def build_arg_parser() -> StrictArgumentParser:
     from configs.loader.schema import PPOConfig
 
     _PPO = PPOConfig()
-    p = argparse.ArgumentParser(
+    p = StrictArgumentParser(
         description="PPO training for the decoder-only PCB routing policy",
+        removed=(*REMOVED_TRAIN_OPTIONS, "--finetune-lr", "--finetune-clip-eps"),
     )
     add_shared_args(
         p,
@@ -57,15 +59,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         "from the saved iteration counter.")
 
     p.add_argument("--dump-config-only", action="store_true", default=False,
-                   help="Write <save-dir>/config_resolved.yaml (+ sorted stdout "
-                        "echo) and exit 0 without building the env/model/engine. "
-                        "Batch preflight enabler — works without a GPU or "
-                        "kicad_rl_router (see tools/experiments/preflight_diff.py).")
+                   help="Resolve the config, print its provenance table, write "
+                        "<save-dir>/run_record.yaml (a resume: run_record.resume_iter<N>.yaml; "
+                        "no board list) and exit 0 without "
+                        "building the env/model/engine. Batch preflight enabler — works "
+                        "without a GPU or kicad_rl_router (see "
+                        "tools/experiments/preflight_diff.py).")
 
-    p.add_argument("--disable-slot-emb", action="store_true",
-                   help="Ablation: zero out the slot embedding contribution "
-                        "(no per-net fingerprint added to token embeddings). "
-                        "embed_ln is still applied.")
     p.add_argument("--same-net-bias", action="store_true", default=False,
                    help="Add per-head learnable additive logit bias for "
                         "same-net token pairs (alpha_h * 1[slot_i == slot_j]). "
@@ -79,6 +79,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         "fp32. A/B-validated: equivalent convergence, ~2x faster "
                         "update, much lower peak VRAM. Wired via "
                         "KiCadRLModel.configure_speed.")
+    p.add_argument("--no-bf16", dest="bf16", action="store_false",
+                   help="Turn off --bf16 (off by default; a --resume starts from the "
+                        "checkpoint's value).")
     p.add_argument("--compile-regions", default="",
                    help="Comma list of torch.compile regions {stack,decode,heads} "
                         "or alias 'efficient' (=stack,decode,heads — the adopted "
@@ -113,43 +116,31 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _apply_finetune_preset(args) -> None:
-    """With --init-ckpt, the optimizer follows the fine-tune preset (finetune_lr / finetune_clip_eps)
-    unless the flag was given explicitly; entropy_coef is shared with from-scratch runs."""
-    import sys
-    if not getattr(args, "init_ckpt", None):
-        return
-    given = {a.split("=", 1)[0] for a in sys.argv[1:] if a.startswith("--")}
-    applied = []
-    if "--lr" not in given:
-        args.lr = args.finetune_lr; applied.append(f"lr={args.lr}")
-    if "--clip-eps" not in given:
-        args.clip_eps = args.finetune_clip_eps; applied.append(f"clip_eps={args.clip_eps}")
-    if applied:
-        print("[train] fine-tune preset (--init-ckpt): " + ", ".join(applied) + "  (pass the flag to override)")
+def parse_train_args(argv: list[str] | None = None, *, code: Any = None) -> Any:
+    """The PPO trainer command line (``None`` = ``sys.argv[1:]``) resolved into the run's frozen
+    config (:func:`methods.rl_agent.training.args.resolve_train_args`). With ``--init-ckpt`` the
+    optimizer starts from the fine-tune mode defaults (``rl_train.finetune``) unless ``--lr`` /
+    ``--clip-eps`` is given. Everything that builds trainer args from a command line calls this,
+    so they all record the same config."""
+    from configs.loader.schema import PPOConfig
+    from methods.rl_agent.training.args import resolve_train_args
+
+    return resolve_train_args(build_arg_parser(), PPOConfig(), argv, code=code)
 
 
 def main() -> None:
-    args = build_arg_parser().parse_args()
+    run = parse_train_args()
     logging.basicConfig(level=logging.WARNING)
-    _apply_finetune_preset(args)
+    if run.dump_config_only:
+        import os
 
-    # Resolved-config provenance dump: BEFORE any env/model/engine build so the
-    # file survives a crash. vars(args) is the same dict ckpts store as
-    # payload["args"] (RLTrainer._train_ckpt_payload) — the two cannot diverge.
-    from methods._shared.config_dump import (
-        dump_resolved_config,
-        resume_start_iter,
-    )
-
-    start_iter = resume_start_iter(args.resume) if args.resume else None
-    dump_resolved_config(vars(args), args.save_dir, start_iter=start_iter)
-    if args.dump_config_only:
+        from configs.loader.record import run_record_filename, write_run_record
+        write_run_record(os.path.join(run.save_dir, run_record_filename(run)), run, boards=None)
         return
 
     from methods.rl_agent.training.loop import PPOTrainer
 
-    PPOTrainer(args).fit()
+    PPOTrainer(run).fit()
 
 
 if __name__ == "__main__":

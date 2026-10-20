@@ -37,14 +37,11 @@ N_STEPS = 30
 
 def _scripted_rollout(obs_format: str):
     """Deterministic rollout; returns per-step records + raw obs list."""
-    # The factory requires the whole env-contract surface (no signature
-    # defaults) — build it from the schema and override what this test varies.
     from configs.loader.schema import RLEnvConfig
 
     env = make_decoder_env(
-        BOARD_PATH,
-        **{**RLEnvConfig().to_pool_kwargs(), "max_steps": 50, "seed": 123,
-           "policy_net_select": True, "obs_format": obs_format},
+        BOARD_PATH, RLEnvConfig().with_flat({"max_steps": 50, "obs_format": obs_format}),
+        seed=123, policy_net_select=True,
     )
     rng = np.random.default_rng(7)
     obs, _ = env.reset()
@@ -106,7 +103,7 @@ class TestIndexedObsEndToEnd:
     def test_tokenizer_bit_identical_on_trajectory(self, rollout_pair):
         (_, _, _, raw_j), (_, _, _, raw_i) = rollout_pair
         torch.manual_seed(0)
-        tok = BatchedStateTokenizer(d_model=64, n_freq=8)
+        tok = BatchedStateTokenizer(disable_slot_emb=False, d_model=64, n_freq=8)
         tok.eval()
         w = torch.randn(16, 64)
         with torch.no_grad():

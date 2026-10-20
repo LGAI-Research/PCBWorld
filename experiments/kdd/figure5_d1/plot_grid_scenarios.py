@@ -522,7 +522,8 @@ def panel_output_path(output: Path, grid_size: int) -> Path:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    from configs.loader.cli import StrictArgumentParser
+    parser = StrictArgumentParser(description=__doc__)
     parser.add_argument("--array-root", type=Path, default=DEFAULT_ARRAY_ROOT)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--board-index", type=int, default=DEFAULT_BOARD_INDEX)

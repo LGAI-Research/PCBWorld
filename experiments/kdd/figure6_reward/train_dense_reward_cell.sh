@@ -80,7 +80,7 @@ cmd=(
   --board tests/fixtures/simple_routing_board.kicad_pcb
   --boards-order per_env_epoch
   --boards-json "$SPLIT_JSON"
-  --use-yaml-drc-fallback
+  --rules-source board_or_yaml
   --drc-config-path "$DRC_CONFIG_PATH"
   --boards-difficulty easy
   --boards-split train
@@ -121,6 +121,7 @@ cmd=(
   --save-dir "${OUTPUT_ROOT}/checkpoints"
   --save-freq "$SAVE_FREQ"
   "${PAPER_ENV_FLAGS[@]}"
+  "${PAPER_DIRECTIONAL_FLAGS[@]}"
   "${PAPER_PPO_FLAGS[@]}"
   "${PUBLIC_WANDB_ARGS[@]}"
 )

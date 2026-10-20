@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Fetch and PIN the three external router baselines to the versions used for
-# the paper's runs. Idempotent: re-running verifies pins instead of re-cloning.
+# Fetch and PIN the external router baselines (OrthoRoute: KDD-era record only). Idempotent: re-running
+# verifies pins instead of re-cloning.
 #
 #   bash tools/setup/fetch_baselines.sh
 #   export KRT_ROOT="$PWD/external/KiCadRoutingTools"
@@ -8,9 +8,10 @@
 # Pins:
 #   Freerouting  v2.1.0 release jar (sha256-verified) -> external/freerouting/
 #   OrthoRoute   git submodule external/OrthoRoute, pinned commit f45dc68
-#   KRT          commit d9557ad1 -> external/KiCadRoutingTools (route.py defaults
-#                match the paper's Table 18 — via_cost 50, turn_cost 1000,
-#                via_proximity_cost 10, direction_preference_cost 50)
+#   KRT          commit 561f158 -> external/KiCadRoutingTools: the KRT the KDD and CADET
+#                papers used (upstream main, 2026-04-04). The rule-based runner still passes
+#                the routing hyperparameters explicitly (KRT_PAPER_ARGS in
+#                run_rule_based_routers.py).
 
 set -euo pipefail
 cd "$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
@@ -19,7 +20,7 @@ FREEROUTING_URL="https://github.com/freerouting/freerouting/releases/download/v2
 FREEROUTING_SHA256="2c07d58f75dac03782664081e7a58b41c25400d871a9fcf166a2ea6fe60d5def"
 ORTHOROUTE_COMMIT="f45dc68"
 KRT_REPO="https://github.com/drandyhaas/KiCadRoutingTools"
-KRT_COMMIT="d9557ad10e8fa51fcf641749ae1cc9dca66e9648"
+KRT_COMMIT="561f1584577ea86d99e223ab27a2cd1cdbfa8bb3"
 
 # -- Freerouting jar ---------------------------------------------------------
 mkdir -p external/freerouting
@@ -29,7 +30,7 @@ if [[ ! -f "$jar" ]]; then
 fi
 echo "$FREEROUTING_SHA256  $jar" | sha256sum -c -
 
-# -- OrthoRoute (git submodule, recorded commit == paper commit) -------------
+# -- OrthoRoute (git submodule; the pinned commit does not rerun the KDD logs) --
 git submodule update --init external/OrthoRoute
 got=$(git -C external/OrthoRoute rev-parse --short HEAD)
 if [[ "$got" != "$ORTHOROUTE_COMMIT"* && "$ORTHOROUTE_COMMIT" != "$got"* ]]; then
@@ -50,6 +51,5 @@ cat <<'EOF'
 
 Done. Next steps (see methods/baselines/rule_based/README.md):
   pip install -e methods/baselines/rule_based/krt
-  pip install -e external/OrthoRoute
   export KRT_ROOT="$PWD/external/KiCadRoutingTools"
 EOF

@@ -7,7 +7,7 @@ must be self-sufficient:
     ``<stem>.kicad_pro`` sibling (or an explicit ``project_path``);
   * a pro-less board is refused unless the caller passes
     ``allow_default_rules=True`` (the env sets it for its
-    ``use_yaml_drc_fallback`` opt-in, which substitutes YAML rules);
+    ``rules_source="board_or_yaml"``, which substitutes YAML rules);
   * legacy boards (KiCad 5 era, rules embedded in the pcb body) are
     refused unconditionally — ``load_and_save_via_engine`` is the
     one-shot conversion tool (its own round-trip contract is pinned by
@@ -31,7 +31,9 @@ sys.path.insert(0, str(PROJECT_ROOT / "build_rl" / "pcbnew" / "python" / "rl"))
 
 pytest.importorskip("kicad_rl_router")
 
+from configs.loader.schema import EnvConfig
 from pcb_world.engine.kicad_engine import KiCadEngine  # noqa: E402
+from tests.helpers.engine import open_engine
 
 FIXTURES = PROJECT_ROOT / "tests" / "fixtures"
 MODERN_PAIR = FIXTURES / "simple_routing_board.kicad_pcb"
@@ -55,7 +57,7 @@ def _close(engine: KiCadEngine | None) -> None:
 def test_pro_pair_loads_with_project_rules():
     engine = None
     try:
-        engine = KiCadEngine(str(MODERN_PAIR))
+        engine = open_engine(str(MODERN_PAIR))
         assert engine.was_project_loaded_from_file()
         assert not engine.was_legacy_design_settings_loaded()
     finally:
@@ -64,14 +66,17 @@ def test_pro_pair_loads_with_project_rules():
 
 def test_missing_pro_is_refused(orphan_pcb: Path):
     with pytest.raises(RuntimeError, match="project file was not loaded"):
-        KiCadEngine(str(orphan_pcb))
+        open_engine(str(orphan_pcb))
     gc.collect()
 
 
 def test_missing_pro_allowed_with_default_rules_optin(orphan_pcb: Path):
     engine = None
     try:
-        engine = KiCadEngine(str(orphan_pcb), allow_default_rules=True)
+        engine = open_engine(
+            str(orphan_pcb),
+            allow_default_rules=True,
+        )
         assert not engine.was_project_loaded_from_file()
     finally:
         _close(engine)
@@ -79,11 +84,11 @@ def test_missing_pro_allowed_with_default_rules_optin(orphan_pcb: Path):
 
 def test_legacy_board_is_refused_even_with_optin():
     with pytest.raises(RuntimeError, match="legacy board"):
-        KiCadEngine(str(LEGACY_PCB))
+        open_engine(str(LEGACY_PCB))
     gc.collect()
     # ``allow_default_rules`` must NOT widen the legacy refusal.
     with pytest.raises(RuntimeError, match="legacy board"):
-        KiCadEngine(str(LEGACY_PCB), allow_default_rules=True)
+        open_engine(str(LEGACY_PCB), allow_default_rules=True)
     gc.collect()
 
 
@@ -91,10 +96,10 @@ def test_refused_board_leaves_no_live_router(orphan_pcb: Path):
     """A refused construction must not trip the one-live-router guard for
     the next (valid) construction — close() runs before the raise."""
     with pytest.raises(RuntimeError):
-        KiCadEngine(str(orphan_pcb))
+        open_engine(str(orphan_pcb))
     engine = None
     try:
-        engine = KiCadEngine(str(MODERN_PAIR))
+        engine = open_engine(str(MODERN_PAIR))
         assert engine.was_project_loaded_from_file()
     finally:
         _close(engine)
@@ -102,20 +107,19 @@ def test_refused_board_leaves_no_live_router(orphan_pcb: Path):
 
 def test_env_orphan_board_strict_and_optin(orphan_pcb: Path):
     """PCBWorld inherits the contract: strict raise by default, loads under
-    the use_yaml_drc_fallback opt-in (which substitutes the YAML rules)."""
+    ``rules_source="board_or_yaml"`` (which substitutes the YAML rules)."""
     from pcb_world.core.env import PCBWorld
 
     with pytest.raises(RuntimeError, match="project file was not loaded"):
-        PCBWorld(board_path=str(orphan_pcb), max_steps=1)
+        PCBWorld(str(orphan_pcb), EnvConfig.with_overrides(max_steps=1))
     gc.collect()
 
     env = None
     try:
         with pytest.warns(UserWarning, match="DRC fallback"):
             env = PCBWorld(
-                board_path=str(orphan_pcb), max_steps=1,
-                use_yaml_drc_fallback=True,
-                drc_config_path=str(PROJECT_ROOT / "configs/drc/pcbworld_drc.yaml"),
+                str(orphan_pcb),
+                EnvConfig.with_overrides(max_steps=1, rules_source="board_or_yaml", drc_config_path=str(PROJECT_ROOT / "configs/drc/pcbworld_drc.yaml")),
             )
         env.reset()
     finally:
@@ -148,7 +152,7 @@ def test_save_emits_pro_even_when_source_project_lock_held(tmp_path: Path):
     out_dir = tmp_path / "out"
     out_dir.mkdir()
     out = out_dir / "routed.kicad_pcb"
-    eng = KiCadEngine(str(src))
+    eng = open_engine(str(src))
     try:
         # Read-only open still reads the on-disk rules — the strict contract holds.
         assert eng.was_project_loaded_from_file()
@@ -182,7 +186,7 @@ def test_save_leaves_no_prl_sidecar(tmp_path: Path):
     pre_existing = kept.with_suffix(".kicad_prl")
     pre_existing.write_text("{}")
 
-    eng = KiCadEngine(str(src))
+    eng = open_engine(str(src))
     try:
         eng.save(str(out))
         eng.save(str(kept))  # target with a pre-existing prl

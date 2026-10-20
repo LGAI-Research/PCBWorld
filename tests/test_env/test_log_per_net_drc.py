@@ -17,7 +17,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from pcb_world.core.reward import PotentialReward, RewardState  # noqa: E402
-from pcb_world.core.reward_config import YamlRewardConfig  # noqa: E402
+from pcb_world.core.reward_config import RewardRuleSchema, YamlRewardConfig  # noqa: E402
+from tests._rule_helpers import RULE_PENALTIES  # noqa: E402
 
 
 def _state(unconnected=0, drc=0, per_net=None):
@@ -140,7 +141,7 @@ def test_completion_bonus_log_scale_default_none():
 
 
 def test_completion_bonus_static_by_default_in_saturating():
-    cfg = YamlRewardConfig({
+    cfg = YamlRewardConfig(RewardRuleSchema.from_dict({
         "name": "test",
         "mode": "per_step",
         "potential": {
@@ -150,16 +151,16 @@ def test_completion_bonus_static_by_default_in_saturating():
             "drc_aggregate_scale": 5.0,
             "drc_per_net_scale": 1.0,
             "drc_saturation_offset": 2.0,
-            "step_penalty": 0.01,
+            **RULE_PENALTIES,
         },
-    })
+    }, "<inline>"))
     r = cfg.build_reward()
     assert r.completion_bonus_log_scale is None
     assert r.completion_bonus == pytest.approx(2.0)
 
 
 def test_yaml_config_passes_log_per_net_fields():
-    cfg = YamlRewardConfig({
+    cfg = YamlRewardConfig(RewardRuleSchema.from_dict({
         "name": "test_log",
         "mode": "per_step",
         "potential": {
@@ -168,9 +169,9 @@ def test_yaml_config_passes_log_per_net_fields():
             "drc_shape": "log_per_net",
             "drc_log_scale": 1.0,
             "drc_log_offset": 2.0,
-            "step_penalty": 0.01,
+            **RULE_PENALTIES,
         },
-    })
+    }, "<inline>"))
     r = cfg.build_reward()
     assert r.drc_shape == "log_per_net"
     assert r.drc_log_scale == pytest.approx(1.0)

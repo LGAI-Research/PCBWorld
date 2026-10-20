@@ -74,7 +74,7 @@ REAL_APISEQ_PREP_FILTER="${REAL_APISEQ_PREP_FILTER:-$REAL_BOARD_NAME_FILTER}"
 # ── Sample sizes ──────────────────────────────────────────────────
 N_SAMPLES="${N_SAMPLES:-5}"
 N_FEWSHOT="${N_FEWSHOT:-2}"
-LIMIT_REAL="${LIMIT_REAL:-0}"       # 0 = all 100 real boards (0001~0100 in the pcbench_exacad dataset)
+LIMIT_REAL="${LIMIT_REAL:-0}"       # 0 = all 99 D3-A boards (configs/datasets/d3.json easy.test)
 LIMIT_SYNTH="${LIMIT_SYNTH:-128}"   # full synth_2L_v2/test set (128 boards)
 
 # ── Model / sampling ──────────────────────────────────────────────
@@ -120,7 +120,7 @@ ensure_synth_apiseq_cache() {
           Or override SYNTH_APISEQ_FEWSHOT_CACHE to point at an
           existing LLM-generated cache.
 EOF
-    exit 2
+    return 2
 }
 
 ensure_real_apiseq_cache() {
@@ -154,9 +154,11 @@ ensure_real_apiseq_cache() {
 
           Or override REAL_APISEQ_FEWSHOT_CACHE.
 EOF
-    exit 2
+    return 2
 }
 
+# Every failing step returns non-zero explicitly: under run_or_warn's `||`,
+# `set -e` is off inside this function.
 run_scenario() {
     local mode="$1"          # zero_shot | few_shot
     local set_name="$2"      # real | synth_2L
@@ -165,17 +167,18 @@ run_scenario() {
     local input_arg=""
     local recursive_arg=""
     local limit
+    local _resolved
     local real_files=()
     if [[ -n "${BOARDS_JSON:-}" ]]; then
         # BOARDS_JSON / BOARDS_DIFFICULTY / BOARDS_SPLIT take precedence over
-        # the legacy 0001..0100 hardcode and the synth-dir glob. We resolve
+        # the default D3-A list and the synth-dir glob. We resolve
         # through board_loader.resolve_board_list — the same utility
         # PCBWORLD (methods/llm_agent/rollout/pcbworld.py) uses — so a given
         # (alias, difficulty, split) yields a byte-identical board list on
         # both eval paths. The per-board-dir layout used by d3
         # (<root>/<bid>/processed_v9_guide_v3.kicad_pcb) is picked up from
         # the boards_json's top-level "board_filename" metadata.
-        mapfile -t real_files < <(
+        _resolved="$(
             BOARDS_JSON="$BOARDS_JSON" \
             BOARDS_DIFFICULTY="${BOARDS_DIFFICULTY:-easy}" \
             BOARDS_SPLIT="${BOARDS_SPLIT:-test}" \
@@ -196,7 +199,8 @@ with contextlib.redirect_stdout(sys.stderr):
     )
 sys.stdout.write("\n".join(paths) + ("\n" if paths else ""))
 PY
-        )
+        )" || { echo "[error] could not resolve the board list from $BOARDS_JSON (see above)" >&2; return 1; }
+        [[ -n "$_resolved" ]] && mapfile -t real_files <<< "$_resolved"
         local _cap
         if [[ "$set_name" == "real" ]]; then _cap="$LIMIT_REAL"; else _cap="$LIMIT_SYNTH"; fi
         if [[ "$_cap" -gt 0 && "${#real_files[@]}" -gt "$_cap" ]]; then
@@ -208,26 +212,15 @@ PY
         fi
         limit=0
     elif [[ "$set_name" == "real" ]]; then
-        # Resolve real boards 0001..0100 under exacad_sorted/. Each board
-        # lives in a directory named "<bid>_<slug>"; we pick its
-        # processed_v9_guide_v3.kicad_pcb. LIMIT_REAL caps the count
-        # (default 0 = all 100).
-        mapfile -t real_files < <(
-            python3 - "$REPO_ROOT" "$REAL_BOARD_DIR" "$REAL_BOARD_NAME_FILTER" "$LIMIT_REAL" <<'PY'
-import glob, sys
-repo, exacad, fname, limit = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
-out, missing = [], []
-for i in range(1, 101):
-    bid = f"{i:04d}"
-    matches = sorted(glob.glob(f"{exacad}/{bid}_*/{fname}"))
-    (out if matches else missing).append(matches[0] if matches else bid)
-if missing:
-    sys.stderr.write(f"[WARN] {len(missing)} board ids didn't resolve: {missing[:3]}...\n")
-if limit > 0:
-    out = out[:limit]
-print("\n".join(out))
-PY
-        )
+        # Resolve the D3-A boards (configs/datasets/d3.json easy.test) under
+        # exacad_sorted/. Each board lives in a directory named
+        # "<bid>_<slug>"; we pick its processed_v9_guide_v3.kicad_pcb.
+        # LIMIT_REAL caps the count (default 0 = all 99; a missing board is
+        # then an error, see d3a_boards.py).
+        _resolved="$(python3 "$SCRIPT_DIR/d3a_boards.py" "$REAL_BOARD_DIR" "$REAL_BOARD_NAME_FILTER" "$LIMIT_REAL")" \
+            || { echo "[error] could not resolve the D3-A board list under $REAL_BOARD_DIR (see above)" >&2; return 1; }
+        real_files=()
+        [[ -n "$_resolved" ]] && mapfile -t real_files <<< "$_resolved"
         if [[ "${#real_files[@]}" -eq 0 ]]; then
             echo "[skip] no real boards matched $REAL_BOARD_NAME_FILTER under $REAL_BOARD_DIR"
             return
@@ -242,13 +235,13 @@ PY
     local fewshot_args=()
     if [[ "$mode" == "few_shot" ]]; then
         if [[ "$set_name" == "real" ]]; then
-            ensure_real_apiseq_cache
+            ensure_real_apiseq_cache || return 1
             fewshot_args=(
                 --fewshot-pool "$REAL_APISEQ_FEWSHOT_CACHE"
                 --num-fewshot "$N_FEWSHOT"
             )
         else
-            ensure_synth_apiseq_cache
+            ensure_synth_apiseq_cache || return 1
             fewshot_args=(
                 --fewshot-pool "$SYNTH_APISEQ_FEWSHOT_CACHE"
                 --num-fewshot "$N_FEWSHOT"
@@ -265,7 +258,7 @@ PY
     else
         out_dir="${OUT_ROOT}/${DATE_TAG}/${set_name}_${mode}"
     fi
-    mkdir -p "$out_dir"
+    mkdir -p "$out_dir" || return 1
 
     echo
     echo "=========================================================="
@@ -283,7 +276,7 @@ PY
     fi
 
     # File-list invocation path is used whenever real_files[] is populated —
-    # either from the legacy real-board 0001..0100 resolution or from the new
+    # either from the default D3-A real-board resolution or from the new
     # BOARDS_JSON-driven resolution (real OR synth).
     if [[ "${#real_files[@]}" -gt 0 ]]; then
         python -u "$PY_DIR/eval_plan_only_llm_v8_standalone.py" \
@@ -314,6 +307,14 @@ PY
     fi
 }
 
+# Multi-scenario commands run every scenario; a failed one is reported and makes
+# the launcher exit non-zero at the end.
+failed_scenarios=()
+run_or_warn() {
+    run_scenario "$@" \
+        || { echo "[WARN] $2 / $1 failed; continuing" >&2; failed_scenarios+=("$2/$1"); }
+}
+
 cmd="${1:-all}"
 case "$cmd" in
     real_zs)   run_scenario zero_shot real ;;
@@ -321,19 +322,24 @@ case "$cmd" in
     synth_zs)  run_scenario zero_shot synth_2L ;;
     synth_fs)  run_scenario few_shot  synth_2L ;;
     all)
-        run_scenario zero_shot synth_2L
-        run_scenario few_shot  synth_2L
-        run_scenario zero_shot real
-        run_scenario few_shot  real
+        run_or_warn zero_shot synth_2L
+        run_or_warn few_shot  synth_2L
+        run_or_warn zero_shot real
+        run_or_warn few_shot  real
         ;;
     dry)
-        LIMIT_SYNTH=2 LIMIT_REAL=2 run_scenario zero_shot synth_2L "--dry-run"
-        LIMIT_SYNTH=2 LIMIT_REAL=2 run_scenario few_shot  synth_2L "--dry-run"
-        LIMIT_SYNTH=2 LIMIT_REAL=2 run_scenario zero_shot real "--dry-run"
-        LIMIT_SYNTH=2 LIMIT_REAL=2 run_scenario few_shot  real "--dry-run"
+        LIMIT_SYNTH=2 LIMIT_REAL=2 run_or_warn zero_shot synth_2L "--dry-run"
+        LIMIT_SYNTH=2 LIMIT_REAL=2 run_or_warn few_shot  synth_2L "--dry-run"
+        LIMIT_SYNTH=2 LIMIT_REAL=2 run_or_warn zero_shot real "--dry-run"
+        LIMIT_SYNTH=2 LIMIT_REAL=2 run_or_warn few_shot  real "--dry-run"
         ;;
     *)
         echo "usage: $0 {dry|real_zs|real_fs|synth_zs|synth_fs|all}"
         exit 2
         ;;
 esac
+
+if [[ "${#failed_scenarios[@]}" -gt 0 ]]; then
+    echo "[ERROR] ${#failed_scenarios[@]} scenario(s) failed: ${failed_scenarios[*]}" >&2
+    exit 1
+fi

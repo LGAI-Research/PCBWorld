@@ -44,7 +44,7 @@ logs were copied from.
 | Std (Freerouting only) | sample stdev `n-1` across 4 seeds, computed on per-seed routable-only means |
 | d3a | restricted to the 95 boards in `_scripts/pcbench_fair95.txt` (excludes 0004, 0024, 0035, 0077, 0096) |
 
-OrthoRoute and KiCadRoutingTools are deterministic in this setup — single
+KiCadRoutingTools is deterministic and the OrthoRoute logs are one GPU run — single
 seed, no stdev reported.
 
 ## Reproduce the table
@@ -87,22 +87,24 @@ dir's `SOURCE_PATH.txt` records its exact source.
 | `d3a/OrthoRoute/seed0` | `PCBench/orthoroute_gpu_20260506` | 100 |
 | `d3a/KiCadRoutingTools/seed0` | `PCBench/kicadroutingtools_via1x_s00_r00` | 100 |
 
+The `d3a` logs are KDD-era runs over the 100 PCBench corpus folders with ID prefix `0001`–`0100`,
+aggregated on the fair-95 subset above. The D3-A standard is
+the 99 boards of [`configs/datasets/d3.json`](../../../../configs/datasets/d3.json) `easy.test`
+(the runner's `--difficulty easy`).
+
 ## Reproducing the logs from this repo
 
 The unified runner `methods/baselines/rule_based/run_rule_based_routers.py` reproduces these per-board
-logs end-to-end (raw routing -> .kicad_pcb -> eval). For the two
-deterministic baselines:
+logs end-to-end (raw routing -> .kicad_pcb -> eval). For KRT (deterministic):
 
 ```bash
-# KiCadRoutingTools — bit-perfect match on d2a verified.
+# KiCadRoutingTools — reproduction with the pinned KRT not verified (see ../README.md).
 python methods/baselines/rule_based/run_rule_based_routers.py --baseline krt --dataset synthetic_2l \
     --output-root methods/baselines/rule_based/_run_outputs
-
-# OrthoRoute — close match; small per-board DRV variation due to GPU
-# tie-breaking. Aggregate-level numbers match the paper.
-python methods/baselines/rule_based/run_rule_based_routers.py --baseline orthoroute --dataset synthetic_2l \
-    --output-root methods/baselines/rule_based/_run_outputs
 ```
+
+The OrthoRoute logs are the KDD record only: the pinned OrthoRoute cannot rerun them
+([../README.md](../README.md), baseline table).
 
 Freerouting is stochastic — each invocation produces a different SES, so
 exact reproduction requires running 4 seeds and aggregating:

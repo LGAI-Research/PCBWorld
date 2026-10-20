@@ -90,7 +90,7 @@ cmd=(
   --board tests/fixtures/simple_routing_board.kicad_pcb
   --boards-order per_env_epoch
   --boards-json "$SPLIT_JSON"
-  --use-yaml-drc-fallback
+  --rules-source board_or_yaml
   --drc-config-path "$DRC_CONFIG_PATH"
   --boards-difficulty easy
   --boards-split train
@@ -127,6 +127,7 @@ cmd=(
   --save-freq "$SAVE_FREQ"
   "${EXTRA_ARGS[@]}"
   "${PAPER_ENV_FLAGS[@]}"
+  "${PAPER_DIRECTIONAL_FLAGS[@]}"
   "${PUBLIC_WANDB_ARGS[@]}"
 )
 [[ "$METHOD" == "grpo" ]] || cmd+=("${PAPER_PPO_FLAGS[@]}")

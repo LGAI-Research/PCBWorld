@@ -3,17 +3,18 @@
 
 Reads bench_results_official_kicadpcb/_kicad_gym_summaries/eval_metrics.csv and
 plots, for d2a (synth2L) and d3a (PCBench), four metrics each:
-  P@5, CP@5, Routability(mean), DRV_min@5
+  P@5, CP@5 (errors only), Routability(best@5), DRV (errors only, mean over won rollouts)
 as 8 subplots in one wide row (d2a block then d3a block).
 
 Each subplot is a grouped bar chart: x = the three eval levels, bars = GPT
 family (gpt-5.4 / -mini / -nano), each methodology a distinct hue from the
 rq4_factorial palette (orange / teal) plus a complementary purple.
 """
-import argparse
 import csv
 import math
 import os
+import re
+import statistics
 from pathlib import Path
 
 import matplotlib
@@ -49,9 +50,9 @@ LEVELS = [("Interactive", ""), ("Plan-only", "apiseq_"), ("Engine-free", "cadgen
 # (col, std_col, label, lower_better, integer_axis, show_err)
 METRICS = [
     ("succ@5",           "succ@5_std",        "P@5",                False, False, False),
-    ("succ&drv0@5",      "succ&drv0@5_std",   "CP@5",               False, False, False),
+    ("cp_errors_only@5", "",                  "CP@5",               False, False, False),
     ("routability_best@5", "routability_best@5_std", "Routability (best@5)", False, False, True),
-    ("drv_won_mean",     "drv_won_std",       "DRV (won mean) (↓)", True,  True,  True),
+    ("drv_errors_only_won_mean", "drv_errors_only_won_std", "DRV (won mean) (↓)", True, True, True),
 ]
 
 DATASETS = [("synth2L", "d2a (synth_2L)"), ("PCBench", "d3a (PCBench)")]
@@ -61,6 +62,66 @@ def load(csv_path):
     rows = list(csv.DictReader(open(csv_path)))
     idx = {(r["model"], r["dataset"]): r for r in rows}
     return idx
+
+
+# DRV and CP@5 count DRC errors only, as in every KDD table. The csv's drv_won_* and succ&drv0@5
+# count errors + warnings, so both are recomputed from the per-rollout re-evaluation csvs next to
+# it: per_run/<model>_<dataset>/ (interactive), baseline_reeval/ (plan-only, engine-free; their
+# input.kicad_pcb rows are the unrouted boards). CP@5 = share of the n_boards boards with a won
+# rollout of zero errors. The DRV mean is over won rollouts; its std keeps the csv's definition
+# per level: interactive = mean over boards (>= 2 won rollouts) of the per-board sample std,
+# plan-only / engine-free = sample std over all won rollouts (both reproduce drv_won_std).
+_REEVAL_DATASET = {"synth2L": "synth", "PCBench": "real"}
+_ROLLOUT_SUFFIX = re.compile(r"(_episode_\d+_env_\d+\.kicad_pcb|/sample_\d+\.kicad_pcb)$")
+
+
+def rollout_csv(summaries: Path, level_prefix: str, model: str, ds: str) -> Path:
+    if not level_prefix:
+        return summaries / "per_run" / f"{model}_{ds}" / "eval_out_summary.csv"
+    return (summaries / "baseline_reeval"
+            / f"{level_prefix}{_REEVAL_DATASET[ds]}_zs_{model}" / "summary.csv")
+
+
+def _errors_only(path: Path, n_boards: int, interactive: bool) -> dict[str, float]:
+    by_board: dict[str, list[dict]] = {}
+    with open(path) as fh:
+        for r in csv.DictReader(fh):
+            if not r["file"].endswith("/input.kicad_pcb"):
+                by_board.setdefault(_ROLLOUT_SUFFIX.sub("", r["file"]), []).append(r)
+    won = {b: [float(r["drc_error_count"]) for r in rs if r["success"] == "1"]
+           for b, rs in by_board.items()}
+    pooled = [e for es in won.values() for e in es]
+    if interactive:
+        stds = [statistics.stdev(es) for es in won.values() if len(es) > 1]
+        std = statistics.fmean(stds) if stds else math.nan
+    else:
+        std = statistics.stdev(pooled) if len(pooled) > 1 else math.nan
+    return {"cp_errors_only@5": sum(0.0 in es for es in won.values()) / n_boards,
+            "drv_errors_only_won_mean": statistics.fmean(pooled) if pooled else math.nan,
+            "drv_errors_only_won_std": std}
+
+
+def add_errors_only_columns(idx, summaries: Path) -> None:
+    """Add ``cp_errors_only@5`` and ``drv_errors_only_won_{mean,std}`` to every plotted row."""
+    for ds, _ in DATASETS:
+        for _, pref in LEVELS:
+            for model in MODELS:
+                row = idx.get((pref + model, ds))
+                if row is None:
+                    continue
+                path = rollout_csv(summaries, pref, model, ds)
+                if path.is_file():
+                    row.update(_errors_only(path, int(row["n_boards"]), interactive=not pref))
+                    continue
+                # Errors are a subset of errors + warnings: a zero won DRV and a CP@5 equal to
+                # P@5 carry over exactly; anything else needs the per-rollout csv.
+                if (row["drv_won_mean"] and float(row["drv_won_mean"]) == 0.0
+                        and row["succ@5"] == row["succ&drv0@5"]):
+                    row["drv_errors_only_won_mean"] = row["drv_errors_only_won_std"] = 0.0
+                    row["cp_errors_only@5"] = float(row["succ@5"])
+                    continue
+                raise SystemExit(f"{pref + model} {ds}: no per-rollout csv {path} "
+                                 f"for the errors-only DRV / CP@5")
 
 
 def val(idx, ds, level_prefix, model, col):
@@ -74,7 +135,8 @@ def val(idx, ds, level_prefix, model, col):
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    from configs.loader.cli import StrictArgumentParser
+    parser = StrictArgumentParser()
     parser.add_argument("--overleaf-root", type=Path, default=Path(DEFAULT_OVERLEAF_ROOT))
     parser.add_argument("--metrics-csv", type=Path, default=Path(DEFAULT_METRICS_CSV))
     args = parser.parse_args()
@@ -83,6 +145,7 @@ def main():
     out_stem = fig_dir / OUTPUT_STEM
 
     idx = load(args.metrics_csv)
+    add_errors_only_columns(idx, args.metrics_csv.parent)
     # Block titles for each group of 4 subplots (one per dataset).
     BLOCK_TITLE = {"synth2L": "Synthetic 2-layer (D2)", "PCBench": "Real board (D3-A)"}
     # Global font bump.

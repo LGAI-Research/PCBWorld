@@ -24,7 +24,12 @@ artifacts with your own eval code. Each ``seed<N>`` directory is a
 ``eval/pipeline.py``-compatible rollout dir, so you can also run e.g.::
 
     python -m eval.pipeline --skip-rollout \
-        --output-dir <.../seed0> --boards-dir <dataset root>
+        --output-dir <.../seed0> --boards-list <the run's board list> \
+        --reward-config <rule> --check-angle <45|90>
+
+(``--boards-list`` is the expected board set: a board left without a row counts
+as a failed attempt. The dir records no scoring, so the first scoring names it;
+a later re-scoring reuses it.)
 
 Output layout (mirrors eval/pipeline.py rollout stage):
 
@@ -61,7 +66,8 @@ for _p in (_BASELINES_DIR, _PROJECT_ROOT, _THIS_DIR):
 
 import run_rule_based_routers as rb  # noqa: E402  (routing functions reused verbatim)
 from methods.baselines.rule_based._lib.datasets import (  # noqa: E402
-    algorithm_tag, dataset_tag, select_boards,
+    D3_DIFFICULTIES, algorithm_tag, dataset_tag, describe_missing,
+    select_boards_with_inputs,
 )
 from eval import eval_utils as u  # noqa: E402  (PER_ROLLOUT_FIELDS, write_csv)
 
@@ -133,22 +139,21 @@ def _route_and_emit(job):
     baseline = job["baseline"]; raw_dir = job["raw_dir"]
     artifacts_dir = job["artifacts_dir"]; algo = job["algo"]
     timeout_s = job["timeout_s"]
-    if baseline == "freerouting":
-        result = rb._route_freerouting(
-            board, seed, raw_dir, artifacts_dir, algo, timeout_s,
-            job["via_prohibit"], job["angle_90"], job["max_passes"], {})
-    elif baseline == "krt":
-        result = rb._route_krt(board, seed, raw_dir, artifacts_dir, algo, timeout_s)
-    elif baseline == "orthoroute":
-        result = rb._route_orthoroute(
-            board, seed, raw_dir, artifacts_dir, algo, timeout_s,
-            use_gpu=job["use_gpu"])
-    else:
+    try:
+        result = rb.route_board(baseline, board, seed, raw_dir, artifacts_dir, algo, timeout_s,
+                                via_prohibit=job["via_prohibit"], angle_90=job["angle_90"],
+                                max_passes=job["max_passes"], extra_env={},
+                                use_gpu=job["use_gpu"], krt_commit=job["krt_commit"])
+    except rb.RunSetupError:
+        raise
+    except Exception as exc:    # one board's own failure is its row, not the end of the run
         result = rb.BoardResult(board.board_id, seed, "error", 0.0,
-                                error=f"unknown baseline {baseline!r}")
+                                error=f"{type(exc).__name__}: {exc}")
     row = _build_row(board, idx, seed, result, artifacts_dir, job["deterministic"])
     gc.collect()
-    return row
+    # The net-class rules KRT was given (None for the other baselines) and the board's
+    # warnings go to the manifest.
+    return row, result.krt_rules, result.warnings
 
 
 def _emit_progress(row, baseline):
@@ -161,6 +166,7 @@ def _emit_progress(row, baseline):
 
 def run_one_seed(boards, *, baseline, dataset, grid, seed, seed_dir, timeout_s,
                  workers, via_prohibit, angle_90, max_passes, use_gpu, deterministic):
+    krt_commit = rb.prepare_run(baseline)   # a missing piece stops the run before any board
     raw_dir = seed_dir / "raw"
     artifacts_dir = seed_dir / "artifacts"
     for d in (raw_dir, artifacts_dir):
@@ -170,36 +176,53 @@ def run_one_seed(boards, *, baseline, dataset, grid, seed, seed_dir, timeout_s,
         dict(board=b, idx=i, seed=seed, baseline=baseline, raw_dir=raw_dir,
              artifacts_dir=artifacts_dir, algo=algo, timeout_s=timeout_s,
              via_prohibit=via_prohibit, angle_90=angle_90, max_passes=max_passes,
-             use_gpu=use_gpu, deterministic=deterministic)
+             use_gpu=use_gpu, deterministic=deterministic, krt_commit=krt_commit)
         for i, b in enumerate(boards)]
     rows = []
+    krt_rules = {}
+    warnings = {}
+
+    def _collect(r, rules, board_warnings):
+        _emit_progress(r, baseline)
+        rows.append(r)
+        if rules is not None:
+            krt_rules[str(r["board_id"])] = rules
+        if board_warnings:
+            warnings[str(r["board_id"])] = board_warnings
+
     if workers <= 1:
         for j in jobs:
-            r = _route_and_emit(j)
-            _emit_progress(r, baseline)
-            rows.append(r)
+            _collect(*_route_and_emit(j))
     else:
         with ProcessPoolExecutor(max_workers=workers) as ex:
             futs = {ex.submit(_route_and_emit, j): j["idx"] for j in jobs}
             for fut in as_completed(futs):
-                r = fut.result()
-                _emit_progress(r, baseline)
-                rows.append(r)
+                _collect(*fut.result())
     rows.sort(key=lambda r: r["board_index"])
     u.write_csv(seed_dir / "per_rollout.csv", rows, u.PER_ROLLOUT_FIELDS)
-    return rows
+    rb.log_pro_warnings([w for ws in warnings.values() for w in ws], where="manifest.json warnings")
+    return rows, dict(sorted(krt_rules.items())), dict(sorted(warnings.items()))
 
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    from configs.loader.cli import StrictArgumentParser
+    ap = StrictArgumentParser(description=__doc__,
+                              formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--baseline", required=True,
                     choices=("freerouting", "krt", "orthoroute"))
     ap.add_argument("--dataset", required=True,
                     choices=("pcbench", "synthetic_1l", "synthetic_2l"))
     ap.add_argument("--grid", type=int, default=None)
     ap.add_argument("--split", default="test")
+    ap.add_argument("--difficulty", choices=D3_DIFFICULTIES, default=None,
+                    help="pcbench: route one D3 tier of configs/datasets/d3.json "
+                         "(easy = D3-A, medium = D3-B, hard = D3-C) at --split. "
+                         "--dataset pcbench needs this or --all-corpus.")
+    ap.add_argument("--all-corpus", action="store_true",
+                    help="pcbench: route every corpus folder instead of a D3 tier "
+                         "(includes the boards excluded from D3; output tree "
+                         "PCBench_corpus).")
     ap.add_argument("--seeds", type=int, default=1)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--sample", action="append", default=None)
@@ -232,34 +255,25 @@ def main():
 
     timeout_s = (args.timeout if args.timeout is not None
                  else rb.DEFAULT_TIMEOUTS[args.baseline])
-    boards = select_boards(args.dataset, grid=args.grid, split=args.split,
-                           limit=args.limit, sample_substrings=args.sample)
+    try:
+        boards, valid, missing = select_boards_with_inputs(
+            args.dataset, args.baseline, grid=args.grid, split=args.split,
+            limit=args.limit, sample_substrings=args.sample,
+            difficulty=args.difficulty, all_corpus=args.all_corpus)
+    except (ValueError, FileNotFoundError) as exc:
+        ap.error(str(exc))
     if not boards:
         ap.error("no boards matched the selection.")
 
-    valid, missing = [], []
-    for b in boards:
-        need = []
-        if not b.raw_pcb.is_file():
-            need.append(f"raw_pcb={b.raw_pcb}")
-        if not b.pro.is_file():
-            need.append(f"pro={b.pro}")
-        if args.baseline in ("freerouting", "krt") and not b.dsn.is_file():
-            need.append(f"dsn={b.dsn}")
-        if args.baseline == "orthoroute" and not b.orp.is_file():
-            need.append(f"orp={b.orp}")
-        if need:
-            missing.append((b.board_id, ", ".join(need)))
-        else:
-            valid.append(b)
     if missing:
         log.warning("Skipping %d board(s) with missing inputs:\n%s",
-                    len(missing),
-                    "\n".join(f"  {bid}: {why}" for bid, why in missing))
+                    len(missing), describe_missing(missing))
     if not valid:
         ap.error("no boards remain after dropping incomplete inputs.")
 
-    ds_tag = dataset_tag(args.dataset, grid=args.grid)
+    ds_tag = dataset_tag(args.dataset, grid=args.grid,
+                         difficulty=args.difficulty, split=args.split,
+                         all_corpus=args.all_corpus)
     algo_tag = algorithm_tag(args.baseline, args.dataset, grid=args.grid)
     # Freerouting is run across independent seeds (multithreaded -> not
     # bit-reproducible); the others are single-shot deterministic, so seeds
@@ -292,7 +306,7 @@ def main():
         else:
             seed_dir = base / f"seed{seed}"
         log.info("--- seed %d -> %s", seed, seed_dir)
-        rows = run_one_seed(
+        rows, krt_rules, warnings = run_one_seed(
             valid, baseline=args.baseline, dataset=args.dataset, grid=args.grid,
             seed=seed, seed_dir=seed_dir, timeout_s=timeout_s,
             workers=args.workers, via_prohibit=via_prohibit, angle_90=angle_90,
@@ -310,6 +324,8 @@ def main():
                 "algorithm_tag": algo_tag,
                 "grid": args.grid,
                 "split": args.split,
+                "difficulty": args.difficulty,
+                "all_corpus": args.all_corpus,
                 "seed": seed,
                 "n_boards": len(valid),
                 "boards": [b.board_id for b in valid],
@@ -323,11 +339,16 @@ def main():
                 "note": ("Routed .kicad_pcb artifacts only (no DRC/eval). This "
                          "dir is an eval/pipeline.py-compatible rollout dir: score "
                          "it with your own eval, e.g. `python eval/pipeline.py "
-                         "--skip-rollout --output-dir <this dir> --boards-dir "
-                         "<dataset root>`. A .kicad_pro is co-located next to "
+                         "--skip-rollout --output-dir <this dir> --boards-list "
+                         "<the run's board list> --reward-config <rule> --check-angle "
+                         "<45|90>`. A .kicad_pro is co-located next to "
                          "each artifact for pro resolution."),
             },
         }
+        if args.baseline == "krt":
+            # Per board: the clearance and via KRT was given, and where the classes differ.
+            manifest["krt_rules"] = krt_rules
+        manifest["warnings"] = warnings     # per board: its .kicad_pro and router-rule warnings
         (seed_dir / "manifest.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True, default=str))
         ok += sum(1 for r in rows if r["status"] == "completed")

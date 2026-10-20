@@ -45,7 +45,6 @@ from __future__ import annotations
 import warnings
 from typing import TYPE_CHECKING, Literal
 
-import numpy as np
 import torch
 import torch.nn as nn
 
@@ -86,7 +85,7 @@ def policy_update_loop(
 
     BC-initialised fine-tuning (``methods.rl_agent.training.finetune``):
     ``ref_policy``/``kl_ref_coef`` add ``kl_ref_coef * k3-KL(pi || pi_ref)`` per
-    sample, weighted by ``buffer["kl_mask"]`` when present; ``actor_frozen``
+    sample, weighted by the buffer's ``transition.kl_mask`` when set; ``actor_frozen``
     (critic warm-up) keeps only the value term in the loss — policy/entropy/KL
     terms are still computed for the stats but contribute no gradient.
 
@@ -127,55 +126,13 @@ def policy_update_loop(
     # carried — the walked= update path never reads obs (tokenizer ignores
     # obs_list when walked= is given).
     obs_list = buffer.get("obs_list")
-    actions_np = buffer["actions"]
-    old_lp_np = buffer["old_log_probs"]
-    masks_np = buffer["action_masks"]
-    N = len(obs_list) if obs_list is not None else buffer["walk_flat"]["B"]
-    # Back-compat: older buffers (pre-same-point-masking) may not carry
-    # pointer_masks; default to a (N, 0) array (no masking applied).
-    # Legacy 1-D buffers are auto-promoted to (N, 1) so the policy still
-    # blocks the single recorded cand.
-    ptr_masks_np = buffer.get(
-        "pointer_masks", np.full((N, 0), -1, dtype=np.int64),
-    )
-    if ptr_masks_np.ndim == 1:
-        ptr_masks_np = ptr_masks_np.reshape(-1, 1)
-    # Back-compat: older buffers may not carry mode_masks.
-    mode_masks_np: np.ndarray | None = buffer.get("mode_masks")
-    # Policy-driven net_select only: None when legacy env-driven path.
-    nvm_np: np.ndarray | None = buffer.get("net_valid_masks")
-    adv_np = buffer["advantages"]
-
-    if N == 0:
-        return {
-            "loss": 0.0,
-            "policy_loss": 0.0,
-            "value_loss": 0.0,
-            "entropy": 0.0,
-        }
-
-    actions_t = torch.as_tensor(actions_np, dtype=torch.long, device=device)
-    old_lp_t = torch.as_tensor(old_lp_np, dtype=torch.float32, device=device)
-    masks_t = torch.as_tensor(masks_np, dtype=torch.bool, device=device)
-    ptr_masks_t = torch.as_tensor(ptr_masks_np, dtype=torch.long, device=device)
-    # Only create mode_masks tensor when masking is active (not all-True).
-    mode_masks_t: torch.Tensor | None = None
-    if mode_masks_np is not None and not mode_masks_np.all():
-        mode_masks_t = torch.as_tensor(
-            mode_masks_np, dtype=torch.bool, device=device,
-        )
-    nvm_t: torch.Tensor | None = None
-    allow_net_select_lp = bool(
-        getattr(policy, "policy_net_select", False) and nvm_np is not None,
-    )
-    if nvm_np is not None:
-        nvm_t = torch.as_tensor(nvm_np, dtype=torch.bool, device=device)
-    adv_t = torch.as_tensor(adv_np, dtype=torch.float32, device=device)
-    klm_np = buffer.get("kl_mask")
-    klm_t = (
-        torch.as_tensor(klm_np, dtype=torch.float32, device=device)
-        if klm_np is not None and ref_policy is not None else None
-    )
+    # The act-time bundle (dist inputs + action + old log-prob/value + kl
+    # mask), handed back to the forward as stored: the update scores the
+    # distribution the rollout sampled from.
+    transition = buffer["transition"]
+    N = len(transition.actions)
+    transition_t = transition.to(device)
+    adv_t = torch.as_tensor(buffer["advantages"], dtype=torch.float32, device=device)
 
     if algo == "ppo":
         ret_t = torch.as_tensor(
@@ -232,12 +189,6 @@ def policy_update_loop(
                 sel = _idx if positions is None else [_idx[p] for p in positions]
                 return tokenizer.gather_walked(walk_flat, walk_bounds, sel)
 
-            mb_act = actions_t[idx]
-            mb_old_lp = old_lp_t[idx]
-            mb_masks = masks_t[idx]
-            mb_ptr_masks = ptr_masks_t[idx]
-            mb_mode_masks = mode_masks_t[idx] if mode_masks_t is not None else None
-            mb_nvm = nvm_t[idx] if nvm_t is not None else None
             mb_adv = adv_t[idx]
 
             if normalize_advantages and mb_adv.numel() > 1:
@@ -246,12 +197,8 @@ def policy_update_loop(
             mb_ret = ret_t[idx] if algo == "ppo" else None
             mb_size = len(idx_list)
             mb_ctx = dict(
-                mb_obs=mb_obs, mb_walk=mb_walk, mb_act=mb_act,
-                mb_old_lp=mb_old_lp,
-                mb_masks=mb_masks, mb_ptr_masks=mb_ptr_masks,
-                mb_mode_masks=mb_mode_masks, mb_nvm=mb_nvm, mb_adv=mb_adv,
-                mb_ret=mb_ret, mb_size=mb_size,
-                mb_klm=klm_t[idx] if klm_t is not None else None,
+                mb_obs=mb_obs, mb_walk=mb_walk, mb=transition_t.select(idx),
+                mb_adv=mb_adv, mb_ret=mb_ret, mb_size=mb_size,
                 ref_policy=ref_policy, kl_ref_coef=kl_ref_coef,
                 actor_frozen=actor_frozen,
             )
@@ -264,7 +211,6 @@ def policy_update_loop(
                     mb_seq=[seq_lens_all[i] for i in idx_list],
                     algo=algo, clip_eps=clip_eps, entropy_coef=entropy_coef,
                     vf_coef=vf_coef, max_grad_norm=max_grad_norm,
-                    allow_net_select_lp=allow_net_select_lp,
                     entropy_norm=entropy_norm, **mb_ctx,
                 )
                 if n_oom_mb:
@@ -278,7 +224,6 @@ def policy_update_loop(
                     mb_seq=[seq_lens_all[i] for i in idx_list],
                     algo=algo, clip_eps=clip_eps, entropy_coef=entropy_coef,
                     vf_coef=vf_coef, max_grad_norm=max_grad_norm,
-                    allow_net_select_lp=allow_net_select_lp,
                     entropy_norm=entropy_norm, **mb_ctx,
                 )
                 planned_chunks_sum += n_chunks
@@ -292,7 +237,6 @@ def policy_update_loop(
                     mb_seq=[seq_lens_all[i] for i in idx_list],
                     algo=algo, clip_eps=clip_eps, entropy_coef=entropy_coef,
                     vf_coef=vf_coef, max_grad_norm=max_grad_norm,
-                    allow_net_select_lp=allow_net_select_lp,
                     entropy_norm=entropy_norm, **mb_ctx,
                 )
                 if n_oom_mb:
@@ -363,30 +307,26 @@ def _new_acc() -> dict:
             "entropy_sum": 0.0, "kl_ref_sum": 0.0, "kl_mask_sum": 0.0}
 
 
-def _kl_ref_terms(
-    ref_policy, kl_ref_coef, new_lp, klm, *, obs, act, masks, ptr_masks,
-    mode_mask, net_valid_mask, allow_net_select_lp, walked,
-):
+def _kl_ref_terms(ref_policy, kl_ref_coef, new_lp, mb, *, obs, walked):
     """``(kl_weighted, weight)`` per sample for the reference-KL penalty, or
     ``(None, None)`` when it is off. The reference is scored under ``no_grad``
-    on exactly the minibatch inputs the policy just scored."""
+    on exactly the minibatch inputs (``mb`` Transition rows) the policy just
+    scored."""
     if ref_policy is None or kl_ref_coef <= 0.0:
         return None, None
     from methods.rl_agent.training.finetune import kl_k3
     with torch.no_grad():
         ref_lp, _, _ = ref_policy.evaluate_actions_and_value(
-            obs, act, action_masks=masks, pointer_masks=ptr_masks,
-            mode_mask=mode_mask, net_valid_mask=net_valid_mask,
-            allow_net_select_lp=allow_net_select_lp, walked=walked,
+            obs, mb.actions, dist=mb.dist, walked=walked,
         )
     kl = kl_k3(ref_lp.to(new_lp.dtype), new_lp)
-    w = klm if klm is not None else torch.ones_like(kl)
+    w = mb.kl_mask if mb.kl_mask is not None else torch.ones_like(kl)
     return kl * w, w
 
 
 def _reactive_peel_step(
     policy, optimizer, device, *, mb_seq, algo, clip_eps, entropy_coef,
-    vf_coef, max_grad_norm, allow_net_select_lp, entropy_norm=False, **mb_ctx,
+    vf_coef, max_grad_norm, entropy_norm=False, **mb_ctx,
 ) -> tuple[dict[str, float], int]:
     """Default single-process minibatch step (a sibling of ``_ddp_shard_step``
     / ``_planned_minibatch_step`` — same dispatch shape): whole minibatch in
@@ -402,7 +342,6 @@ def _reactive_peel_step(
             policy, optimizer, device, algo=algo, clip_eps=clip_eps,
             entropy_coef=entropy_coef, vf_coef=vf_coef,
             max_grad_norm=max_grad_norm,
-            allow_net_select_lp=allow_net_select_lp,
             entropy_norm=entropy_norm, **mb_ctx,
         )
         return stats, 0
@@ -417,7 +356,6 @@ def _reactive_peel_step(
         n_oom = _peel_accumulate(
             policy, order, acc, device=device, algo=algo,
             clip_eps=clip_eps, entropy_coef=entropy_coef, vf_coef=vf_coef,
-            allow_net_select_lp=allow_net_select_lp,
             entropy_norm=entropy_norm, **mb_ctx,
         )
         nn.utils.clip_grad_norm_(policy.parameters(), max_grad_norm)
@@ -427,7 +365,7 @@ def _reactive_peel_step(
 
 def _ddp_shard_step(
     policy, optimizer, device, *, ddp, mb_seq, algo, clip_eps, entropy_coef,
-    vf_coef, max_grad_norm, allow_net_select_lp, entropy_norm=False, **mb_ctx,
+    vf_coef, max_grad_norm, entropy_norm=False, **mb_ctx,
 ) -> tuple[dict[str, float], int]:
     """Rank-sharded minibatch step (manual DDP; exactly one grad allreduce).
 
@@ -459,7 +397,6 @@ def _ddp_shard_step(
         n_oom = _peel_accumulate(
             policy, shard, acc, device=device, algo=algo, clip_eps=clip_eps,
             entropy_coef=entropy_coef, vf_coef=vf_coef,
-            allow_net_select_lp=allow_net_select_lp,
             entropy_norm=entropy_norm, **mb_ctx,
         )
     ddp.sync_grads(policy)
@@ -470,8 +407,7 @@ def _ddp_shard_step(
 
 def _planned_minibatch_step(
     policy, optimizer, device, *, mem_budget, mb_seq, algo, clip_eps,
-    entropy_coef, vf_coef, max_grad_norm, allow_net_select_lp,
-    entropy_norm=False, **mb_ctx,
+    entropy_coef, vf_coef, max_grad_norm, entropy_norm=False, **mb_ctx,
 ) -> tuple[dict[str, float], int, int]:
     """Budget-planned minibatch step: split BEFORE the forward, restart on OOM.
 
@@ -505,7 +441,6 @@ def _planned_minibatch_step(
                     policy, optimizer, device, algo=algo, clip_eps=clip_eps,
                     entropy_coef=entropy_coef, vf_coef=vf_coef,
                     max_grad_norm=max_grad_norm,
-                    allow_net_select_lp=allow_net_select_lp,
                     entropy_norm=entropy_norm, **mb_ctx,
                 )
                 return stats, 1, n_oom
@@ -518,7 +453,6 @@ def _planned_minibatch_step(
                     policy, chunk, acc, device=device, algo=algo,
                     clip_eps=clip_eps, entropy_coef=entropy_coef,
                     vf_coef=vf_coef,
-                    allow_net_select_lp=allow_net_select_lp,
                     entropy_norm=entropy_norm, **mb_ctx,
                 )
                 if measure:
@@ -549,23 +483,20 @@ def _planned_minibatch_step(
 
 def _fixed_batch_step(
     policy, optimizer, device, *, algo, clip_eps, entropy_coef, vf_coef,
-    max_grad_norm, allow_net_select_lp, entropy_norm=False,
-    mb_obs, mb_walk, mb_act, mb_old_lp, mb_masks, mb_ptr_masks, mb_mode_masks,
-    mb_nvm, mb_adv, mb_ret, mb_size,
-    mb_klm=None, ref_policy=None, kl_ref_coef=0.0, actor_frozen=False,
+    max_grad_norm, entropy_norm=False,
+    mb_obs, mb_walk, mb, mb_adv, mb_ret, mb_size,
+    ref_policy=None, kl_ref_coef=0.0, actor_frozen=False,
 ) -> dict[str, float]:
     """Single-forward minibatch step (the no-OOM path; byte-identical to the
-    original fixed-batch loop). ``mb_walk`` is the caller's gather closure —
-    ``mb_walk()`` returns this minibatch's walk dict (flat-walk index-gather).
-    Returns per-minibatch loss stats."""
+    original fixed-batch loop). ``mb`` is the minibatch's Transition rows;
+    ``mb_walk`` is the caller's gather closure — ``mb_walk()`` returns this
+    minibatch's walk dict (flat-walk index-gather). Returns per-minibatch
+    loss stats."""
     new_lp, entropy, new_values = policy.evaluate_actions_and_value(
-        mb_obs, mb_act,
-        action_masks=mb_masks, pointer_masks=mb_ptr_masks,
-        mode_mask=mb_mode_masks, net_valid_mask=mb_nvm,
-        allow_net_select_lp=allow_net_select_lp,
+        mb_obs, mb.actions, dist=mb.dist,
         walked=mb_walk(), entropy_norm=entropy_norm,
     )
-    ratio = torch.exp(new_lp - mb_old_lp)
+    ratio = torch.exp(new_lp - mb.old_log_probs)
     surr1 = ratio * mb_adv
     surr2 = torch.clamp(ratio, 1.0 - clip_eps, 1.0 + clip_eps) * mb_adv
     policy_loss = -torch.min(surr1, surr2).mean()
@@ -577,10 +508,7 @@ def _fixed_batch_step(
     else:
         loss, value_loss = grpo_update_step(policy_loss, entropy_loss, device)
     kl_w, w = _kl_ref_terms(
-        ref_policy, kl_ref_coef, new_lp, mb_klm, obs=mb_obs, act=mb_act,
-        masks=mb_masks, ptr_masks=mb_ptr_masks, mode_mask=mb_mode_masks,
-        net_valid_mask=mb_nvm, allow_net_select_lp=allow_net_select_lp,
-        walked=mb_walk(),
+        ref_policy, kl_ref_coef, new_lp, mb, obs=mb_obs, walked=mb_walk(),
     )
     kl_ref = kl_w.mean() if kl_w is not None else None
     if kl_ref is not None:
@@ -626,25 +554,23 @@ def _peel_accumulate(policy, positions: list[int], acc: dict, **kw) -> int:
 
 def _accumulate_chunk(
     policy, positions: list[int], acc: dict, *, device, algo, clip_eps,
-    entropy_coef, vf_coef, allow_net_select_lp, entropy_norm=False,
-    mb_obs, mb_walk, mb_act, mb_old_lp, mb_masks, mb_ptr_masks, mb_mode_masks,
-    mb_nvm, mb_adv, mb_ret, mb_size,
-    mb_klm=None, ref_policy=None, kl_ref_coef=0.0, actor_frozen=False,
+    entropy_coef, vf_coef, entropy_norm=False,
+    mb_obs, mb_walk, mb, mb_adv, mb_ret, mb_size,
+    ref_policy=None, kl_ref_coef=0.0, actor_frozen=False,
 ) -> None:
     """One chunk fwd+bwd, accumulating grad. Loss is summed over the chunk's
     samples and divided by the **full minibatch size** (``mb_size``), so summing
     the per-chunk gradients over a partition equals the single-forward mean
-    gradient. ``positions`` are minibatch-local indices into the ``mb_*`` tensors."""
+    gradient. ``positions`` are minibatch-local indices into ``mb`` / the
+    ``mb_*`` tensors."""
     sub = torch.as_tensor(positions, dtype=torch.long, device=device)
+    chunk = mb.select(sub)
+    obs = [mb_obs[j] for j in positions]
     new_lp, entropy, new_values = policy.evaluate_actions_and_value(
-        [mb_obs[j] for j in positions], mb_act[sub],
-        action_masks=mb_masks[sub], pointer_masks=mb_ptr_masks[sub],
-        mode_mask=mb_mode_masks[sub] if mb_mode_masks is not None else None,
-        net_valid_mask=mb_nvm[sub] if mb_nvm is not None else None,
-        allow_net_select_lp=allow_net_select_lp,
+        obs, chunk.actions, dist=chunk.dist,
         walked=mb_walk(positions), entropy_norm=entropy_norm,
     )
-    ratio = torch.exp(new_lp - mb_old_lp[sub])
+    ratio = torch.exp(new_lp - chunk.old_log_probs)
     adv = mb_adv[sub]
     surr1 = ratio * adv
     surr2 = torch.clamp(ratio, 1.0 - clip_eps, 1.0 + clip_eps) * adv
@@ -657,13 +583,7 @@ def _accumulate_chunk(
         value_term = torch.zeros((), device=device)
         chunk_loss = policy_term + entropy_term
     kl_w, w = _kl_ref_terms(
-        ref_policy, kl_ref_coef, new_lp,
-        mb_klm[sub] if mb_klm is not None else None,
-        obs=[mb_obs[j] for j in positions], act=mb_act[sub],
-        masks=mb_masks[sub], ptr_masks=mb_ptr_masks[sub],
-        mode_mask=mb_mode_masks[sub] if mb_mode_masks is not None else None,
-        net_valid_mask=mb_nvm[sub] if mb_nvm is not None else None,
-        allow_net_select_lp=allow_net_select_lp, walked=mb_walk(positions),
+        ref_policy, kl_ref_coef, new_lp, chunk, obs=obs, walked=mb_walk(positions),
     )
     if kl_w is not None:
         chunk_loss = chunk_loss + kl_ref_coef * kl_w.sum() / mb_size

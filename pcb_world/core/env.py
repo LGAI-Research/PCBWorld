@@ -17,10 +17,12 @@ from __future__ import annotations
 import copy
 import faulthandler
 import logging
+import os
 import time
 import weakref
 from collections import deque
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
+from operator import attrgetter
 from typing import TYPE_CHECKING, Any
 
 import gymnasium as gym
@@ -41,7 +43,9 @@ from pcb_world.engine import KiCadEngine
 from pcb_world.engine.drc import DRC_SEVERITY_MODE_ERRORS_AND_PROMOTED
 from pcb_world.engine.drc_config import (
     apply_default_drc_if_fallback,
+    verify_netclass_rules,
     compute_hardest_per_netclass,
+    design_rules_digest,
 )
 from pcb_world.engine.pcb_file_parser import parse_pcb_file
 from pcb_world.core.masking import (
@@ -70,9 +74,20 @@ from pcb_world.core.indexed_obs import (
     static_tables_from_dict,
 )
 from pcb_world.core.reward import PotentialReward, RewardState
-from pcb_world.core.reward_config import get_reward_config
+from pcb_world.core.reward_config import effective_reward_config
 
 logger = logging.getLogger(__name__)
+
+# Routing corner angle (degrees) -> PNS corner code: MITERED_45 / MITERED_90.
+_CORNER_CODES = {45: 0, 90: 2}
+
+
+def corner_mode_code(angle: int) -> int:
+    """Engine corner code of a routing angle — the one place configs' degrees
+    (``EnvConfig.corner_mode``) become ``KiCadEngine.set_corner_mode``'s code."""
+    if angle not in _CORNER_CODES:
+        raise ValueError(f"corner_mode must be 45 or 90 (degrees), got {angle!r}")
+    return _CORNER_CODES[angle]
 
 
 def _make_history_record(
@@ -183,6 +198,7 @@ class Checkpoint:
     #   wire_via_ref_state   → the on_net_end wire/via accumulation baseline.
     # Copied on capture AND restore so a restored env never aliases the node's set.
     episode_closed_nets: set = field(default_factory=set)
+    net_reopen_count: int = 0      # net_reselect diagnostic (info["net_reopens"])
     reward_prev_state: Any = None
     wire_via_ref_state: Any = None
     # RAII backstop: weakref to the owning engine so a dropped / leaked
@@ -209,6 +225,15 @@ class Checkpoint:
             pass
 
 
+def _readback_paths() -> dict[str, str]:
+    """``EnvConfig`` field → its declared ``metadata["readback"]`` path, for the fields
+    that have one."""
+    from configs.loader.schema import EnvConfig
+
+    return {f.name: f.metadata["readback"]
+            for f in fields(EnvConfig) if f.metadata["readback"] is not None}
+
+
 class PCBWorld(gym.Env):
     """KiCad routing environment with stateless action masking.
 
@@ -217,22 +242,16 @@ class PCBWorld(gym.Env):
 
     Args:
         board_path: Path to .kicad_pcb file.
-        max_steps: Maximum steps per episode.
-        masking_rule: Name of the masking rule to use (e.g. "strict", "relaxed").
+        env_config: The whole env-core config (:class:`~configs.loader.schema.EnvConfig`,
+            the resolved run config's ``env``; tests and diagnostics build one with
+            ``EnvConfig.with_overrides``). Required — the constructor holds no
+            default for any of its fields. Field semantics: the schema docs.
+        seed: Seed of the Python-side env RNG (keep-routing draw, reward noise);
+            None = gymnasium's lazy entropy seeding.
         render_mode: "rgb_array" or None.
-        use_yaml_drc_fallback: When the board has no companion ``.kicad_pro``
-            AND no legacy setup tokens (the "real default" fallback case),
-            True substitutes ``drc_config_path``'s global minima into BDS
-            (with a ``UserWarning``); ``drc_config_path`` is **required**
-            in that case — there is no implicit default YAML. False
-            (default) raises ``ValueError`` — every dataset we ship should
-            already carry rules, so reaching the fallback path is treated
-            as a load failure rather than silently routing on KiCad
-            compile-time defaults. Authoritative loads (pro or legacy
-            setup) are never touched and never trigger either path.
-        drc_config_path: Explicit YAML supplying the fallback global minima
-            when ``use_yaml_drc_fallback`` is True. No implicit default
-            (e.g. ``configs/drc/pcbworld_drc.yaml``).
+        early_stop_ratsnest_patience / output_best_board: eval/MCTS episode
+            control (off by default, see the attributes below).
+        target_nets / preserve_nontarget_routing: net-subset routing.
     """
 
     metadata = {"render_modes": ["rgb_array"], "render_fps": 5}
@@ -240,137 +259,70 @@ class PCBWorld(gym.Env):
     def __init__(
         self,
         board_path: str,
-        max_steps: int = 1024,
-        masking_rule: str = "pcbworld_masking",
-        render_mode: str | None = None,
-        reward_rule: str = "pcbworld_reward",
-        reward_noise_std: float = 0.0,
-        emit_drc_tokens: bool = True,
-        via_penalty: float | None = None,
-        wirelength_penalty: float | None = None,
-        drc_penalty: float | None = None,
-        drc_log_scale: float | None = None,
-        drc_log_agg_scale: float | None = None,
-        drc_log_offset: float | None = None,
-        reward_step_penalty: float | None = None,
-        wire_via_emission: str | None = None,
-        corner_mode: int = 0,
-        use_yaml_drc_fallback: bool = False,
-        drc_config_path: str | None = None,
-        env_config: "EnvConfig | None" = None,
-        engine_seed: int | None = 77,
+        env_config: "EnvConfig",
+        *,
         seed: int | None = None,
-        shove_iter_limit: int = 250,
-        followbranch_iter_limit: int = 1_000_000,
-        reject_if_stuck: bool = True,
-        simplify_outline: bool = False,
-        obs_format: str = "json",
-        outline_obs: str = "tess",
-        action_history_len: int = 1,
-        net_constraint_obs: bool = False,
+        render_mode: str | None = None,
         early_stop_ratsnest_patience: int = 0,
         output_best_board: bool = False,
         target_nets: "set[int] | frozenset[int] | list[int] | None" = None,
         preserve_nontarget_routing: bool = True,
-        keep_routing_fraction: "tuple[float, float] | list[float] | None" = None,
         **unexpected: object,
     ) -> None:
         super().__init__()
 
-        # Two known-removed kwargs get a tailored message; anything else is
-        # rejected outright (a typo'd kwarg silently swallowed here is exactly
-        # the fallback class the factory layer already refuses).
-        if "use_drc" in unexpected:
-            import warnings
-            warnings.warn(
-                "PCBWorld.use_drc was removed. DRC is now always included "
-                "in the potential (weight controlled by drc_penalty); DRC "
-                "runs every step in mode='per_step', only at episode end in "
-                "mode='terminal'. The argument is ignored.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        if "config" in unexpected:
+        # Anything else is rejected outright: a typo'd kwarg silently swallowed
+        # here is exactly the fallback class the factory layer already refuses,
+        # and an env-core field passed by keyword belongs in env_config.
+        if unexpected:
             raise TypeError(
-                "PCBWorld.config (untyped override dict) was removed. Its keys "
-                "were silently dropped on a typo or wrong layer, so it is a hard "
-                "error rather than a no-op: pass an EnvConfig via env_config=, or "
-                "the explicit keyword args directly."
+                f"PCBWorld got unknown kwarg(s): {sorted(unexpected)} — env-core "
+                "fields travel in env_config (EnvConfig.with_overrides(...) for a "
+                "one-off env); factory-level names belong to "
+                "make_decoder_env/make_decoder_env_pool"
             )
-        if unknown := sorted(set(unexpected) - {"use_drc", "config"}):
-            raise TypeError(
-                f"PCBWorld got unknown kwarg(s): {unknown} — unknown arguments "
-                "are always rejected (factory-level names belong to "
-                "make_decoder_env/make_decoder_env_pool, not the env core)"
-            )
-
-        # Canonical env-core config. When given, it is the single source for
-        # the env-core kwargs (the RL factory and LLM worker construct via it);
-        # individual kwargs above act as the field defaults / legacy path.
-        if env_config is not None:
-            max_steps = env_config.max_steps
-            masking_rule = env_config.masking_rule
-            reward_rule = env_config.reward_rule
-            reward_noise_std = env_config.reward_noise_std
-            emit_drc_tokens = env_config.emit_drc_tokens
-            via_penalty = env_config.reward.via_penalty
-            wirelength_penalty = env_config.reward.wirelength_penalty
-            drc_penalty = env_config.reward.drc_penalty
-            drc_log_scale = env_config.reward.drc_log_scale
-            drc_log_agg_scale = env_config.reward.drc_log_agg_scale
-            drc_log_offset = env_config.reward.drc_log_offset
-            reward_step_penalty = env_config.reward.reward_step_penalty
-            wire_via_emission = env_config.reward.wire_via_emission
-            corner_mode = env_config.corner_mode
-            use_yaml_drc_fallback = env_config.use_yaml_drc_fallback
-            drc_config_path = env_config.drc_config_path
-            engine_seed = env_config.engine_seed
-            shove_iter_limit = env_config.shove_iter_limit
-            followbranch_iter_limit = env_config.followbranch_iter_limit
-            reject_if_stuck = env_config.reject_if_stuck
-            simplify_outline = env_config.simplify_outline
-            obs_format = env_config.obs_format
-            outline_obs = env_config.outline_obs
-            action_history_len = env_config.action_history_len
-            net_constraint_obs = env_config.net_constraint_obs
-            keep_routing_fraction = env_config.keep_routing_fraction
-
-        if action_history_len < 1:
+        cfg = env_config
+        if cfg.action_history_len < 1:
             raise ValueError(
-                f"action_history_len must be >= 1, got {action_history_len}"
+                f"action_history_len must be >= 1, got {cfg.action_history_len}"
+            )
+        if not cfg.reward_noise_clip_sigma > 0:
+            raise ValueError(
+                f"reward_noise_clip_sigma must be > 0, got {cfg.reward_noise_clip_sigma}"
             )
 
-        if obs_format not in ("json", "indexed"):
+        if cfg.obs_format not in ("json", "indexed"):
             raise ValueError(
-                f"obs_format must be 'json' or 'indexed', got {obs_format!r}"
+                f"obs_format must be 'json' or 'indexed', got {cfg.obs_format!r}"
             )
 
-        if outline_obs not in ("poly16", "tess", "arc"):
+        if cfg.outline_obs not in ("poly16", "tess", "arc"):
             raise ValueError(
-                f"outline_obs must be 'poly16', 'tess' or 'arc', got {outline_obs!r}"
+                f"outline_obs must be 'poly16', 'tess' or 'arc', got {cfg.outline_obs!r}"
             )
 
-        if corner_mode not in (0, 1, 2, 3):
-            raise ValueError(
-                f"corner_mode must be in {{0,1,2,3}} "
-                f"(0=MITERED_45 default, 2=MITERED_90 no-diagonals), got {corner_mode}"
-            )
+        corner_mode_code(cfg.corner_mode)   # validates the angle
 
         # --- Config (immutable after init) ---
         self.board_path = board_path
-        self.max_steps = max_steps
-        self.masking_rule = masking_rule
+        self.max_steps = cfg.max_steps
+        self.masking_rule = cfg.masking_rule
         self.render_mode = render_mode
-        self._reward_noise_std = reward_noise_std
-        self._emit_drc_tokens = emit_drc_tokens
-        self._corner_mode = corner_mode
-        self._obs_format = obs_format
-        self._outline_obs = outline_obs
+        self._reward_noise_std = cfg.reward_noise_std
+        self._reward_noise_clip_sigma = cfg.reward_noise_clip_sigma
+        self._emit_drc_tokens = cfg.emit_drc_tokens
+        self._corner_mode = cfg.corner_mode
+        self._obs_format = cfg.obs_format
+        self._outline_obs = cfg.outline_obs
         # Per-net DRC constraint observation (NET-token tw/cl/vd channels):
         # when on, every ``board_static`` net carries its resolved netclass
         # values (see _fill_net_constraint_obs). Off (default) keeps the
         # observation byte-identical to pre-knob checkpoints.
-        self._net_constraint_obs = bool(net_constraint_obs)
+        self._net_constraint_obs = bool(cfg.net_constraint_obs)
+        # Reselect mode: net_select on a net closed by net_end reopens it.
+        # Off (default) keeps net_end a one-way retire, as every pre-knob
+        # checkpoint was trained.
+        self._net_reselect = bool(cfg.net_reselect)
         # Net-subset (partial routing): restrict the problem to these net codes.
         # None = route every net (legacy). When set, only these nets appear as
         # routable targets (board_static.nets), carry ratsnest/routing_geometry,
@@ -402,18 +354,18 @@ class PCBWorld(gym.Env):
         # and are simply not selectable. Requires the board file to actually
         # carry complete routing for every sampled net — enforced loudly at
         # reset (a pristine-board check, so it is pure file validation).
-        if keep_routing_fraction is not None:
+        if cfg.keep_routing_fraction is not None:
             if target_nets is not None:
                 raise ValueError(
                     "keep_routing_fraction is a whole-board augmentation and is "
                     "mutually exclusive with target_nets (net-subset routing)"
                 )
-            if len(keep_routing_fraction) != 2:
+            if len(cfg.keep_routing_fraction) != 2:
                 raise ValueError(
                     f"keep_routing_fraction must be (lo, hi), "
-                    f"got {keep_routing_fraction!r}"
+                    f"got {cfg.keep_routing_fraction!r}"
                 )
-            lo, hi = float(keep_routing_fraction[0]), float(keep_routing_fraction[1])
+            lo, hi = float(cfg.keep_routing_fraction[0]), float(cfg.keep_routing_fraction[1])
             if not (0.0 <= lo <= hi <= 1.0):
                 raise ValueError(
                     f"keep_routing_fraction must satisfy 0 <= lo <= hi <= 1, "
@@ -453,25 +405,21 @@ class PCBWorld(gym.Env):
             self.np_random = np.random.default_rng(seed)
 
         # --- Engine & static board data ---
-        # engine_seed (default 77; decided once here, never re-seeded): makes routing +
+        # engine_seed (decided once here, never re-seeded): makes routing +
         # UUID-keyed DRC reproducible across runs/processes for a fixed action sequence.
-        # None = default entropy seeding. Global generator → one env per process for
+        # < 0 = default entropy seeding. Global generator → one env per process for
         # clean determinism (the standard vectorized-RL layout).
         # Kwargs kept verbatim for ``_reload_board_from_file`` (keep-routing
         # augmentation) so a reloaded engine is constructed EXACTLY like this
         # one — same engine_seed ⇒ same UUID stream from scratch each episode.
         self._engine_ctor_kwargs = dict(
-            engine_seed=engine_seed,
-            shove_iter_limit=shove_iter_limit,
-            followbranch_iter_limit=followbranch_iter_limit,
-            reject_if_stuck=reject_if_stuck,
-            simplify_outline=simplify_outline,
-            # Pro-less boards are refused by the engine unless this opt-in
+            **cfg.engine_kwargs(),
+            # Pro-less boards are refused by the engine unless rules_source
             # says the YAML fallback below will substitute the rules.
-            allow_default_rules=use_yaml_drc_fallback,
+            allow_default_rules=cfg.rules_source == "board_or_yaml",
         )
-        self._drc_config_path = drc_config_path
-        self._use_yaml_drc_fallback = bool(use_yaml_drc_fallback)
+        self._drc_config_path = cfg.drc_config_path
+        self._rules_source = cfg.rules_source
         # True while the live board equals the file byte-for-byte (no strip,
         # no episode). Any reset flips it False; only an engine (re)build
         # turns it back on. Drives the keep-routing reload-per-reset.
@@ -482,17 +430,7 @@ class PCBWorld(gym.Env):
         # "all target nets connected". No-op (whole-board) when target_nets=None.
         self._engine.set_target_nets(self._target_nets)
 
-        # Strict by default: raise if neither .kicad_pro nor legacy
-        # setup tokens are present, since that almost always means a
-        # load failure. Set ``use_yaml_drc_fallback=True`` AND an explicit
-        # ``drc_config_path`` to opt in to substituting that YAML instead
-        # (warns on trigger; a missing path also raises). Authoritative
-        # loads are unaffected either way.
-        apply_default_drc_if_fallback(
-            self._engine,
-            config_path=drc_config_path,
-            use_yaml=use_yaml_drc_fallback,
-        )
+        self._load_design_rules()
 
         # Aggregate per-netclass DRC info into a single "hardest setting"
         # dict for env-level use (prompt generation, logging, stricter-than
@@ -503,7 +441,7 @@ class PCBWorld(gym.Env):
             self._engine.get_design_rules()
         )
 
-        parsed = parse_pcb_file(board_path, self._engine, outline_mode=outline_obs)
+        parsed = parse_pcb_file(board_path, self._engine, outline_mode=cfg.outline_obs)
         meta = self._engine.get_board_meta()
         # Cache the static parse pieces (pads / edges / net_names / obstacles are
         # routing-independent) + meta so set_target_nets() can rebuild board_info
@@ -548,44 +486,21 @@ class PCBWorld(gym.Env):
         # net_end consumes the net; see net_valid_mask). Reset() re-seeds it
         # with ``_born_closed_nets``.
         self._episode_closed_nets: set[int] = set()
+        # Reselect mode diagnostic: closed nets reopened by net_select this episode.
+        self._net_reopen_count = 0
 
-        # Seed PNS's "current via size" from the Default netclass, matching
-        # what pcbnew uses when the user invokes ``add via`` without an
-        # explicit preset. This is the same intent the old code had (apply
-        # the board's declared via_size / via_drill) but sourced from the
-        # engine so modern KiCad 9 boards (which dropped the legacy setup
-        # tokens) work correctly instead of silently falling back to
-        # ``SIZES_SETTINGS`` defaults — ``m_viaDrill=0.25 mm`` — that don't
-        # always match the board's Default netclass drill and produce
-        # avoidable DRC violations on ``make_via``.
-        #
-        # Track width is intentionally NOT set here: ``initRouter`` already
-        # copies ``bds.GetCurrentTrackWidth()`` (which is the Default
-        # netclass's track_width by KiCad convention) into PNS.
-        _default_nc = self._engine.get_design_rules().default_netclass
-        if _default_nc.via_diameter_mm > 0:
-            self._engine.set_via_diameter(_default_nc.via_diameter_mm)
-        if _default_nc.via_drill_mm > 0:
-            self._engine.set_via_drill(_default_nc.via_drill_mm)
+        # Track width / via size / clearance are not seeded here: the engine imports
+        # them from the start item's net at every start_route (as pcbnew does).
 
         # --- Action dispatcher (owns current_net_id, routing_mode) ---
-        self._masking_rule_instance = get_masking_rule(masking_rule)
+        self._masking_rule_instance = get_masking_rule(cfg.masking_rule)
         self._dispatcher = ActionDispatcher()
 
         # --- Reward tracking ---
         # Overrides are applied to a config COPY before build so the config
         # and the built reward always agree; value validation lives in
         # PotentialReward.__init__ (no duplicate checks here).
-        self._reward_config = get_reward_config(reward_rule).with_overrides(
-            step_penalty=reward_step_penalty,
-            via_penalty=via_penalty,
-            wirelength_penalty=wirelength_penalty,
-            drc_penalty=drc_penalty,
-            drc_log_scale=drc_log_scale,
-            drc_log_agg_scale=drc_log_agg_scale,
-            drc_log_offset=drc_log_offset,
-            wire_via_emission=wire_via_emission,
-        )
+        self._reward_config = effective_reward_config(cfg.reward_rule, vars(cfg.reward))
         self._potential_reward = self._reward_config.build_reward()
         # Board-resolution hooks (completion / clean-completion log scale,
         # bbox-normalized wirelength): the definitions live in
@@ -600,13 +515,16 @@ class PCBWorld(gym.Env):
         # in terminal mode. If the potential has zero DRC weight, skip the engine
         # entirely (no step DRC, no episode-end logging DRC).
         self._drc_active = _potential_uses_drc(self._potential_reward)
-        # per_step-mode DRC uses the incremental engine path (bit-exact with
-        # full DRC on a forward rollout, ~100x faster vs the stock provider). The
-        # episode-end / terminal DRC stays full (ground truth). Toggle off to compare.
-        self._drc_incremental = True
+        # per_step-mode DRC uses the incremental engine path unless drc_incremental is
+        # off (bit-exact with full DRC on a forward rollout, ~100x faster vs the stock
+        # provider). The episode-end / terminal DRC stays full (ground truth).
+        self._drc_incremental = cfg.drc_incremental
+        # Reset runs a full DRC whenever the potential reads DRC, so Φ₀
+        # (initial_potential) is the same Φ as the episode-end final_potential
+        # in both modes.
         self._reward = RewardTracker(
             fn=self._potential_reward,
-            run_drc_on_reset=(self._reward_config.mode == "per_step" and self._drc_active),
+            run_drc_on_reset=self._drc_active,
         )
         # Baseline state for the ``on_net_end`` wire/via accumulation mode.
         # Reset to None on every env reset; advanced to the current state
@@ -628,6 +546,10 @@ class PCBWorld(gym.Env):
         # the terminal info so every per-rollout row carries a baseline and the
         # headline potential can be reported as a (non-negative) gain over it.
         self._initial_potential: float = float("nan")
+        # The reward state of that bare board (DRC counted iff self._reward.run_drc_on_reset):
+        # inline DRC scoring prices Φ₀ with its own reward config from it. With keep-routing
+        # augmentation the reset board includes the kept tracks (eval never keeps any).
+        self._initial_reward_state: RewardState | None = None
 
         # --- Observation cache ---
         # board_static carries a single ``board_constraints`` key populated
@@ -647,7 +569,7 @@ class PCBWorld(gym.Env):
         # --- Recent-action tracking (for the obs action-history tokens) ---
         # Newest first; empty at episode start. Each entry is a
         # ``_make_history_record`` record (incl. net context + success flag).
-        self._action_history_len = int(action_history_len)
+        self._action_history_len = int(cfg.action_history_len)
         self._action_history: deque[dict] = deque(maxlen=self._action_history_len)
 
         # --- Gym spaces ---
@@ -680,6 +602,10 @@ class PCBWorld(gym.Env):
 
         # --- Crash logger (survives SIGSEGV; dir resolved by pcb_world.diag) ---
         self._crash_logger = CrashLogger(env_id=id(self) % 10000)
+
+        # Every value read back from where it is consumed must equal the config.
+        self._env_config = cfg
+        self._check_readback()
 
     def reset(
         self,
@@ -792,9 +718,7 @@ class PCBWorld(gym.Env):
 
         # Reset engine configuration
         self._engine.set_routing_mode(2)
-        self._engine.set_corner_mode(self._corner_mode)
-        self._engine.set_track_width(0)
-        self._engine.reset_via_mode()
+        self._engine.set_corner_mode(corner_mode_code(self._corner_mode))
         self._engine.clear_drc_cache()
         # Drop any checkpoints carried over from the previous episode and re-seed the
         # handle epoch, so stale handles become invalid and the engine snapshot starts
@@ -817,6 +741,11 @@ class PCBWorld(gym.Env):
             routable_nets=self._routable_nets,
         )
         self._reward.reset(self._engine)
+        self._initial_reward_state = self._reward.prev_state
+        if self._reward.run_drc_on_reset and self._reward_config.mode != "per_step":
+            # Terminal mode's steps never refresh DRC: drop the bare board's
+            # Φ₀ DRC so it does not linger in every observation as DRC tokens.
+            self._engine.clear_drc_cache()
         self._wire_via_ref_state = None
         self._crash_logger.on_reset(self.board_path)
         self._action_history.clear()
@@ -863,6 +792,7 @@ class PCBWorld(gym.Env):
                     f"routable={sorted(self._routable_nets)}"
                 )
         self._episode_closed_nets = set(self._born_closed_nets)
+        self._net_reopen_count = 0
 
         # Capture episode-initial unconnected count for the ratsnest metric.
         # ``self._reward.reset`` populated ``prev_state`` from the just-reset
@@ -920,9 +850,53 @@ class PCBWorld(gym.Env):
 
         obs = self._get_obs()
         info = self._get_info()
+        # Φ₀ rides the reset info too, so a producer can price a later failed
+        # attempt of this episode (a worker death leaves no terminal info).
+        info["initial_potential"] = self._initial_potential
+        # The rules too, so an episode its producer ends early (no terminal info)
+        # still records what the board was routed under.
+        info["rules_digest"] = self.rules_digest
+        info["rules_substitution"] = self.rules_substitution
         if self._sampled_keep_nets is not None:
             info["keep_nets"] = sorted(self._sampled_keep_nets)
         return obs, info
+
+    def effective_config(self) -> dict[str, Any]:
+        """The :class:`~configs.loader.schema.EnvConfig` fields as their sinks hold
+        them: each field's declared ``metadata["readback"]`` path read off this env
+        (the engine knobs through the engine's getters). Fields declared
+        ``readback=None`` are absent. A closed env has no engine to read from."""
+        if self._engine is None:
+            raise RuntimeError("effective_config() on a closed PCBWorld: its engine, "
+                               "where the knobs are read back, is released")
+        return {name: attrgetter(path)(self) for name, path in _readback_paths().items()}
+
+    def _check_readback(self, *, engine_only: bool = False) -> None:
+        """Close the env and raise when a sink holds another value than the config
+        asked for. ``engine_only`` checks just the engine readbacks (``_engine.*``),
+        the ones an engine rebuild can change."""
+        try:
+            wrong = {}
+            for name, path in _readback_paths().items():
+                if engine_only and not path.startswith("_engine."):
+                    continue
+                want, held = getattr(self._env_config, name), attrgetter(path)(self)
+                # A list config value (keep_routing_fraction) is held as a tuple.
+                if (tuple(want) if isinstance(want, list) else want) != held:
+                    wrong[name] = (want, held)
+            if wrong:
+                raise RuntimeError(
+                    "env config readback mismatch — {field: (config, effective)}: "
+                    f"{wrong}"
+                )
+        except Exception:
+            self.close()   # release the router before the error propagates
+            raise
+
+    def set_max_steps(self, max_steps: int) -> None:
+        """Change the truncation cap; the env's config follows (one value, two holders)."""
+        self._env_config = self._env_config.with_flat({"max_steps": max_steps})
+        self.max_steps = max_steps
 
     def _reload_board_from_file(self) -> None:
         """Rebuild the engine from the board file (keep-routing augmentation).
@@ -945,6 +919,7 @@ class PCBWorld(gym.Env):
         self._renderer = None
         self._engine.close()
         self._engine = KiCadEngine(self.board_path, **self._engine_ctor_kwargs)
+        self._check_readback(engine_only=True)
         self._engine.set_target_nets(self._target_nets)
         # The rebuilt engine carries a FRESH DRCUtils, so the net-subset DRC
         # filter has to be re-installed here too. Without it a reloaded episode
@@ -954,19 +929,48 @@ class PCBWorld(gym.Env):
             frozenset(nc.net_name for nc in self._board_info.nets.values())
             if self._target_nets is not None else None
         )
-        apply_default_drc_if_fallback(
-            self._engine,
-            config_path=self._drc_config_path,
-            use_yaml=self._use_yaml_drc_fallback,
-        )
-        # Re-seed PNS's current via size from the Default netclass (same
-        # intent + source as the construction-time push above).
-        _default_nc = self._engine.get_design_rules().default_netclass
-        if _default_nc.via_diameter_mm > 0:
-            self._engine.set_via_diameter(_default_nc.via_diameter_mm)
-        if _default_nc.via_drill_mm > 0:
-            self._engine.set_via_drill(_default_nc.via_drill_mm)
+        self._load_design_rules()
         self._board_pristine = True
+
+    def _rule_files_stamp(self) -> tuple:
+        """(path, mtime_ns, size) of the files the rules come from: board, project,
+        and the DRC YAML when the fallback may use it."""
+        stamp = []
+        paths = [self.board_path, self._engine.get_project_path()]
+        if self._rules_source == "board_or_yaml" and self._drc_config_path:
+            paths.append(str(self._drc_config_path))
+        for path in paths:
+            try:
+                st = os.stat(path)
+            except OSError:          # pro-less board: the project path does not exist
+                stamp.append((path, None, None))
+            else:
+                stamp.append((path, st.st_mtime_ns, st.st_size))
+        return tuple(stamp)
+
+    def _load_design_rules(self) -> None:
+        """Settle the rules of a freshly built engine.
+
+        ``rules_source='board'`` raises when the board has neither a .kicad_pro nor
+        legacy setup tokens (almost always a load failure); ``'board_or_yaml'``
+        substitutes ``drc_config_path``'s minima then, recorded in
+        :attr:`rules_substitution` (None when the board's own rules apply).
+        Then ``verify_netclass_rules`` and the effective-rules digest
+        :attr:`rules_digest` on one ``get_design_rules`` snapshot — both skipped on a
+        keep-routing reload when the board and project files are unchanged since
+        the last successful check (same files + same construction kwargs = same rules).
+        The reset ``info`` and every terminal ``info`` carry both ``rules_digest`` and
+        ``rules_substitution``.
+        """
+        self.rules_substitution = apply_default_drc_if_fallback(
+            self._engine, self._drc_config_path, rules_source=self._rules_source)
+        stamp = self._rule_files_stamp()
+        if stamp == getattr(self, "_verified_rules_stamp", None):
+            return
+        rules = self._engine.get_design_rules()
+        verify_netclass_rules(self._engine, rules)
+        self.rules_digest = design_rules_digest(rules)
+        self._verified_rules_stamp = stamp
 
     def _sample_keep_nets(self) -> frozenset[int]:
         """Draw the keep-routing augmentation set K (see ``__init__``).
@@ -1089,6 +1093,15 @@ class PCBWorld(gym.Env):
                 closed_net = router_state.get("current_net")
                 if closed_net is not None:
                     self._episode_closed_nets.add(int(closed_net))
+            # Reselect mode: selecting a closed net reopens it, so the
+            # all-nets-closed termination waits for its next net_end. A
+            # successful net_select implies the net still has ratsnest edges
+            # (action.net_select), so a complete net is never reopened.
+            elif (success and self._net_reselect
+                    and action_type == ACT_NET_SELECT
+                    and int(action["net_id"]) in self._episode_closed_nets):
+                self._episode_closed_nets.discard(int(action["net_id"]))
+                self._net_reopen_count += 1
             after_snap = self._engine.get_reward_snapshot(
                 run_drc=step_drc, incremental=self._drc_incremental,
             )
@@ -1240,8 +1253,8 @@ class PCBWorld(gym.Env):
             # Optional Gaussian noise on terminal Φ (terminal mode only, legacy)
             if (terminated or truncated) and self._reward_noise_std > 0:
                 noise = self.np_random.normal(0, self._reward_noise_std)
-                noise = np.clip(noise, -4 * self._reward_noise_std,
-                                4 * self._reward_noise_std)
+                bound = self._reward_noise_clip_sigma * self._reward_noise_std
+                noise = np.clip(noise, -bound, bound)
                 potential_diff += noise
 
         # 5c. other_penalty (action-class specific; all values from reward_config)
@@ -1278,6 +1291,8 @@ class PCBWorld(gym.Env):
         info["action_type"] = action_type
         info["action_success"] = success
         info["action_class"] = action_class
+        if self._net_reselect:
+            info["net_reopens"] = self._net_reopen_count
         # Φ-delta component of the reward (no step / invalid penalties), exposed
         # so search (MCTS) can accumulate a value that telescopes onto Φ.
         info["potential_diff"] = potential_diff
@@ -1324,6 +1339,8 @@ class PCBWorld(gym.Env):
                 info["final_potential"] = self._potential_reward.potential(final_state)
             # Baseline + gain over the bare board (always carried on the row).
             info["initial_potential"] = self._initial_potential
+            info["rules_digest"] = self.rules_digest
+            info["rules_substitution"] = self.rules_substitution
             if "final_potential" in info:
                 info["potential_gain"] = info["final_potential"] - self._initial_potential
             if truncated and not terminated:
@@ -1382,11 +1399,6 @@ class PCBWorld(gym.Env):
         self, action_type: int, action: dict[str, Any]
     ) -> tuple[bool, dict[str, Any]]:
         """Dispatch to the appropriate routing action function."""
-        if action_type == ACT_NET_SELECT:
-            # Seed the engine with the selected net's DRC params before the
-            # dispatcher runs. External observers (LLM prompt / RL tokenizer)
-            # stay untouched — width/via sizing is the engine's concern.
-            self._apply_net_constraints(int(action["net_id"]))
         result = self._dispatcher.dispatch(self._engine, action_type, action)
         return result.success, result.info
 
@@ -1394,104 +1406,46 @@ class PCBWorld(gym.Env):
     # Net-class aware engine parameters
     # ------------------------------------------------------------------
 
-    # Netclass fields resolved for the engine push (net_select) AND the
-    # per-net constraint observation: (key, netclass attr, BDS global-min
-    # attr). The via-drill floor lives under the legacy "through hole" name.
+    # Netclass fields of the per-net constraint observation: (key, netclass attr).
     _NET_RULE_FIELDS = (
-        ("track_width", "track_width_mm", "min_track_width_mm"),
-        ("clearance", "clearance_mm", "min_clearance_mm"),
-        ("via_diameter", "via_diameter_mm", "min_via_diameter_mm"),
-        ("via_drill", "via_drill_mm", "min_through_hole_mm"),
+        ("track_width", "track_width_mm"),
+        ("clearance", "clearance_mm"),
+        ("via_diameter", "via_diameter_mm"),
+        ("via_drill", "via_drill_mm"),
     )
 
-    def _resolve_net_rule_values(
-        self, net_id: int, rules,
-    ) -> tuple[dict[str, float], dict[str, float], bool]:
-        """Resolve the netclass DRC values (``_NET_RULE_FIELDS``) for ``net_id``.
-
-        Returns ``(raw, clamped, is_default)``. ``raw`` prefers the matched
-        netclass value; a field the class leaves unset (``-1.0`` — KiCad
-        "inherit") falls back to the Default netclass, mirroring KiCad's own
-        resolution rules. ``clamped`` lifts each raw value up to the BDS
-        global minimum when one is declared (``floor > 0``): KiCad doesn't
-        always adjust netclass values to the min on load, so a raw class
-        value can sit below the DRC floor — using it unchanged would route
-        into immediate-violation territory. A negative floor (unset) leaves
-        the value alone. ``clamped`` is the effective value — what the
-        engine is driven with and what the observation exposes.
-        """
+    def _resolve_net_rule_values(self, net_id: int, rules) -> dict[str, float]:
+        """The sizes ``net_id`` is routed with: its net class values, a field the
+        class leaves unset taken from the Default class (KiCad's own resolution).
+        The engine imports the same values at ``start_route``; the board-minimum
+        floor it applies never changes them — ``verify_netclass_rules`` refuses a
+        board where it would."""
         nc = self._resolve_netclass(net_id, rules)
         default = rules.default_netclass
-        is_default = getattr(nc, "name", "") == getattr(default, "name", "")
-        raw: dict[str, float] = {}
-        clamped: dict[str, float] = {}
-        for key, attr, floor_attr in self._NET_RULE_FIELDS:
+        out: dict[str, float] = {}
+        for key, attr in self._NET_RULE_FIELDS:
             v = getattr(nc, attr, -1.0)
-            if v < 0:
-                v = getattr(default, attr, -1.0)
-            raw[key] = v
-            # Direct attribute access on purpose: every floor exists on the
-            # binding's RLDesignRules — a missing one is a contract break
-            # that must fail loud, not silently skip the clamp.
-            floor = getattr(rules, floor_attr)
-            clamped[key] = floor if (floor > 0 and v < floor) else v
-        return raw, clamped, is_default
-
-    def _apply_net_constraints(self, net_id: int) -> None:
-        """Push ``track_width`` / ``via_diameter`` / ``via_drill`` from the
-        selected net's netclass into the engine (resolution + clamping:
-        ``_resolve_net_rule_values``; clearance is not pushed — the DRC
-        engine enforces it natively per netclass).
-
-        Nets that resolve to the **Default** netclass take the fast path:
-        we do nothing, since ``__init__`` already seeded the router with
-        those values via ``initRouter`` + the default-netclass via sizes.
-        Re-pushing identical values mid-episode was observed to perturb
-        PNS size-cache state on boards that sit on the DRC boundary (see
-        ``test_via_strategy_drc_zero``), so we only override when a
-        non-Default class is actually in effect — BUT a raw default value
-        can itself sit below the DRC floor (e.g. default track_width 0.2 <
-        min 0.3), so for Default we still push ONLY the fields the clamp
-        actually RAISED above their raw value (never an identical re-push).
-        """
-        rules = self._engine.get_design_rules()
-        raw, clamped, is_default = self._resolve_net_rule_values(net_id, rules)
-
-        tw, tw_raw = clamped["track_width"], raw["track_width"]
-        if tw > 0 and (not is_default or tw != tw_raw):
-            self._engine.set_track_width(tw)
-        vd, vd_raw = clamped["via_diameter"], raw["via_diameter"]
-        if vd > 0 and (not is_default or vd != vd_raw):
-            self._engine.set_via_diameter(vd)
-        dr, dr_raw = clamped["via_drill"], raw["via_drill"]
-        if dr > 0 and (not is_default or dr != dr_raw):
-            self._engine.set_via_drill(dr)
+            out[key] = v if v >= 0 else getattr(default, attr, -1.0)
+        return out
 
     def _fill_net_constraint_obs(self) -> None:
         """Populate ``NetContext.constraints`` for every net in
-        ``board_info.nets`` (the ``net_constraint_obs`` knob) with the
-        resolved-and-clamped values from ``_resolve_net_rule_values`` —
-        identical to what ``net_select`` pushes into the engine, so the
-        policy observes the exact widths / clearances it will actually
-        route with. A non-positive resolved value (field unset ``-1``
-        through the whole netclass → Default chain, or declared as an
-        explicit ``0`` — with no BDS floor lifting it either way) has no
-        usable observation value — loud failure instead of a silent 0.
+        ``board_info.nets`` (the ``net_constraint_obs`` knob) with the sizes
+        the engine routes that net with (``_resolve_net_rule_values``). A
+        non-positive value (unset through the whole netclass → Default chain,
+        or an explicit ``0``) has no usable observation value — loud failure
+        instead of a silent 0.
         """
         rules = self._engine.get_design_rules()
         for code, ctx in self._board_info.nets.items():
-            raw, clamped, _is_default = self._resolve_net_rule_values(
-                code, rules,
-            )
-            bad = {k: ("unset" if raw[k] < 0 else f"{raw[k]!r}")
-                   for k, v in clamped.items() if v <= 0}
+            values = self._resolve_net_rule_values(code, rules)
+            bad = {k: v for k, v in values.items() if v <= 0}
             if bad:
                 raise RuntimeError(
                     f"net_constraint_obs: net {code} ({ctx.net_name!r}) "
-                    f"resolves no positive value for {bad} (netclass → "
-                    "Default resolution shown; no BDS minimum lifts it)"
+                    f"resolves no positive value for {bad} (netclass → Default)"
                 )
-            ctx.constraints = clamped
+            ctx.constraints = values
 
     def _resolve_netclass(self, net_id: int, rules):
         """Return the ``RLNetClassInfo`` that applies to ``net_id``.
@@ -1650,6 +1604,16 @@ class PCBWorld(gym.Env):
             )
 
     @property
+    def net_reselect(self) -> bool:
+        """True when net_select on a net closed by net_end reopens it."""
+        return self._net_reselect
+
+    @property
+    def net_constraint_obs(self) -> bool:
+        """True when ``board_static.nets`` carry the per-net ``constraints``."""
+        return self._net_constraint_obs
+
+    @property
     def board_info(self) -> BoardStatic:
         """Static board metadata and per-net context (cached at reset)."""
         return self._board_info
@@ -1775,6 +1739,7 @@ class PCBWorld(gym.Env):
             # Copy the set (elements are net ids); the reward states are reassigned
             # (never mutated in place) each step, so a reference is snapshot-safe.
             episode_closed_nets=set(self._episode_closed_nets),
+            net_reopen_count=self._net_reopen_count,
             reward_prev_state=self._reward.prev_state,
             wire_via_ref_state=self._wire_via_ref_state,
         )
@@ -1811,6 +1776,7 @@ class PCBWorld(gym.Env):
         # Fresh copy of the set so subsequent net_end .add()s never mutate the
         # node's stored checkpoint (the reward states are replaced, not mutated).
         self._episode_closed_nets = set(ckpt.episode_closed_nets)
+        self._net_reopen_count = ckpt.net_reopen_count
         self._reward.prev_state = ckpt.reward_prev_state
         self._wire_via_ref_state = ckpt.wire_via_ref_state
 

@@ -80,8 +80,15 @@ class ProfileConfig:
 # Real trainer build (ported from 260709_vecenv_profile.build_trainer)
 # ---------------------------------------------------------------------------
 def build_trainer(cfg: ProfileConfig, scratch: str):
-    from methods.rl_agent.training.train_ppo import build_arg_parser
     from methods.rl_agent.training.loop import PPOTrainer
+
+    args = trainer_args(cfg, scratch)
+    return PPOTrainer(args), args
+
+
+def trainer_args(cfg: ProfileConfig, scratch: str):
+    """The resolved PPO training config the profiled trainer is built from."""
+    from methods.rl_agent.training.train_ppo import parse_train_args
 
     # d3_v2.json only has train/test (no val) → branch on eval-split.
     # d3b uses only medium/TEST (10 boards, verified by the eval path) — medium/
@@ -107,7 +114,7 @@ def build_trainer(cfg: ProfileConfig, scratch: str):
     argv = [
         "--board", "tests/fixtures/simple_routing_board.kicad_pcb",
         "--boards-order", "per_env_epoch", "--boards-json", boards_json,
-        "--use-yaml-drc-fallback", "--drc-config-path", "experiments/kdd/configs/drc/synth_2L_v2.yaml",
+        "--rules-source", "board_or_yaml", "--drc-config-path", "experiments/kdd/configs/drc/synth_2L_v2.yaml",
         "--boards-difficulty", difficulty, "--boards-split", boards_split,
         "--eval-split", eval_split, "--eval-board-limit", str(cfg.eval_board_limit),
         "--eval-n-rollouts", str(cfg.eval_n_rollouts),
@@ -143,11 +150,12 @@ def build_trainer(cfg: ProfileConfig, scratch: str):
             argv += ["--eval2-boards", ev2, "--eval2-prefix", "val_d3b"]
         if ev3:
             argv += ["--eval3-boards", ev3, "--eval3-prefix", "val_d3a"]
-    args = build_arg_parser().parse_args(argv)
-    # obs_format was removed from the public CLI (cli_skip) — diagnostic A/B
-    # values are injected here instead.
-    args.obs_format = cfg.obs_format
-    return PPOTrainer(args), args
+    # obs_format was removed from the public CLI (cli_skip) — the diagnostic A/B
+    # value is a code layer of the resolved config instead.
+    from configs.loader.resolve import Layer
+    return parse_train_args(argv, code=Layer(
+        "code:tools/diagnostics/speed_profiler/driver.py", {"obs_format": cfg.obs_format},
+        where={"obs_format": "ProfileConfig.obs_format"}))
 
 
 # ---------------------------------------------------------------------------
@@ -160,9 +168,9 @@ def _fp_child(conn):
 
 
 def worker_fingerprint() -> dict:
-    import multiprocessing as mp
+    from pcb_world.vec import get_mp_context
     try:
-        ctx = mp.get_context("forkserver")
+        ctx = get_mp_context("forkserver")
         parent, child = ctx.Pipe()
         p = ctx.Process(target=_fp_child, args=(child,))
         p.start(); child.close()
@@ -194,9 +202,12 @@ def run(cfg: ProfileConfig) -> dict:
     # pool spawns its first worker.
     if cfg.enable_barrier or cfg.enable_rollout_decomp:
         os.environ["PCBWORLD_PROFILE_WORKER"] = "1"
-        import multiprocessing as mp
         try:
-            mp.set_forkserver_preload(["tools.diagnostics.speed_profiler.worker_shim"])
+            # merging register: a plain set_forkserver_preload would drop the
+            # numpy preload get_mp_context needs (and vice versa), which would
+            # make the profiled run start differently from its baseline.
+            from pcb_world.vec import add_forkserver_preload
+            add_forkserver_preload("tools.diagnostics.speed_profiler.worker_shim")
         except Exception:
             pass
 

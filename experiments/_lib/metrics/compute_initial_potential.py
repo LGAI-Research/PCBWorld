@@ -20,11 +20,15 @@ import glob
 import json
 import os
 import sys
-from multiprocessing import get_context
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import common as C
+
+# The forkserver must preload numpy (a child importing it itself dies at random
+# on macOS) -- pcb_world.vec.get_mp_context is the one place that knows the list.
+# (importable: common put the repo root on sys.path)
+from pcb_world.vec import get_mp_context
 
 REWARD = os.environ.get("REWARD", "drc_dense_promoted")
 # namespaces whose tables need potential_gain (Table 3/22/23, Fig 9)
@@ -67,7 +71,7 @@ def _work(arg):
         from pcb_world.core.reward import RewardState
         from pcb_world.core.reward_config import get_reward_config
         from eval.metrics import _delete_all_tracks_vias
-        eng = KiCadEngine(pcb, project_path=(pro or None))
+        eng = KiCadEngine.for_board_file(pcb, project_path=(pro or None))
         eng.build_connectivity()
         meta = eng.get_board_meta()
         pr = get_reward_config(REWARD).build_reward()
@@ -105,7 +109,7 @@ def main() -> None:
     print(f"[init-pot] {len(cache)} cached, {len(todo)} to compute")
 
     nproc = min(16, max(1, (os.cpu_count() or 4) - 2))
-    ctx = get_context("forkserver")
+    ctx = get_mp_context("forkserver")
     done = 0
     errs = 0
     with ctx.Pool(nproc) as pool:

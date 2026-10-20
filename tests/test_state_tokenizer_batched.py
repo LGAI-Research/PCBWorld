@@ -33,7 +33,7 @@ def make_pair(seed: int = 0, **kwargs) -> tuple[StateTokenizer, BatchedStateToke
     torch.manual_seed(seed)
     ref = StateTokenizer(**kwargs)
     torch.manual_seed(seed)
-    bat = BatchedStateTokenizer(**kwargs)
+    bat = BatchedStateTokenizer(**{"disable_slot_emb": False, **kwargs})
     bat.vocab.load_state_dict(ref.vocab.state_dict())
     ref.eval()
     bat.eval()
@@ -410,7 +410,7 @@ class TestThtPadEncoding:
         """Run the batched tokenizer's Phase-1 walk and return
         ``(pad_ls, pad_le)`` for the given obs."""
         torch.manual_seed(0)
-        bat = BatchedStateTokenizer(d_model=32, n_freq=4)
+        bat = BatchedStateTokenizer(disable_slot_emb=False, d_model=32, n_freq=4)
         walk = bat._walk_obs([obs])
         # walk["pad"] = (xy, wh, ls, le, head, has, obs_idx, pos, slot, shape_id)
         # The fields are np (N,2) — converted to list-of-list for row-wise ==.
@@ -493,7 +493,7 @@ class TestThtPadEncoding:
             n_ratsnest_per_net=0, copper_layers=2, is_routing=True,
         )
         torch.manual_seed(0)
-        bat = BatchedStateTokenizer(d_model=32, n_freq=4)
+        bat = BatchedStateTokenizer(disable_slot_emb=False, d_model=32, n_freq=4)
         walk = bat._walk_obs([obs_via])
         _, v_ls, v_le, *_ = walk["via"]
         v_ls, v_le = v_ls.tolist(), v_le.tolist()

@@ -19,7 +19,7 @@ PCBWORLD wrapper's post-process moves the triple in together) or from
 ``aggregate.json::source_path`` (CAD-Gen / API-Seq direct dumps).
 
 Each ``evaluate_one`` call returns the same metric dict — ``success``
-(connectivity), ``clean_pass`` (success AND total_drv_count == 0),
+(connectivity), ``clean_pass`` (success AND no DRC error),
 ``routability``, ``drv_errors_{only,and_promoted}_count``,
 ``track_angle_drv``, ``final_potential`` — so the per-board / per-scenario
 aggregates surface P@k (= ``pass_at_k``) and CP@k (= ``clean_pass_at_k``)
@@ -43,7 +43,6 @@ Usage:
 
 from __future__ import annotations
 
-import argparse
 import csv
 import gc
 import json
@@ -130,9 +129,7 @@ def _evaluate_sample(
 
     Maps the new evaluator's keys onto the existing per-sample schema so
     BoardResult.aggregate (downstream) keeps working without changes:
-      drv_count := drv_errors_and_promoted_count (the broader of the two
-                   counters — same convention as drc_dense_promoted reward
-                   used for v54-class training).
+      drv_count := drv_errors_only_count (the DRV of every KDD table: errors only).
     """
     from eval.metrics import evaluate_one as _eval_routed
 
@@ -155,7 +152,7 @@ def _evaluate_sample(
         "track_count": int(m["track_count"]),
         "via_count": int(m["via_count"]),
         "wirelength_mm": float(m["wirelength_mm"]),
-        "drv_count": int(m.get("drv_errors_and_promoted_count", 0)),
+        "drv_count": int(m.get("drv_errors_only_count", 0)),
         # New evaluator's additions, preserved verbatim
         "drv_errors_only_count": int(m.get("drv_errors_only_count", 0)),
         "drv_errors_and_promoted_count": int(m.get("drv_errors_and_promoted_count", 0)),
@@ -270,9 +267,13 @@ def _write_summary(rows: list[dict], path: Path) -> None:
             w.writerow({k: r.get(k, "") for k in _SUMMARY_FIELDS})
 
 
+# What drv_count / drv_at_k_min count; aggregate_p_cp_at_k.py refuses to mix definitions.
+DRV_DEFINITION = "errors_only"
+
+
 def _overall(rows: list[dict]) -> dict:
     if not rows:
-        return {"boards_evaluated": 0}
+        return {"boards_evaluated": 0, "drv_definition": DRV_DEFINITION}
 
     def _arr(key):
         return [r[key] for r in rows if key in r]
@@ -302,6 +303,7 @@ def _overall(rows: list[dict]) -> dict:
         "final_potential_at_k_mean_mean": statistics.fmean(fp_mean),
         "drv_at_k_min_mean": statistics.fmean(drv_min),
         "track_angle_drv_at_k_min_mean": statistics.fmean(angle_min),
+        "drv_definition": DRV_DEFINITION,
     }
     return out
 
@@ -435,7 +437,8 @@ def reeval_scenario(
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__)
+    from configs.loader.cli import StrictArgumentParser
+    p = StrictArgumentParser(description=__doc__)
     p.add_argument(
         "--rollout-root", "--input-dir", dest="input_dir",
         type=Path, required=True,

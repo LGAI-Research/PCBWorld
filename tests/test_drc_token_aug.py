@@ -38,7 +38,7 @@ def test_axis_swap_equivalent_to_swapping_mm_and_bbox():
     _norm_pos identically to every other geometric token.
     """
     torch.manual_seed(0)
-    tok = BatchedStateTokenizer(d_model=64, n_freq=8).eval()
+    tok = BatchedStateTokenizer(disable_slot_emb=False, d_model=64, n_freq=8).eval()
 
     obs_aug = make_mock_obs(
         n_nets=2, pads_per_net=1, n_ratsnest_per_net=0, n_edges=0,
@@ -68,7 +68,7 @@ def test_axis_swap_equivalent_to_swapping_mm_and_bbox():
 def test_sign_flip_changes_drc_token():
     """Sign reflection must propagate into the DRC token."""
     torch.manual_seed(0)
-    tok = BatchedStateTokenizer(d_model=64, n_freq=8).eval()
+    tok = BatchedStateTokenizer(disable_slot_emb=False, d_model=64, n_freq=8).eval()
 
     obs = make_mock_obs(
         n_nets=2, pads_per_net=2, n_ratsnest_per_net=0,
@@ -94,7 +94,7 @@ def test_sign_flip_changes_drc_token():
 def test_nn_shift_changes_drc_token():
     """nn_input_trans should shift the DRC xy encoding."""
     torch.manual_seed(0)
-    tok = BatchedStateTokenizer(d_model=64, n_freq=8).eval()
+    tok = BatchedStateTokenizer(disable_slot_emb=False, d_model=64, n_freq=8).eval()
 
     obs = make_mock_obs(
         n_nets=2, pads_per_net=2, n_ratsnest_per_net=0,
@@ -128,7 +128,7 @@ def test_non_copper_layer_violation_does_not_crash():
     assert _safe_encode_layer(2, 4) != (0.0, 0.0)   # in-range layers get a real encoding
 
     torch.manual_seed(0)
-    tok = BatchedStateTokenizer(d_model=64, n_freq=8).eval()
+    tok = BatchedStateTokenizer(disable_slot_emb=False, d_model=64, n_freq=8).eval()
     obs = make_mock_obs(
         n_nets=1, pads_per_net=1, n_ratsnest_per_net=0, n_edges=0,
         is_routing=False, current_net_phase=0,

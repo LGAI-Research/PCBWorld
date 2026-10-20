@@ -18,6 +18,7 @@ import os
 
 import pytest
 
+from configs.loader.schema import EnvConfig
 from pcb_world.core.env import PCBWorld
 
 BOARD_PATH = os.path.join(
@@ -55,7 +56,7 @@ def _episode_fingerprint(env: PCBWorld) -> tuple[tuple[str, ...], str]:
 def test_seeded_episodes_are_bit_identical() -> None:
     """Seeded engine: reset() rewinds KIID, so every episode's routed UUIDs AND
     geometry are byte-for-byte identical, with no duplicate UUIDs."""
-    env = PCBWorld(board_path=BOARD_PATH, max_steps=50, engine_seed=77)
+    env = PCBWorld(BOARD_PATH, EnvConfig.with_overrides(max_steps=50, engine_seed=77))
 
     fps = []
     for _ in range(4):
@@ -70,10 +71,10 @@ def test_seeded_episodes_are_bit_identical() -> None:
 
 
 def test_entropy_mode_is_not_pinned() -> None:
-    """engine_seed=None (entropy) leaves the generator un-captured, so the rewind
+    """engine_seed=-1 (entropy) leaves the generator un-captured, so the rewind
     is a no-op and episodes keep drawing fresh UUIDs — i.e. NOT pinned. (Geometry
     may still coincide; the UUID stream is the reliable drift signal.)"""
-    env = PCBWorld(board_path=BOARD_PATH, max_steps=50, engine_seed=None)
+    env = PCBWorld(BOARD_PATH, EnvConfig.with_overrides(max_steps=50, engine_seed=-1))
 
     env.reset()
     uuids_a, _ = _episode_fingerprint(env)

@@ -6,6 +6,38 @@ with its own version line — its notes are in the
 — and every environment tag pins exactly one engine commit: check out the tag and run
 `git submodule update --init` to get the engine it was tested with.
 
+## v1.1.0 — 2026-10-20
+
+Configuration and checkpoint-compatibility release. Observations, actions, the shipped reward and
+masking rules and the wire protocol are unchanged; v1.0.x checkpoints load with their training
+settings and route synthetic boards exactly as under v1.0.1. D3 numbers are not comparable with
+v1.0.1 (99-board D3-A, per-net-class route sizes, failed attempts in the denominators). A clone that
+fetched the withdrawn 2026-09 `v1.1.0` tag updates it with `git fetch --tags --force`.
+
+### Added
+- Run records — training, evaluation and re-scoring write `run_record.yaml` (every setting's value
+  and source); `python -m configs.loader.explain <run dir | checkpoint>` prints one
+- `net_reselect`, `trim_at_contact` — opt-in env knobs, off by default
+
+### Changed
+- Configuration — defaults in `configs/env.yaml`, `rl.yaml`, `llm.yaml` (`configs/pcbworld.yaml`
+  removed), experiment values via `--recipe`; `PCBWorld(board_path, env_config)` takes one `EnvConfig`
+- Command line — abbreviated or repeated options are errors; `--use-yaml-drc-fallback` →
+  `--rules-source`, engine-knob and `--finetune-*` flags → config keys (the error names the replacement)
+- Checkpoints — store the resolved config plus `args`, so v1.0.1 reads them; keys an older file lacks
+  come from `configs/ckpt_migrations.yaml` (warning; `--strict-ckpt` refuses)
+- New-run defaults — RL: `policy_net_select`, `disable_slot_emb`, validation on `val` every 10
+  iterations; LLM: `latest` prompt, `pcbworld_masking`, stop after 10 steps without geometry change
+- Benchmark and evaluation — D3-A is 99 boards, rule-based runners take `--difficulty`; failed and
+  crashed attempts stay in every denominator; re-scoring reuses the cell's recorded scoring
+
+### Fixed
+- Routing — each net uses its own net class's track and via sizes (a Default-class net took the previous net's)
+- Training — PPO/GRPO updates apply the sampling-time layer mask; `--resume` keeps the LR schedule,
+  board order and best checkpoint
+- Checkpoints and paper recipes — default eval accepts a default-trained checkpoint; the recipes and
+  KDD-era checkpoints use the paper's `connectivity_filter` / `reject_if_stuck` (off)
+
 ## v1.0.1 — 2026-09-16
 
 Patch release. Observations, actions, reward, masking, DRC rules, benchmark splits and the wire

@@ -173,7 +173,8 @@ def process_sample(name: str) -> dict:
 
 
 def main():
-    p = argparse.ArgumentParser(
+    from configs.loader.cli import StrictArgumentParser
+    p = StrictArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

@@ -169,10 +169,9 @@ def update_decomp():
 
     def timed_fixed_batch_step(
         policy, optimizer, device, *, algo, clip_eps, entropy_coef, vf_coef,
-        max_grad_norm, allow_net_select_lp, entropy_norm=False,
-        mb_obs, mb_walk, mb_act, mb_old_lp, mb_masks, mb_ptr_masks,
-        mb_mode_masks, mb_nvm, mb_adv, mb_ret, mb_size,
-        mb_klm=None, ref_policy=None, kl_ref_coef=0.0, actor_frozen=False,
+        max_grad_norm, entropy_norm=False,
+        mb_obs, mb_walk, mb, mb_adv, mb_ret, mb_size,
+        ref_policy=None, kl_ref_coef=0.0, actor_frozen=False,
     ):
         # No acc.span here: evaluate includes the CPU tokenizer merge/encode.
         # The GPU-active fwd time is captured by the transformer_pass_recorder's
@@ -180,14 +179,12 @@ def update_decomp():
         # the CPU-inclusive forward WALL (merge + encode + transformer).
         t = PC()
         new_lp, entropy, new_values = policy.evaluate_actions_and_value(
-            mb_obs, mb_act, action_masks=mb_masks, pointer_masks=mb_ptr_masks,
-            mode_mask=mb_mode_masks, net_valid_mask=mb_nvm,
-            allow_net_select_lp=allow_net_select_lp,
+            mb_obs, mb.actions, dist=mb.dist,
             walked=mb_walk(), entropy_norm=entropy_norm,
         )
         bucket["evaluate_ms"].append((PC() - t) * 1000)
 
-        ratio = torch.exp(new_lp - mb_old_lp)
+        ratio = torch.exp(new_lp - mb.old_log_probs)
         surr1 = ratio * mb_adv
         surr2 = torch.clamp(ratio, 1.0 - clip_eps, 1.0 + clip_eps) * mb_adv
         policy_loss = -torch.min(surr1, surr2).mean()
@@ -197,10 +194,7 @@ def update_decomp():
         else:
             loss, value_loss = grpo_update_step(policy_loss, entropy_loss, device)
         kl_w, w = C._kl_ref_terms(
-            ref_policy, kl_ref_coef, new_lp, mb_klm, obs=mb_obs, act=mb_act,
-            masks=mb_masks, ptr_masks=mb_ptr_masks, mode_mask=mb_mode_masks,
-            net_valid_mask=mb_nvm, allow_net_select_lp=allow_net_select_lp,
-            walked=mb_walk(),
+            ref_policy, kl_ref_coef, new_lp, mb, obs=mb_obs, walked=mb_walk(),
         )
         kl_ref = kl_w.mean() if kl_w is not None else None
         if kl_ref is not None:
@@ -231,23 +225,20 @@ def update_decomp():
 
     def timed_accumulate_chunk(
         policy, positions, acc_dict, *, device, algo, clip_eps, entropy_coef,
-        vf_coef, allow_net_select_lp, entropy_norm=False,
-        mb_obs, mb_walk, mb_act, mb_old_lp, mb_masks, mb_ptr_masks,
-        mb_mode_masks, mb_nvm, mb_adv, mb_ret, mb_size,
-        mb_klm=None, ref_policy=None, kl_ref_coef=0.0, actor_frozen=False,
+        vf_coef, entropy_norm=False,
+        mb_obs, mb_walk, mb, mb_adv, mb_ret, mb_size,
+        ref_policy=None, kl_ref_coef=0.0, actor_frozen=False,
     ):
         sub = torch.as_tensor(positions, dtype=torch.long, device=device)
+        chunk = mb.select(sub)
+        obs = [mb_obs[j] for j in positions]
         t = PC()
         new_lp, entropy, new_values = policy.evaluate_actions_and_value(
-            [mb_obs[j] for j in positions], mb_act[sub],
-            action_masks=mb_masks[sub], pointer_masks=mb_ptr_masks[sub],
-            mode_mask=mb_mode_masks[sub] if mb_mode_masks is not None else None,
-            net_valid_mask=mb_nvm[sub] if mb_nvm is not None else None,
-            allow_net_select_lp=allow_net_select_lp,
+            obs, chunk.actions, dist=chunk.dist,
             walked=mb_walk(positions), entropy_norm=entropy_norm,
         )
         bucket["evaluate_ms"].append((PC() - t) * 1000)
-        ratio = torch.exp(new_lp - mb_old_lp[sub])
+        ratio = torch.exp(new_lp - chunk.old_log_probs)
         adv = mb_adv[sub]
         surr1 = ratio * adv
         surr2 = torch.clamp(ratio, 1.0 - clip_eps, 1.0 + clip_eps) * adv
@@ -260,13 +251,7 @@ def update_decomp():
             value_term = torch.zeros((), device=device)
             chunk_loss = policy_term + entropy_term
         kl_w, w = C._kl_ref_terms(
-            ref_policy, kl_ref_coef, new_lp,
-            mb_klm[sub] if mb_klm is not None else None,
-            obs=[mb_obs[j] for j in positions], act=mb_act[sub],
-            masks=mb_masks[sub], ptr_masks=mb_ptr_masks[sub],
-            mode_mask=mb_mode_masks[sub] if mb_mode_masks is not None else None,
-            net_valid_mask=mb_nvm[sub] if mb_nvm is not None else None,
-            allow_net_select_lp=allow_net_select_lp, walked=mb_walk(positions),
+            ref_policy, kl_ref_coef, new_lp, chunk, obs=obs, walked=mb_walk(positions),
         )
         if kl_w is not None:
             chunk_loss = chunk_loss + kl_ref_coef * kl_w.sum() / mb_size
@@ -306,7 +291,7 @@ def rollout_decomp():
     primitive.py changes) plus a ``SubprocDecoderVecEnv.reset_batch`` timer.
     Buckets (seconds, accumulated over the phase):
 
-      mask_ipc   gather_mask_arrays + tensorize            (inline, not a probe)
+      mask_ipc   gather_dist + tensorize                    (inline, not a probe)
       forward    act/act_and_value call + .cpu()x3 wall     (walk+GPU+launch+sync)
       step       step_async_selective + step_wait_selective (inline step barrier)
       advance    obs_by_slot update loop
@@ -338,9 +323,7 @@ def rollout_decomp():
     def timed_iter_rollout(envs, policy, device, obs_by_slot, active, done, *,
                            want_value, deterministic=False, max_steps,
                            mem_budget=None):
-        from methods.rl_agent.policy.agent import (
-            KiCadRLAgent, gather_mask_arrays, mask_arrays_to_tensors,
-        )
+        from methods.rl_agent.policy.agent import KiCadRLAgent, gather_dist
         use_vec = isinstance(envs, VecBackend)
         policy_ns = bool(getattr(policy, "policy_net_select", False))
         agent = None
@@ -359,13 +342,10 @@ def rollout_decomp():
             obs_live = [obs_by_slot[slot] for slot in live]
 
             t = PC()
-            masks, ptr_masks, mode_masks, nvm, off_masks = gather_mask_arrays(
+            dist = gather_dist(
                 envs, live, policy_net_select=policy_ns, obs_list=obs_live,
             )
-            mask_t, ptr_t, mode_t, nvm_kwargs = mask_arrays_to_tensors(
-                masks, ptr_masks, mode_masks, nvm, device, off_masks=off_masks,
-                mode_none_if_all_true=want_value,
-            )
+            dist_t = dist.to(device)
             bucket["mask_ipc"] += PC() - t
 
             t = PC()
@@ -376,8 +356,7 @@ def rollout_decomp():
                     step_walk = tok.walk_timed(obs_live)
             if mem_budget is not None and mem_budget.ready:
                 acts_t, logp_t, vals_t = P.budgeted_forward(
-                    policy if want_value else agent, obs_live,
-                    mask_t, ptr_t, mode_t, nvm_kwargs, mem_budget,
+                    policy if want_value else agent, obs_live, dist_t, mem_budget,
                     want_value=want_value, deterministic=deterministic,
                     walk=step_walk,
                 )
@@ -387,16 +366,14 @@ def rollout_decomp():
             elif want_value:
                 walk_kw = {"walked": step_walk} if step_walk is not None else {}
                 actions, log_probs, values = policy.act_and_value(
-                    obs_live, action_masks=mask_t, pointer_masks=ptr_t,
-                    mode_mask=mode_t, **walk_kw, **nvm_kwargs,
+                    obs_live, dist=dist_t, **walk_kw,
                 )
                 actions_np = actions.cpu().numpy()
                 log_probs_np = log_probs.cpu().numpy()
                 values_np = values.cpu().numpy()
             else:
                 acts_t, _logp = agent.act(
-                    obs_live, action_masks=mask_t, pointer_masks=ptr_t,
-                    mode_mask=mode_t, deterministic=deterministic, **nvm_kwargs,
+                    obs_live, dist=dist_t, deterministic=deterministic,
                 )
                 actions_np = acts_t.cpu().numpy()
                 log_probs_np = None
@@ -434,9 +411,7 @@ def rollout_decomp():
                 live=live, obs=obs_live, actions=actions_np,
                 log_probs=log_probs_np, values=values_np, obs_next=obs_next,
                 rewards=rewards, terminateds=terms, truncateds=truncs,
-                infos=infos, action_masks=masks, pointer_masks=ptr_masks,
-                mode_masks=mode_masks, net_valid_masks=nvm,
-                walk=step_walk,
+                infos=infos, dist=dist, walk=step_walk,
             )
         # Tail gap: the caller's bookkeeping+reset after the last yield (max_steps
         # truncation piles the reset onto the last step) — omitting this would

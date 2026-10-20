@@ -1,0 +1,107 @@
+# configs/llm.yaml — LLM program defaults (eval + verl training). File map and how defaults load: configs/loader/schema.py.
+
+# ────────────────────────────────────────────────────────────────────────────────────────────────────
+llm:
+  # LLM eval defaults  →  configs.loader.schema.LLMConfig (nested: env/boards/prompt/
+  # rollout/vllm/api — mirrors the eval/args.py CLI groups one-for-one).
+  #
+  # The LLM eval program (methods/llm_agent/rollout/pcbworld.py + the interactive REPL) is a
+  # separate program from RL train/eval: it evaluates an LLM, not an RL checkpoint.
+  # Its env is the same EnvConfig as RL's: every configs/env.yaml value applies (observation,
+  # engine, reward overrides), except the few keys below that the LLM run sets itself.
+  # eval/args.py reads these as its argparse defaults, and the flags are generated
+  # from the schema via configs.loader.cli.add_dataclass_args (style=underscore).
+
+  env:                      # eval/args.py add_env_args group
+    max_steps: 20           # EnvConfig field — LLM's own value
+    masking_rule: pcbworld_masking   # EnvConfig field — must grant the prompt's actions (checked at env build)
+    net_reselect: false     # EnvConfig field — the prompts describe a closed net as gone
+    reward_rule: grpo_final # EnvConfig field — LLM's own value
+    state_format: sexpr     # LLMEnvConfig (LLM-only): observation serialization (sexpr|xml)
+
+  boards:                   # eval/args.py add_boards_args group
+    boards_order: single
+    boards_json: null         # multi-board mode requires an explicit --boards_json
+    boards_difficulty: easy
+    boards_split: test
+
+  prompt:                   # eval/args.py add_prompt_args group
+    prompt_version: latest  # latest | v1..v7 (frozen legacy prompts)
+
+  rollout:                  # eval/args.py add_rollout_args group
+    env_num: 1
+    seed: 0
+    rollout_episodes: 5
+    num_cpus_per_worker: 1.0
+    history_length: 0
+    temperature: 0.7
+    max_new_tokens: 256
+    dump_dir: null
+    early_stop_no_progress: 0             # off; the guard below cannot see parse-fail/mask-reject/idle streaks
+    early_stop_no_geometry_progress: 10   # consecutive steps with no board-state change
+
+  vllm:                     # eval/args.py add_llm_args group
+    model_path: Qwen/Qwen2.5-VL-3B-Instruct
+    tensor_parallel_size: 1
+    gpu_memory_utilization: 0.95
+    max_model_len: 4096
+    enable_prefix_caching: false
+    enable_chunked_prefill: false
+    guided_grammar: null
+
+  api:                      # eval/args.py add_api_args group
+    api_provider: openai
+    api_model: null
+    api_key: null
+    api_rpm: null
+    api_itpm: null
+    api_otpm: null
+    api_max_retries: 8
+    api_prompt_cache: false
+    api_reasoning_effort: null
+    api_disable_thinking: false
+
+# ────────────────────────────────────────────────────────────────────────────────────────────────────
+llm_train:
+  # pcbworld LLM (verl) training defaults  →  configs.loader.schema.LLMTrainConfig
+  #
+  # The pcbworld-specific slice of the verl Hydra config — the ``env.pcbworld.*``
+  # block plus the ``env.*`` knobs pcbworld reads. These are the values previously
+  # hardcoded as ``config.env.pcbworld.get('x', <literal>)`` fallbacks in the
+  # verl-agent patch (agent_system/.../env_manager.py) and in the LLM rollout
+  # manager (methods/llm_agent/training/manager.py); they now live here, the single place to
+  # see/edit them. The verl launch script (external/verl-agent-patch/examples/
+  # run_pcbworld.sh) supplies per-run overrides via ``+env.pcbworld.<key>=...``.
+  #
+  # Read into the dataclass with LLMTrainConfig.from_verl_config(cfg); the verl
+  # config keeps its omegaconf surface, this is only the defaults source — exactly
+  # like rl_train: (configs/rl.yaml) for the RL trainer and llm: above for LLM eval.
+
+  # EnvConfig fields with an LLM-training value (every other env field = configs/env.yaml;
+  # env.pcbworld.<any EnvConfig field> overrides it)
+  max_steps: 200            # read from config.env.max_steps
+  masking_rule: pcbworld_masking
+  reward_rule: default
+  state_format: sexpr       # LLM-only observation serialization (sexpr|xml)
+
+  # prompt (consumed by methods/llm_agent/training/manager.py)
+  prompt_version: latest
+  history_length: 0         # read from config.env.history_length
+
+  # board scheduling — train (BoardScheduler / BoardSchedulerConfig)
+  boards_order: single      # single | round_robin | per_env_random | per_env_epoch
+  boards_json: null         # multi-board mode requires an explicit --boards-json
+  boards_difficulty: easy
+  boards_split: train
+
+  # board scheduling — val (val_boards_split null = inherit boards_split)
+  val_boards_order: single
+  val_boards_split: null
+
+  # episode scoring + guided decoding
+  score_train_episodes: false   # per-episode DRC scoring for TRAIN rollouts (val always on)
+  guided_decoding_grammar: null # name in methods.llm_agent.wrappers.grammar GRAMMARS (vLLM constrained decode)
+
+  # misc
+  seed: 0                   # read from config.env.seed (BoardScheduler seeding)
+  board_path: null          # required runtime input (env.pcbworld.board_path); no default

@@ -19,7 +19,7 @@ tie-break inside the drill radius, so these centres must resolve through
 
 import os
 
-from pcb_world.engine.kicad_engine import KiCadEngine
+from tests.helpers.engine import open_engine
 
 BOARD = os.path.join(
     os.path.dirname(__file__), "..", "fixtures", "two_net_multiterm_board.kicad_pcb"
@@ -45,7 +45,7 @@ def _keys(eng, pt, layer=1):
 def test_unrouted_pad_is_its_own_cluster():
     """Before any copper, each pad is alone — so a filter built on this drops
     only the pad itself, never a legitimate target."""
-    eng = KiCadEngine(BOARD)
+    eng = open_engine(BOARD)
     try:
         eng.build_connectivity()
         for pad in (P_LEFT, P_RIGHT, P_LONE):
@@ -57,7 +57,7 @@ def test_unrouted_pad_is_its_own_cluster():
 def test_routing_merges_the_two_endpoints_only():
     """Routing (10,10)→(40,10) joins those two pads (plus the track's own
     endpoints); the untouched third pad stays in its own cluster."""
-    eng = KiCadEngine(BOARD)
+    eng = open_engine(BOARD)
     try:
         eng.build_connectivity()
         eng.set_routing_mode(SHOVE)
@@ -77,7 +77,7 @@ def test_routing_merges_the_two_endpoints_only():
 def test_no_copper_at_point_returns_empty():
     """An empty position has nothing to be connected to — the filter reads this
     as "no restriction" rather than "everything is connected"."""
-    eng = KiCadEngine(BOARD)
+    eng = open_engine(BOARD)
     try:
         eng.build_connectivity()
         assert eng.get_connected_points(99.0, 99.0, 1) == []
@@ -89,7 +89,7 @@ def test_result_is_layer_qualified():
     """Every anchor carries the human layer it lives on, so the candidate
     filter can distinguish stacked-but-unconnected copper instead of matching
     on (x, y) alone."""
-    eng = KiCadEngine(BOARD)
+    eng = open_engine(BOARD)
     try:
         eng.build_connectivity()
         pts = eng.get_connected_points(P_LEFT[0], P_LEFT[1], 1)
@@ -102,7 +102,7 @@ def test_thru_hole_pad_centre_resolves_to_the_pad():
     """The drill centre of a thru-hole pad sits on its HOLE item, whose
     ``Parent()`` is null; the query must still report the pad (both copper
     faces) and nothing else — the unrouted SMD sibling stays separate."""
-    eng = KiCadEngine(SENTINELS)
+    eng = open_engine(SENTINELS)
     try:
         eng.build_connectivity()
         both = {(105.0, 105.0, 1), (105.0, 105.0, 2)}
@@ -116,7 +116,7 @@ def test_thru_hole_pad_centre_resolves_to_the_pad():
 def test_via_centre_resolves_to_the_via():
     """Same HOLE trap for a via: its centre must report the via on every layer
     it spans (a lone via is its own cluster)."""
-    eng = KiCadEngine(SENTINELS)
+    eng = open_engine(SENTINELS)
     try:
         eng.build_connectivity()
         both = {(104.0, 108.0, 1), (104.0, 108.0, 2)}

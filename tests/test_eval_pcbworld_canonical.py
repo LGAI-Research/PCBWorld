@@ -31,7 +31,7 @@ def test_result_maps_to_canonical_row():
     r = _llm_result(won=True, reward=1.5, wl=42.0, via=2, tracks=9,
                     rout=1.0, fp=3.25, sys_tok=100, resp_tok=50)
     row = _result_to_canonical_row(r, board_index=7, board_path="/tmp/b.kicad_pcb",
-                                   rollout_idx=2)
+                                   rollout_idx=2, check_angle=45)
 
     # row conforms to the canonical schema (every key is a known field)
     assert set(row).issubset(set(u.PER_ROLLOUT_FIELDS))
@@ -50,7 +50,7 @@ def test_crashed_result_maps_to_status_crashed():
     from methods.llm_agent.rollout.pcbworld import _crashed_result, _result_to_canonical_row
 
     row = _result_to_canonical_row(_crashed_result("b0", 0), board_index=0,
-                                   board_path="", rollout_idx=0)
+                                   board_path="", rollout_idx=0, check_angle=45)
     assert row["status"] == "crashed"
     assert row["crashed"] is True
     assert row["success"] is False
@@ -68,7 +68,7 @@ def test_merged_aggregation_includes_tokens():
                     rout=0.5, fp=2.0, sys_tok=200, resp_tok=60),
     ]
     rows = [
-        _result_to_canonical_row(r, board_index=0, board_path="", rollout_idx=i)
+        _result_to_canonical_row(r, board_index=0, board_path="", rollout_idx=i, check_angle=45)
         for i, r in enumerate(results)
     ]
     metrics = EvalSummary.from_rollouts(rows, [BoardSpec(0, "b0", "")])

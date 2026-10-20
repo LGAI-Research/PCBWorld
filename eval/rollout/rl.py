@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import warnings
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Mapping, Sequence
 
 import torch
 
@@ -19,8 +19,8 @@ from configs.loader.schema import DEFAULTS
 from eval import eval_utils as u
 from eval.aggregation import aggregate_inline
 from eval.metrics import EvalResult
+from configs.loader.schema import RLEnvConfig
 from methods._shared.board_loader import BoardSpec, count_pads
-from methods.rl_agent.models.loader import apply_drc_off
 from methods.rl_agent.rollout.transformer import (
     _run_one_batch,
     max_net_slots_for_policy,
@@ -69,7 +69,8 @@ def assert_env_kwargs_as_recorded(
 ) -> None:
     """Fail loudly when validation builds something other than what was recorded.
 
-    ``env_records/val_env.yaml`` is written at trainer startup by *computing*
+    Both sides are env records (``methods.rl_agent.wrappers.factory.env_record``).
+    The trainer's ``run_record.val.yaml`` is written at startup by *computing*
     what validation will use; this is the sink confirming that computation the
     first time a real val pool is built. Without it the record would stay a
     plausible-looking guess — which is exactly how the knobs audited on
@@ -83,58 +84,68 @@ def assert_env_kwargs_as_recorded(
     }
     if delta:
         raise RuntimeError(
-            "val env effective values differ from the startup record "
-            "(env_records/val_env.yaml): "
-            f"{delta} — code that mutates env_kwargs outside "
-            "resolve_eval_env_kwargs has been added."
+            "val env effective values differ from the trainer's startup record "
+            "(run_record.val.yaml): "
+            f"{delta} — code that changes the env config outside "
+            "resolve_eval_env has been added."
         )
 
 
-def resolve_eval_env_kwargs(
-    env_kwargs: dict[str, Any], policy: Any, *, step_drc: bool,
-) -> dict[str, Any]:
-    """The ONE place eval adjusts the env kwargs it was handed.
+def eval_policy_net_select(policy: Any) -> bool:
+    """Whether the eval env lets ``policy`` pick nets (its own setting)."""
+    return bool(getattr(policy, "policy_net_select", False))
 
-    The trainer calls this at startup to learn the *exact* kwargs validation
-    will use — without running a rollout — so the train/val record dump and the
-    ``--expect-env-diff`` gate compare against reality rather than a guess.
-    That only holds while every eval-side adjustment lives here:
-    ``tests/test_env_contract.py`` fails if ``eval_transformer`` touches
-    ``env_kwargs`` outside this call.
+
+def resolve_eval_env(base: RLEnvConfig, *, step_drc: bool, where: str,
+                     sources: Mapping[str, str] | None = None, user: Sequence[Any] = ()) -> Any:
+    """The env config an eval runs, resolved once (``configs.loader.resolve`` mode ``eval``).
+
+    CKPT = ``base`` — the checkpoint's training env config (``RLEnvConfig.from_checkpoint``) or
+    the training run's own (inline validation) — minus the train-only fields
+    (:data:`~configs.loader.schema.EVAL_PINNED`: validation and best-ckpt selection score the
+    canonical from-scratch board), which keep their defaults (off). ``sources`` are the
+    checkpoint loader's per-key sources, ``where`` names ``base``. ``step_drc=False`` adds
+    :data:`~configs.loader.schema.DRC_OFF` as a ``mode-default`` layer over the checkpoint and
+    under ``user`` (e.g. the eval CLI's overrides — a DRC weight given there wins): only
+    ``eval_override`` fields may differ from ``base``.
+    Every eval-side adjustment of the env config is a layer here — the trainer records the
+    result at startup (``run_record.val.yaml``) without running a rollout, and ``eval_transformer``
+    builds exactly what it is given. Returns the ``RunConfig``; :func:`eval_env_config` turns
+    it into the ``RLEnvConfig`` the pool is built from.
     """
-    env_kwargs = dict(env_kwargs)
-    env_kwargs["policy_net_select"] = bool(
-        getattr(policy, "policy_net_select", False),
-    )
-    # Train-only augmentation must never leak into validation: val (and the
-    # best-ckpt selection built on it) scores the canonical from-scratch
-    # board, not a partially pre-routed one. Inline eval passes the TRAINING
-    # env_kwargs (env_kwargs_from_training_args), so pin it off here.
-    env_kwargs["keep_routing_fraction"] = None
-    # Ckpt↔env obs-drift guard: a checkpoint-loaded policy carries its
-    # training-time net_constraint_obs (stamped by
-    # methods.rl_agent.models.loader._load_policy); the env must match, or the
-    # NET-token tw/cl/vd channels drift from training (resolved values vs
-    # constant 0 — both directions). The canonical builders
-    # (env_kwargs_from_checkpoint / env_kwargs_from_training_args) inherit the
-    # knob, so only hand-assembled env_kwargs can trip this; live training
-    # policies (trainer inline val) carry no stamp and skip the check.
+    from configs.loader.resolve import Layer, ckpt_layer, dest_policies, resolve
+    from configs.loader.schema import DRC_OFF, EVAL_PINNED
+
+    drc_off = [] if step_drc else [Layer("mode-default", DRC_OFF,
+                                         where={k: "step_drc=False (env DRC off)" for k in DRC_OFF})]
+    return resolve(
+        "eval", policies=dest_policies(RLEnvConfig()),
+        defaults=[Layer("defaults", RLEnvConfig().to_record())],
+        ckpt=ckpt_layer({k: v for k, v in base.to_record().items() if k not in EVAL_PINNED},
+                        sources or {}, where),
+        user=[*drc_off, *user])
+
+
+def eval_env_config(run: Any) -> RLEnvConfig:
+    """The ``RLEnvConfig`` of a :func:`resolve_eval_env` result."""
+    return RLEnvConfig().with_flat(run.values)
+
+
+def check_policy_env(policy: Any, env_config: RLEnvConfig) -> None:
+    """Ckpt↔env obs-drift guard: a checkpoint-loaded policy carries its training-time
+    ``net_constraint_obs`` (stamped by ``methods.rl_agent.models.loader._load_policy``); the
+    env must match, or the NET-token tw/cl/vd channels drift from training (resolved values
+    vs constant 0). A config from :func:`resolve_eval_env` over the checkpoint always
+    matches (the key is ``arch``), so only a hand-assembled config can trip this; live
+    training policies carry no stamp."""
     ckpt_ncobs = getattr(policy, "net_constraint_obs", None)
-    if ckpt_ncobs is not None:
-        env_ncobs = bool(env_kwargs.get("net_constraint_obs", False))
-        if bool(ckpt_ncobs) != env_ncobs:
-            raise RuntimeError(
-                "net_constraint_obs mismatch: the checkpoint was trained with "
-                f"net_constraint_obs={bool(ckpt_ncobs)} but the eval env is "
-                f"built with net_constraint_obs={env_ncobs} — the NET-token "
-                "constraint channels would silently drift from training. "
-                "Build env_kwargs from the checkpoint args "
-                "(env_kwargs_from_checkpoint / RLEnvConfig.from_checkpoint) "
-                "instead of hand-assembling them."
-            )
-    if not step_drc:
-        apply_drc_off(env_kwargs)
-    return env_kwargs
+    if ckpt_ncobs is not None and bool(ckpt_ncobs) != bool(env_config.env.net_constraint_obs):
+        raise RuntimeError(
+            "net_constraint_obs mismatch: the checkpoint was trained with "
+            f"net_constraint_obs={bool(ckpt_ncobs)} but the eval env is built with "
+            f"net_constraint_obs={bool(env_config.env.net_constraint_obs)} — the NET-token "
+            "constraint channels would silently drift from training. Build the env config "
+            "with resolve_eval_env over RLEnvConfig.from_checkpoint instead of hand-assembling it.")
 
 
 def eval_transformer(
@@ -142,17 +153,16 @@ def eval_transformer(
     device: torch.device,
     boards: list[BoardSpec],
     *,
-    env_kwargs: dict[str, Any],
+    env_config: RLEnvConfig,
     n_rollouts: int,
     n_envs: int,
     base_seed: int,
     max_steps: int,
     deterministic: bool = False,
     boards_per_batch: int | None = None,
-    step_drc: bool = True,
     final_drc: bool = False,
     reward_config: str = DEFAULTS.reward_config,
-    check_angle: int = DEFAULTS.check_angle,
+    check_angle: int | None = None,
     selection_mode: Literal["final_potential", "posthoc_drc_aware"] | None = None,
     save_artifacts: bool = False,
     artifacts_dir: Path | None = None,
@@ -166,10 +176,12 @@ def eval_transformer(
 ) -> EvalResult:
     """Run rollouts + (optional) inline DRC scoring + aggregation.
 
-    Inline DRC results are merged directly into the per_rollout rows (one row
-    per board x rollout); there is no separate scoring table.
+    ``env_config`` is final (:func:`resolve_eval_env` → :func:`eval_env_config`): the pool is
+    built from it unchanged. Inline DRC results are merged directly into the per_rollout rows (one row
+    per board x rollout); there is no separate scoring table. ``check_angle`` is the env
+    ``corner_mode`` (:func:`~eval.eval_utils.resolve_check_angle`; an explicit one may only restate it).
     """
-    from methods.rl_agent.wrappers.factory import make_decoder_env_pool
+    from methods.rl_agent.wrappers.factory import env_record, make_decoder_env_pool
 
     # (board, rollout) jobs packed into waves that fill all n_envs slots, boards
     # ordered small-first so a wave rarely stalls on a straggler. See
@@ -179,16 +191,20 @@ def eval_transformer(
         boards_per_batch=boards_per_batch,
     )
 
-    env_kwargs = resolve_eval_env_kwargs(env_kwargs, policy, step_drc=step_drc)
+    check_policy_env(policy, env_config)
+    policy_net_select = eval_policy_net_select(policy)
+    check_angle = u.resolve_check_angle(env_config.env.corner_mode, check_angle)
 
     if save_artifacts and artifacts_dir is not None:
         Path(artifacts_dir).mkdir(parents=True, exist_ok=True)
 
     if expect_env_kwargs is not None:
-        assert_env_kwargs_as_recorded({**env_kwargs, "seed": base_seed},
-                                      expect_env_kwargs)
+        assert_env_kwargs_as_recorded(
+            env_record(env_config, seed=base_seed, policy_net_select=policy_net_select),
+            expect_env_kwargs)
     pool = make_decoder_env_pool(
-        boards[0].path, n_envs, seed=base_seed, **env_kwargs,
+        boards[0].path, n_envs, env_config, seed=base_seed,
+        policy_net_select=policy_net_select, advance_rng_on_reload=False,
     )
     per_rollout: list[dict] = []
     max_net_slots = max_net_slots_for_policy(policy)

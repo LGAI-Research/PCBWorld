@@ -145,7 +145,7 @@ policy. `per_step` is the dense form for PPO. GRPO only sees the episode return,
 two coincide.
 
 PPO then trains at γ = 0.995 rather than 1 (`gamma` in
-[configs/pcbworld.yaml](../configs/pcbworld.yaml)), so the telescoping is only approximate: a
+[configs/rl.yaml](../configs/rl.yaml)), so the telescoping is only approximate: a
 gain made later counts slightly less than the same gain made now.
 
 On top of that: a `step_penalty` every step, and a small penalty for an action that was masked,

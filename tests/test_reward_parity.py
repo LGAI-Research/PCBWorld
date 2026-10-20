@@ -21,9 +21,8 @@ the scripted trajectory of ``tests/test_env/test_reward_modes.py``:
       wirelength_penalty, per-net size weights — are EXACTLY equal on both paths;
   (b) ``compute_final`` on the SAME engine snapshot (inline scorer on the live
       env) is bit-identical to the env's reward object;
-  (c) e2e: the env's episode-end ``info["final_potential"]`` (and, where the env
-      runs DRC at reset, its bare-board ``initial_potential``) equal
-      ``evaluate_one`` on the saved board — DRC on both sides; only the
+  (c) e2e: the env's episode-end ``info["final_potential"]`` and its bare-board
+      ``initial_potential`` equal ``evaluate_one`` on the saved board — DRC on both sides; only the
       float-sum order over reloaded tracks may differ, hence a tight approx.
 """
 
@@ -35,7 +34,9 @@ from pathlib import Path
 
 import pytest
 
+from configs.loader.schema import EnvConfig
 from pcb_world.core.reward import PotentialReward, RewardState
+from tests._rule_helpers import ENV_PENALTIES, yaml_lines
 from tests.test_env.test_reward_modes import _route_all_nets
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -70,6 +71,7 @@ SW_RULE_TEXT = (
     "  drc_log_offset: 2.0\n"
     "  step_penalty: 0.0\n"
     "  drc_severity_mode: errors_and_promoted\n"
+    + yaml_lines(ENV_PENALTIES)
 )
 
 
@@ -209,19 +211,14 @@ def test_env_and_offline_scorer_price_the_board_identically(
     routed_pcb = tmp_path / "routed.kicad_pcb"
 
     env = PCBWorld(
-        board_path=str(BOARD), max_steps=200,
-        masking_rule="default_no_finish", reward_rule=rule_arg,
+        str(BOARD),
+        EnvConfig.with_overrides(max_steps=200, masking_rule="default_no_finish", reward_rule=rule_arg),
     )
     try:
         env.reset()
         pot = env._potential_reward
         env_resolved = _resolved(pot)
         phi0_env = env._initial_potential
-        # Env Φ₀ carries DRC only when the tracker ran DRC at reset (per_step
-        # mode with a DRC-reading potential); the scorer's bare-board baseline
-        # always runs DRC. Compare Φ₀ only where the env's own convention
-        # includes DRC or the potential ignores it.
-        phi0_comparable = env._reward.run_drc_on_reset or not env._drc_active
 
         steps = _route_all_nets(env)
         assert steps[-1][1], "scripted route must terminate the episode"
@@ -254,11 +251,79 @@ def test_env_and_offline_scorer_price_the_board_identically(
     gc.collect()  # release the scorer's engine before the next PCBWorld
     assert _resolved_from_metrics(res) == env_resolved
     assert res["final_potential"] == pytest.approx(fp_env, rel=1e-9, abs=1e-9)
-    if phi0_comparable:
-        assert res["initial_potential"] == pytest.approx(
-            phi0_env, rel=1e-9, abs=1e-9)
+    assert res["initial_potential"] == pytest.approx(phi0_env, rel=1e-9, abs=1e-9)
     if rule == SW_RULE:
         # The hook-heavy rule must actually exercise every hook.
         assert env_resolved["net_size_weights"]
         assert env_resolved["clean_completion_bonus"] > 0
         assert env_resolved["wirelength_penalty"] < 0.5
+
+
+def _route_and_score_inline(tmp_path, train_rule: str, score_rule: str):
+    """Route the fixture board under ``train_rule``, score it inline with ``score_rule`` and save
+    it -> (env Φ₀, inline result, saved board path)."""
+    from eval.metrics import compute_metrics_inline
+    from pcb_world.core.env import PCBWorld
+
+    routed_pcb = tmp_path / "routed.kicad_pcb"
+    env = PCBWorld(str(BOARD), EnvConfig.with_overrides(
+        max_steps=200, masking_rule="default_no_finish", reward_rule=train_rule))
+    try:
+        env.reset()
+        phi0_env = env._initial_potential
+        assert _route_all_nets(env)[-1][1], "scripted route must terminate the episode"
+        inline = compute_metrics_inline(env, reward_config_name=score_rule)
+        env._engine.save(str(routed_pcb))
+    finally:
+        env.close()
+        del env
+        gc.collect()
+    routed_pcb.with_suffix(".kicad_pro").write_bytes(BOARD.with_suffix(".kicad_pro").read_bytes())
+    return phi0_env, inline, routed_pcb
+
+
+def test_inline_scoring_prices_phi0_with_the_scoring_config(tmp_path):
+    """A scoring config other than the env's training rule: the inline row's Φ₀ / potential gain
+    are the scoring config's, as post-hoc scoring of the same routed board gives them (they were
+    the training rule's Φ₀ beside the scoring config's final Φ)."""
+    from eval.metrics import evaluate_one
+
+    train, score = "drc_linear", "drc_dense_errors_only_eval"
+    phi0_env, inline, routed_pcb = _route_and_score_inline(tmp_path, train, score)
+    post = evaluate_one(str(routed_pcb), str(routed_pcb.with_suffix(".kicad_pro")),
+                        reward_config_name=score)
+    gc.collect()
+    assert post["initial_potential"] != pytest.approx(phi0_env)   # the two rules price Φ₀ apart
+    for key in ("initial_potential", "potential_gain", "final_potential"):
+        assert inline[key] == pytest.approx(post[key], rel=1e-9, abs=1e-9), key
+    assert inline["drv_errors_only_count"] == post["drv_errors_only_count"]
+    assert inline["env_phi0_matches"] is False   # crash rows' env Φ₀ is not the scorer's
+    # the scored row replaces the rollout's env-info Φ₀ (training rule) with the scorer's
+    from eval.eval_utils import assemble_rollout_row
+    row = assemble_rollout_row(inline, runtime={"initial_potential": phi0_env, "potential_gain": 0.0},
+                               reward_config=score)
+    assert (row["initial_potential"], row["potential_gain"]) == \
+        pytest.approx((post["initial_potential"], post["potential_gain"]))
+
+
+def test_inline_scoring_without_reset_drc_leaves_phi0_blank(tmp_path):
+    """An env whose reward reads no DRC ran none at reset, so a DRC-reading scoring config cannot
+    price its Φ₀ inline: blank with a warning, never the training rule's value."""
+    import math
+
+    from eval.eval_utils import flatten_scored_result
+
+    with pytest.warns(UserWarning, match="reset ran none"):
+        _, inline, _ = _route_and_score_inline(tmp_path, "default", "drc_dense_errors_only_eval")
+    assert inline["initial_potential"] is None and inline["potential_gain"] is None
+    row = flatten_scored_result(inline, reward_config="drc_dense_errors_only_eval")
+    assert math.isnan(row["initial_potential"]) and math.isnan(row["potential_gain"])
+    assert row["env_phi0_matches"] is False
+
+
+def test_inline_scoring_with_the_training_phi_marks_the_env_phi0_as_the_scorers(tmp_path):
+    """Same Φ for env and scorer: the env's Φ₀ (what crash rows carry) is the scorer's Φ₀."""
+    rule = "drc_dense_errors_only_eval"
+    phi0_env, inline, _ = _route_and_score_inline(tmp_path, rule, rule)
+    assert inline["env_phi0_matches"] is True
+    assert inline["initial_potential"] == pytest.approx(phi0_env)

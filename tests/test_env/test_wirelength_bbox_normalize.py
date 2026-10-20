@@ -13,8 +13,10 @@ from pathlib import Path
 
 import pytest
 
+from configs.loader.schema import EnvConfig, RewardOverrides
 from pcb_world.core.reward import PotentialReward
-from pcb_world.core.reward_config import YamlRewardConfig
+from pcb_world.core.reward_config import RewardRuleSchema, YamlRewardConfig
+from tests._rule_helpers import RULE_PENALTIES
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 REWARD_RULES_DIR = PROJECT_ROOT / "tests" / "fixtures" / "reward_rules"
@@ -25,14 +27,15 @@ def test_flag_defaults_off():
 
 
 def test_yaml_passes_flag_to_built_reward():
-    cfg = YamlRewardConfig({
+    cfg = YamlRewardConfig(RewardRuleSchema.from_dict({
         "name": "test_wlnorm",
         "mode": "per_step",
         "potential": {
             "wirelength_penalty": 0.5,
             "wirelength_bbox_normalize": True,
+            **RULE_PENALTIES,
         },
-    })
+    }, "<inline>"))
     r = cfg.build_reward()
     assert r.wirelength_bbox_normalize is True
     assert r.wirelength_penalty == pytest.approx(0.5)
@@ -64,7 +67,7 @@ def _probe_env(board_path, **kwargs):
 
     from pcb_world.core.env import PCBWorld
 
-    env = PCBWorld(board_path=str(board_path), max_steps=10, **kwargs)
+    env = PCBWorld(str(board_path), EnvConfig.with_overrides(max_steps=10, **kwargs))
     try:
         long_edge = max(env._meta.bbox_w, env._meta.bbox_h)
         effective = env._potential_reward.wirelength_penalty
@@ -91,6 +94,6 @@ def test_env_normalizes_ctor_override_too(board_path):
     effective, long_edge = _probe_env(
         board_path,
         reward_rule=str(REWARD_RULES_DIR / "reward_linear_wlnorm.yaml"),
-        wirelength_penalty=0.7,
+        reward=RewardOverrides(wirelength_penalty=0.7),
     )
     assert effective == pytest.approx(0.7 / long_edge)

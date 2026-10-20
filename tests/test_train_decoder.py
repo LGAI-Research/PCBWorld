@@ -24,6 +24,7 @@ from pcb_world.engine.kicad_engine import allow_router_coexistence
 
 from methods.rl_agent.algorithms._common import policy_update_loop
 from methods.rl_agent.algorithms.grpo import compute_grpo_advantages
+from methods.rl_agent.models.v1.spec import Transition
 from methods.rl_agent.training.buffer import (
     compute_gae_flat,
     flatten_group_to_buffer,
@@ -41,6 +42,7 @@ from methods.rl_agent.training.utils import (
     explained_variance,
 )
 from methods.rl_agent.wrappers.factory import make_decoder_env
+from tests.helpers.dist_inputs import permissive_dist_np
 from tests.helpers.env_kwargs import full_env_kwargs
 
 _FIXTURE_BOARD = os.path.join(
@@ -399,9 +401,13 @@ class TestComputeGAEFlat:
 def _mk_step(reward, action_type=0):
     return {
         "obs": {},
-        "action": np.array([action_type, 0, 0], dtype=np.int64),
-        "log_prob": 0.0,
-        "action_mask": np.ones(7, dtype=bool),
+        "transition": Transition(
+            dist=permissive_dist_np(1),
+            actions=np.array([[action_type, 0, 0]], dtype=np.int64),
+            old_log_probs=np.zeros(1, dtype=np.float32),
+            old_values=np.zeros(1, dtype=np.float32),
+            kl_mask=None,
+        ),
         "reward": float(reward),
         "terminated": False,
         "truncated": False,
@@ -414,23 +420,23 @@ class TestFlattenGroupToBuffer:
         traj2 = [_mk_step(2.0)]
         per_ep = np.array([0.5, -0.5], dtype=np.float32)
         buf = flatten_group_to_buffer([traj1, traj2], per_ep)
-        assert buf["actions"].shape == (3, 3)
-        assert buf["old_log_probs"].shape == (3,)
+        assert buf["transition"].actions.shape == (3, 3)
+        assert buf["transition"].old_log_probs.shape == (3,)
         assert buf["advantages"].shape == (3,)
         # Episode 0 gets 0.5 broadcast to its 2 steps; episode 1 gets -0.5.
         assert np.allclose(buf["advantages"], [0.5, 0.5, -0.5])
-        # GRPO buffer has no returns/old_values keys.
+        # GRPO buffer has no returns key.
         assert "returns" not in buf
-        assert "old_values" not in buf
         assert isinstance(buf["obs_list"], list)
         assert len(buf["obs_list"]) == 3
 
-    def test_empty_trajectories(self):
-        buf = flatten_group_to_buffer(
-            [[], []], np.array([0.0, 0.0], dtype=np.float32),
-        )
-        assert buf["actions"].shape == (0, 3)
-        assert len(buf["obs_list"]) == 0
+    def test_empty_trajectories_raise(self):
+        # A GRPO collect always yields >= 1 step per env; an empty group is a
+        # caller bug, not a zero-row buffer.
+        with pytest.raises(ValueError, match="GRPO group of 2 trajectories has no steps"):
+            flatten_group_to_buffer(
+                [[], []], np.array([0.0, 0.0], dtype=np.float32),
+            )
 
 
 # ===================================================================
@@ -441,11 +447,13 @@ class TestPPOCollectorToBuffer:
         T, N = 3, 2
         coll = PPOCollectorOutput(
             obs_list=[{} for _ in range(T * N)],
-            actions=np.zeros((T, N, 3), dtype=np.int64),
-            log_probs=np.zeros((T, N), dtype=np.float32),
-            action_masks=np.ones((T, N, 7), dtype=bool),
-            pointer_masks=np.full((T, N, 0), -1, dtype=np.int64),
-            mode_masks=np.ones((T, N, 3), dtype=bool),
+            transition=Transition(
+                dist=permissive_dist_np(T * N),
+                actions=np.zeros((T * N, 3), dtype=np.int64),
+                old_log_probs=np.zeros(T * N, dtype=np.float32),
+                old_values=np.full(T * N, 0.5, dtype=np.float32),
+                kl_mask=None,
+            ),
             rewards=np.zeros((T, N), dtype=np.float32),
             raw_rewards=np.zeros((T, N), dtype=np.float32),
             values=np.full((T, N), 0.5, dtype=np.float32),
@@ -461,10 +469,10 @@ class TestPPOCollectorToBuffer:
         adv = np.arange(T * N, dtype=np.float32).reshape(T, N)
         ret = adv + 0.5
         buf = ppo_collector_to_buffer(coll, adv, ret)
-        assert buf["actions"].shape == (T * N, 3)
+        assert buf["transition"].actions.shape == (T * N, 3)
         assert buf["advantages"].shape == (T * N,)
         assert buf["returns"].shape == (T * N,)
-        assert buf["old_values"].shape == (T * N,)
+        assert buf["transition"].old_values.shape == (T * N,)
         # Row-major flatten: adv[0, 0], adv[0, 1], adv[1, 0], ...
         assert np.allclose(buf["advantages"], adv.reshape(-1))
 
@@ -498,21 +506,63 @@ class TestPPORequiresCritic:
 
         device = torch.device("cpu")
         policy = KiCadRLModel(
+            disable_slot_emb=False,
+            policy_net_select=False,
             d_model=32, n_heads=4, n_layers=2, d_ff=64,
             max_seq_len=2000, n_freq=4, use_critic=False,
         )
         opt = torch.optim.Adam(policy.parameters(), lr=1e-4)
         buf = {
             "obs_list": [{}],
-            "actions": np.zeros((1, 3), dtype=np.int64),
-            "old_log_probs": np.zeros((1,), dtype=np.float32),
-            "action_masks": np.ones((1, 7), dtype=bool),
+            "transition": Transition(
+                dist=permissive_dist_np(1),
+                actions=np.zeros((1, 3), dtype=np.int64),
+                old_log_probs=np.zeros((1,), dtype=np.float32),
+                old_values=np.zeros((1,), dtype=np.float32),
+                kl_mask=None,
+            ),
             "advantages": np.zeros((1,), dtype=np.float32),
             "returns": np.zeros((1,), dtype=np.float32),
-            "old_values": np.zeros((1,), dtype=np.float32),
         }
         with pytest.raises(ValueError, match="use_critic"):
             policy_update_loop(policy, opt, buf, device, algo="ppo")
+
+
+# ===================================================================
+# ALLOWED_MISSING_KEYS (checkpoint-load tolerance per trainer)
+# ===================================================================
+class TestAllowedMissingKeys:
+    """Pins each trainer's effective set and its derivation from the base."""
+
+    def test_effective_sets(self):
+        from methods.rl_agent.training.loop import (
+            GRPOTrainer, PPOTrainer, RLTrainer,
+        )
+
+        assert RLTrainer.ALLOWED_MISSING_KEYS == {"prev_action", "drc"}
+        assert PPOTrainer.ALLOWED_MISSING_KEYS == {"prev_action", "drc"}
+        assert GRPOTrainer.ALLOWED_MISSING_KEYS == {"prev_action", "drc", "same_net_bias"}
+
+    def test_subclasses_derive_from_base(self):
+        """A base edit reaches both trainers: PPO inherits the base set and
+        GRPO's set is the base set plus its own additions."""
+        from methods.rl_agent.training.loop import (
+            GRPOTrainer, PPOTrainer, RLTrainer,
+        )
+
+        assert "ALLOWED_MISSING_KEYS" not in vars(PPOTrainer)
+        assert PPOTrainer.ALLOWED_MISSING_KEYS is RLTrainer.ALLOWED_MISSING_KEYS
+        assert RLTrainer.ALLOWED_MISSING_KEYS < GRPOTrainer.ALLOWED_MISSING_KEYS
+
+    def test_sets_are_immutable(self):
+        """PPO shares the base object, so an in-place edit through one trainer
+        must be impossible rather than silently loosening the other's loads."""
+        from methods.rl_agent.training.loop import (
+            GRPOTrainer, PPOTrainer, RLTrainer,
+        )
+
+        for cls in (RLTrainer, PPOTrainer, GRPOTrainer):
+            assert isinstance(cls.ALLOWED_MISSING_KEYS, frozenset), cls.__name__
 
 
 # ===================================================================
@@ -533,7 +583,7 @@ class TestAutoDevice:
 def _tiny_policy_kwargs():
     return dict(
         d_model=32, n_heads=4, n_layers=2, d_ff=64,
-        max_seq_len=2000, n_freq=4,
+        max_seq_len=2000, n_freq=4, policy_net_select=False, disable_slot_emb=False,
     )
 
 
@@ -606,7 +656,7 @@ class TestEndToEndPPO:
                 coll = collect_n_steps_ppo(
                     envs, policy, device, n_steps=16,
                 )
-                assert coll.actions.shape == (16, 2, 3)
+                assert coll.transition.actions.shape == (16 * 2, 3)
                 assert coll.values.shape == (16, 2)
 
                 advs, rets = compute_gae_flat(
@@ -618,7 +668,7 @@ class TestEndToEndPPO:
                     gamma=1.0, gae_lambda=0.95,
                 )
                 buf = ppo_collector_to_buffer(coll, advs, rets)
-                assert "returns" in buf and "old_values" in buf
+                assert "returns" in buf and buf["transition"].old_values.shape == (16 * 2,)
 
                 metrics = policy_update_loop(
                     policy, opt, buf, device,
@@ -695,7 +745,10 @@ class TestBuildEvaluatorsDiagOverride:
         board_b.write_text("")
         manifest = tmp_path / "diag_boards.txt"
         manifest.write_text(f"{board_a}\n{board_b}\n")
-        base = dict(
+        from methods.rl_agent.training.train_ppo import build_arg_parser
+
+        base = vars(build_arg_parser().parse_args(["--board", "b.kicad_pcb"]))
+        base.update(
             max_steps=1024, masking_rule="train_rule.yaml",
             reward_rule="default",
             eval_n_rollouts=5, n_envs=8, eval_base_seed=1000,
@@ -723,7 +776,10 @@ class TestBuildEvaluatorsDiagOverride:
         eval_boards = load_boards_from_dir_or_list(
             boards_list=Path(args.eval2_boards),
         )
-        primary, extras = build_evaluators(args, None, "cpu", eval_boards)
+        from methods.rl_agent.training.loop import val_env_config
+
+        primary, extras = build_evaluators(args, None, "cpu", eval_boards,
+                                           val_env=val_env_config(args))
         return primary, dict(extras), calls
 
     def test_override_pins_diag_sets_only(self, monkeypatch, tmp_path):
@@ -736,18 +792,18 @@ class TestBuildEvaluatorsDiagOverride:
         primary.rollout_fn(primary.boards)
         native = calls[-1]
         assert native["max_steps"] == 1024
-        assert native["env_kwargs"]["max_steps"] == 1024
-        assert native["env_kwargs"]["masking_rule"] == "train_rule.yaml"
+        assert native["env_config"].env.max_steps == 1024
+        assert native["env_config"].env.masking_rule == "train_rule.yaml"
 
         extras["val_d3b"].rollout_fn(extras["val_d3b"].boards)
         diag = calls[-1]
         assert diag["max_steps"] == 512
-        assert diag["env_kwargs"]["max_steps"] == 512
-        assert diag["env_kwargs"]["masking_rule"] == "netfree.yaml"
-        # Only protocol knobs differ from the native env_kwargs.
-        rest_native = {k: v for k, v in native["env_kwargs"].items()
+        assert diag["env_config"].env.max_steps == 512
+        assert diag["env_config"].env.masking_rule == "netfree.yaml"
+        # Only protocol knobs differ from the native env config.
+        rest_native = {k: v for k, v in native["env_config"].to_record().items()
                        if k not in ("max_steps", "masking_rule")}
-        rest_diag = {k: v for k, v in diag["env_kwargs"].items()
+        rest_diag = {k: v for k, v in diag["env_config"].to_record().items()
                      if k not in ("max_steps", "masking_rule")}
         assert rest_native == rest_diag
 
@@ -755,7 +811,7 @@ class TestBuildEvaluatorsDiagOverride:
         extras["val_greedy"].rollout_fn(extras["val_greedy"].boards)
         greedy = calls[-1]
         assert greedy["max_steps"] == 1024
-        assert greedy["env_kwargs"]["masking_rule"] == "train_rule.yaml"
+        assert greedy["env_config"].env.masking_rule == "train_rule.yaml"
         assert greedy["deterministic"] is True
 
     def test_no_override_reuses_native_fn(self, monkeypatch, tmp_path):
@@ -791,7 +847,7 @@ class TestHandleValOverallNoneTolerance:
         saved = {}
         stub = SimpleNamespace(
             best_eval_fp=float("-inf"),
-            args=SimpleNamespace(save_dir=str(tmp_path)),
+            args=SimpleNamespace(save_dir=str(tmp_path), ckpt_config=lambda: {"schema": 2, "values": {"rules_source": "board"}}),
             _save_ckpt=lambda path, payload: saved.update({"path": path}),
         )
         ov = {
@@ -802,3 +858,119 @@ class TestHandleValOverallNoneTolerance:
         RLTrainer._handle_val_overall(stub, 10, ov, lambda: {})
         assert stub.best_eval_fp == 0.5
         assert saved["path"].endswith("policy_best.pt")
+
+
+@pytest.mark.parametrize("algo", ["ppo", "grpo"])
+class TestResumeKeepsTheBestCheckpoint:
+    """``policy_best.pt`` is the best over the whole run, across resumes."""
+
+    @staticmethod
+    def _trainer(algo, save_dir, start_iteration=1, resume=None):
+        from types import SimpleNamespace
+        from configs.loader.schema import DEFAULTS
+        from methods.rl_agent.training.loop import GRPOTrainer, PPOTrainer
+
+        cls = {"ppo": PPOTrainer, "grpo": GRPOTrainer}[algo]
+        t = cls.__new__(cls)
+        t.best_eval_fp = float("-inf") if DEFAULTS.best_metric_mode == "max" else float("inf")
+        t.start_iteration = start_iteration
+        t.args = SimpleNamespace(
+            save_dir=str(save_dir),
+            resume=str(resume or save_dir / f"policy_iter_{start_iteration - 1}.pt"),
+            ckpt_config=lambda: {"schema": 2, "values": {"rules_source": "board"}})
+        t._ckpt_stamp_payload = lambda: {}
+        t._schedule_state = lambda: {}
+        return t
+
+    @staticmethod
+    def _val(t, iteration, score):
+        t._handle_val_overall(iteration, {"fp_mean_of_means": score}, lambda: {"w": score})
+
+    @staticmethod
+    def _best(save_dir, name="policy_best.pt"):
+        return torch.load(save_dir / name, weights_only=False)["policy_state_dict"]["w"]
+
+    def _run_to_iter_10(self, algo, save_dir, score=0.9):
+        run = self._trainer(algo, save_dir)
+        self._val(run, 10, score)
+        run._save_ckpt(str(save_dir / "policy_iter_10.pt"), {"iteration": 10})
+        return torch.load(save_dir / "policy_iter_10.pt", weights_only=False)
+
+    def test_a_worse_first_val_after_resume_keeps_policy_best(self, algo, tmp_path):
+        ckpt = self._run_to_iter_10(algo, tmp_path)
+        assert ckpt["best_val_score"] == pytest.approx(0.9)
+
+        resumed = self._trainer(algo, tmp_path, start_iteration=11)
+        resumed._restore_best_score(ckpt)
+        self._val(resumed, 20, 0.5)
+        assert self._best(tmp_path) == 0.9
+        self._val(resumed, 30, 1.0)
+        assert self._best(tmp_path) == 1.0
+
+    def test_min_mode_keeps_the_lower_best(self, algo, tmp_path, monkeypatch):
+        import dataclasses
+        from configs.loader import schema
+
+        monkeypatch.setattr(schema, "DEFAULTS", dataclasses.replace(schema.DEFAULTS, best_metric_mode="min"))
+        ckpt = self._run_to_iter_10(algo, tmp_path, score=0.3)
+        resumed = self._trainer(algo, tmp_path, start_iteration=11)
+        resumed._restore_best_score(ckpt)
+        assert resumed.best_eval_fp == pytest.approx(0.3)
+        self._val(resumed, 20, 0.5)
+        assert self._best(tmp_path) == 0.3
+        self._val(resumed, 30, 0.1)
+        assert self._best(tmp_path) == 0.1
+
+    def test_a_resume_into_a_new_save_dir_carries_the_run_best(self, algo, tmp_path):
+        old, new = tmp_path / "old", tmp_path / "new"
+        old.mkdir(), new.mkdir()
+        ckpt = self._run_to_iter_10(algo, old)
+        resumed = self._trainer(algo, new, start_iteration=11, resume=old / "policy_iter_10.pt")
+        resumed._restore_best_score(ckpt)
+        assert self._best(new) == 0.9                            # the run's best, from the start
+        assert resumed.best_eval_fp == pytest.approx(0.9)
+        self._val(resumed, 20, 0.5)                              # worse than the run's 0.9
+        assert self._best(new) == 0.9
+        self._val(resumed, 30, 1.0)
+        assert self._best(new) == 1.0
+        assert self._best(old) == 0.9
+
+    def test_an_old_checkpoint_recovers_the_score_of_policy_best(self, algo, tmp_path):
+        torch.save({"iteration": 10, "policy_state_dict": {"w": 0.9},
+                    "eval_overall": {"fp_mean_of_means": 0.9}}, tmp_path / "policy_best.pt")
+        resumed = self._trainer(algo, tmp_path, start_iteration=21)
+        resumed._restore_best_score({"iteration": 20})          # pre-best_val_score checkpoint
+        assert resumed.best_eval_fp == pytest.approx(0.9)
+        self._val(resumed, 30, 0.5)
+        assert self._best(tmp_path) == 0.9
+
+    def test_a_fork_into_a_new_save_dir_skips_a_later_best(self, algo, tmp_path, capsys):
+        old, new = tmp_path / "old", tmp_path / "new"
+        old.mkdir(), new.mkdir()
+        ckpt = self._run_to_iter_10(algo, old)
+        run = self._trainer(algo, old, start_iteration=11)
+        run._restore_best_score(ckpt)
+        self._val(run, 20, 1.0)                                  # the abandoned branch's best
+        forked = self._trainer(algo, new, start_iteration=11, resume=old / "policy_iter_10.pt")
+        forked._restore_best_score(ckpt)
+        out = capsys.readouterr().out
+        assert str(old / "policy_best.pt") in out and "iteration 20" in out
+        assert not (new / "policy_best.pt").exists()
+        self._val(forked, 30, 0.5)                               # this branch's first val
+        assert self._best(new) == 0.5
+        assert self._best(old) == 1.0
+
+    def test_a_policy_best_without_a_score_is_kept_aside_and_replaced(self, algo, tmp_path, capsys):
+        torch.save({"iteration": 10, "policy_state_dict": {"w": 0.9}, "metrics": {}},
+                   tmp_path / "policy_best.pt")                  # KDD-era: train metrics only
+        for _ in range(2):                                       # resumed again before any val
+            resumed = self._trainer(algo, tmp_path, start_iteration=21)
+            resumed._restore_best_score({"iteration": 20})
+            assert "policy_best.unscored.pt" in capsys.readouterr().out
+            assert self._best(tmp_path, "policy_best.unscored.pt") == 0.9
+            assert self._best(tmp_path) == 0.9
+        self._val(resumed, 30, 0.1)                              # the first val of this segment
+        assert self._best(tmp_path) == 0.1
+        self._val(resumed, 40, 0.05)
+        assert self._best(tmp_path) == 0.1
+        assert self._best(tmp_path, "policy_best.unscored.pt") == 0.9

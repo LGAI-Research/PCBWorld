@@ -17,8 +17,8 @@ Test plan:
 """
 
 import pytest
-from pcb_world.engine.kicad_engine import KiCadEngine
 from pcb_world.core.action import make_line, make_via
+from tests.helpers.engine import open_engine
 
 BOARD = "tests/fixtures/simple_routing_board.kicad_pcb"
 
@@ -28,7 +28,7 @@ BOTTOM = 2  # human layer: Bottom (B.Cu)
 
 @pytest.fixture
 def engine():
-    e = KiCadEngine(BOARD)
+    e = open_engine(BOARD)
     e.build_connectivity()
     yield e
     e.close()
@@ -83,12 +83,13 @@ class TestMakeViaAvoidsDRC:
         """
         _route_net1_net2(engine)
 
-        # Set via dimensions to meet board design rules
-        engine.set_via_diameter(0.6)
-        engine.set_via_drill(0.3)
-
         # NET3 Step 1: Top pad (25,5) -> via at (25,5.5)
         engine.start_route(25.0, 5.0, TOP)
+        # start_route imports the via dimensions from the net class; they
+        # meet the board design rules (0.6 dia / 0.3 drill).
+        sizes = engine.get_route_sizes()
+        assert sizes["via_diameter"] == pytest.approx(0.6, abs=1e-6)
+        assert sizes["via_drill"] == pytest.approx(0.3, abs=1e-6)
         s1, _ = make_via(engine, 25.0, 5.5)
         engine.build_connectivity()
         assert s1, "First make_via should succeed"

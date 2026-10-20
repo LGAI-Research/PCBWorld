@@ -29,17 +29,23 @@ pre-made ``.orp`` files (the pre-converted DSN/ORP mirror registered as
 Stages 2-3 run in the current Python env (needs ``orthoroute`` importable, and
 ``cupy`` + a GPU for ``--gpu``).
 
+On the PCBench corpus, ``--difficulty easy|medium|hard`` (+ ``--split``, default
+``test``) restricts the run to that D3 tier of ``configs/datasets/d3.json``, in its
+order; without it (or ``--boards``) every board folder under ``--data-root`` is
+routed, the boards excluded from D3 included.
+
 Examples (dataset paths via the resolver CLI — no hardcoded roots):
-  # full chain, 5 boards, GPU (ORP via the resolved pcbnew)
+  # full chain, 5 D3-A boards, GPU (ORP via the resolved pcbnew)
   python methods/baselines/rule_based/run_orthoroute_pipeline.py \
       --data-root "$(python -m configs.loader.paths resolve pcbench_exacad)" \
+      --difficulty easy \
       --out-root methods/baselines/rule_based/_run_outputs/ortho_exacad --limit 5 --gpu
 
-  # skip Stage 1, route from canonical ORPs, CPU (deterministic)
+  # skip Stage 1, route D3-A from canonical ORPs, CPU (deterministic)
   python methods/baselines/rule_based/run_orthoroute_pipeline.py \
       --data-root "$(python -m configs.loader.paths resolve pcbench_exacad)" \
       --orp-root "$(python -m configs.loader.paths resolve pcbench_exacad_dsn)" \
-      --out-root methods/baselines/rule_based/_run_outputs/ortho_exacad_cpu --cpu
+      --difficulty easy --out-root methods/baselines/rule_based/_run_outputs/ortho_exacad_cpu --cpu
 
   # only generate ORPs (Stage 1)
   python methods/baselines/rule_based/run_orthoroute_pipeline.py --data-root ... --out-root ... --stage orp
@@ -67,13 +73,22 @@ BATCH_ORP = _PROJECT_ROOT / "engine" / "pcbnew_prep" / "batch_kicad_to_orp.py"
 sys.path.insert(0, str(_PROJECT_ROOT / "tools" / "datagen" / "pcbench_prep"))
 import kicad_tools  # noqa: E402
 
+sys.path.insert(0, str(_PROJECT_ROOT))
+from methods.baselines.rule_based._lib.datasets import (  # noqa: E402
+    D3_DIFFICULTIES, d3_board_ids,
+)
+
 
 def discover_boards(data_root: Path, stem: str, only: list[str] | None):
-    """Yield (board_id, unrouted_pcb, pro_or_None) for each board folder."""
+    """(board_id, unrouted_pcb, pro_or_None) per board folder holding the unrouted PCB.
+
+    ``only`` lists the folder names to look at, in that order; without it every
+    folder under ``data_root`` is walked in sorted order.
+    """
     boards = []
-    for folder in sorted(p for p in data_root.iterdir() if p.is_dir()):
-        if only and folder.name not in only:
-            continue
+    folders = ([data_root / name for name in only] if only
+               else sorted(p for p in data_root.iterdir() if p.is_dir()))
+    for folder in folders:
         pcb = folder / f"{stem}_unrouted.kicad_pcb"
         if not pcb.is_file():
             continue
@@ -184,8 +199,9 @@ def route_and_convert_one(task: dict) -> dict:
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    from configs.loader.cli import StrictArgumentParser
+    ap = StrictArgumentParser(description=__doc__,
+                              formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-root", required=True, type=Path,
                     help="dir whose sub-folders each hold a board")
     ap.add_argument("--out-root", required=True, type=Path)
@@ -193,6 +209,11 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="0 = all boards")
     ap.add_argument("--boards", nargs="*", default=None,
                     help="explicit board_id folder names (overrides --limit)")
+    ap.add_argument("--difficulty", choices=D3_DIFFICULTIES, default=None,
+                    help="PCBench corpus: route only this D3 tier of "
+                         "configs/datasets/d3.json (easy = D3-A); exclusive with --boards")
+    ap.add_argument("--split", default=None,
+                    help="d3.json split for --difficulty (default test); needs --difficulty")
     ap.add_argument("--orp-root", type=Path, default=None,
                     help="use pre-made .orp from here (per <board_id>/<stem>.orp); "
                          "boards missing one fall back to Stage 1")
@@ -212,14 +233,36 @@ def main():
 
     data_root = args.data_root.resolve()
     out_root = args.out_root.resolve()
-    out_root.mkdir(parents=True, exist_ok=True)
 
-    boards = discover_boards(data_root, args.stem, args.boards)
+    if args.difficulty and args.boards:
+        ap.error("--difficulty and --boards are mutually exclusive")
+    if args.split and not args.difficulty:
+        ap.error("--split selects within a D3 tier and needs --difficulty")
+    if args.limit < 0:
+        ap.error(f"--limit must be >= 0, got {args.limit}")
+    split = args.split or "test"
+    try:
+        # a tier keeps its d3.json order (as in the unified runner); --boards is sorted
+        only = (d3_board_ids(args.difficulty, split) if args.difficulty
+                else sorted(set(args.boards)) if args.boards else None)
+    except ValueError as exc:
+        ap.error(str(exc))
+    boards = discover_boards(data_root, args.stem, only)
+    if args.difficulty and len(boards) < len(only):
+        found = {b[0] for b in boards}
+        gone = [b for b in only if b not in found]
+        msg = (f"D3 tier {args.difficulty}.{split}: {len(gone)} of {len(only)} "
+               f"board(s) have no {args.stem}_unrouted.kicad_pcb under {data_root}: "
+               f"{gone[:10]}{' ...' if len(gone) > 10 else ''}")
+        if not args.limit or args.limit >= len(only):
+            ap.error(msg)
+        print(f"[warn] {msg}", file=sys.stderr)
     if not args.boards and args.limit:
         boards = boards[:args.limit]
     if not boards:
         print(f"no boards with {args.stem}_unrouted.kicad_pcb under {data_root}")
         sys.exit(1)
+    out_root.mkdir(parents=True, exist_ok=True)  # only once the selection is valid
     print(f"[pipeline] {len(boards)} boards | mode={'GPU' if args.gpu else 'CPU'} "
           f"| stage={args.stage} | out={out_root}")
 

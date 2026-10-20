@@ -20,7 +20,6 @@ Algorithm:
   6. Save first accepting trial (else min-trial).
 """
 
-import argparse
 import fnmatch
 import json
 import os
@@ -963,7 +962,11 @@ def _process_wrapper(args):
 
 
 def main():
-    p = argparse.ArgumentParser()
+    repo_dir = str(Path(__file__).resolve().parents[3])  # configs.loader when run as a script
+    if repo_dir not in sys.path:
+        sys.path.insert(0, repo_dir)
+    from configs.loader.cli import StrictArgumentParser
+    p = StrictArgumentParser()
     p.add_argument('--base-dir', required=True,
                    help='board-folder root to process (e.g. the drc_fix_v9.py '
                         'output directory)')
