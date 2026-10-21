@@ -216,5 +216,6 @@
  "tests/test_via_routing.py": 0.2,
  "tests/test_vvia_restore_equivalence.py": 0.1,
  "tests/test_walk_cache.py": 0.1,
- "tests/test_wire_schema.py": 0.0
+ "tests/test_wire_schema.py": 0.0,
+ "tests/test_pcbench_prep_netclass_defaults.py": 0.3
 }

@@ -21,7 +21,8 @@ redistributed by this repository — users clone PCBench and run this chain.
 PCBench/PCBs/<name>/processed.kicad_pcb   (public clone: KiCad 5 file format, no project file)
    │  0. convert_v9.py     PCBENCH_PCBS_ROOT → PCBENCH_V9_ROOT
    │     pcbnew load + save: KiCad 9 board + the .kicad_pro KiCad 9 derives from the legacy
-   │     (setup …) block; metadata.json / final.json copied along
+   │     (setup …) block; diff-pair width / gap follow the class track width / clearance unless
+   │     the board set its own value (netclass_defaults.py); metadata.json / final.json copied along
    │  1. drc_fix_v9.py     PCBENCH_V9_ROOT → PCBENCH_NEWDRC_OUT
    │     patch the minimum .kicad_pro entries (severities → ignore, a few rule floors → 0,
    │     hole-to-hole = min(0.25 mm, Default net-class clearance)); the boards that then
@@ -71,7 +72,10 @@ that cap, treats a count at those values as unusable and narrows every reducible
 of the offenders ([make_guide.md](make_guide.md)). The engine's uncapped `kicad-cli` gets
 the full list and narrows only the offenders on the 15 boards that reach those values; the
 shipped `d3` is that output, identical to the paper's set (UUIDs aside) but for the per-net
-widths of 40 of the 679 guide boards, which predate these guards.
+widths of 40 of the 679 guide boards, which predate these guards, and for the diff-pair width / gap
+of the net classes a KiCad 5 board left unset: they follow the class track width / clearance
+([netclass_defaults.py](netclass_defaults.py)) where the paper's set kept KiCad's 0.2 / 0.25 mm
+defaults, so nets KiCad pairs by name route differently on 72 of D3's 677 boards.
 
 `bash experiments/kdd/d3_dataset/run.sh --out /tmp/d3.json` rebuilds the split json from the
 CSV + layout, reproducing [d3.json](../../../configs/datasets/d3.json) up to one recorded

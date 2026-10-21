@@ -38,6 +38,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 # kicad-cli (every DRC trial) and the pcbnew interpreter (zone refill) come from
 # kicad_tools: the engine's own build by default, KICAD_CLI / PCBNEW_PYTHON override.
 import kicad_tools
+from netclass_defaults import (LEGACY_PRESERVED_KEYS, UNSET_DIFF_PAIR_FIELDS, balanced_block_end,
+                               parse_legacy_net_classes)
 try:
     from setup_drvzero import remove_routing as legacy_remove_routing
 except Exception:
@@ -82,20 +84,6 @@ board.Save(dst)
 # Parsing
 # ─────────────────────────────────────────────
 
-def _balanced_block_end(content, start):
-    """Exclusive end index of the block from '(' to its matching ')'."""
-    depth = 0
-    for j in range(start, len(content)):
-        c = content[j]
-        if c == '(':
-            depth += 1
-        elif c == ')':
-            depth -= 1
-            if depth == 0:
-                return j + 1
-    return len(content)
-
-
 def extract_net_id_to_name(content):
     """Top-level (net id name) declarations of a kicad_pcb → {id: name}."""
     result = {}
@@ -118,7 +106,7 @@ def extract_net_width_range(content):
             start = content.find(tag, idx)
             if start == -1:
                 break
-            end = _balanced_block_end(content, start)
+            end = balanced_block_end(content, start)
             block = content[start:end]
             wm = re.search(r'\(width\s+([0-9.]+)\)', block)
             nm = re.search(r'\(net\s+(\d+)\)', block)
@@ -139,7 +127,7 @@ def extract_uuid_to_net(content):
             start = content.find(tag, idx)
             if start == -1:
                 break
-            end = _balanced_block_end(content, start)
+            end = balanced_block_end(content, start)
             block = content[start:end]
             um = re.search(r'\(uuid\s+"([^"]+)"\s*\)', block)
             if not um:
@@ -178,7 +166,7 @@ def extract_setup_legacy_rules(content):
     start = content.find('(setup')
     if start == -1:
         return {}
-    end = _balanced_block_end(content, start)
+    end = balanced_block_end(content, start)
     block = content[start:end]
     rules = {}
     for legacy, modern in LEGACY_SETUP_TO_RULES.items():
@@ -192,37 +180,8 @@ def extract_pcb_net_class_blocks(content):
     """Parse the net_class blocks of a legacy (v5/v6) kicad_pcb.
     Returns (class_params, net_to_class) with internal keys.
     """
-    class_params = {}
-    net_to_class = {}
-    idx = 0
-    while True:
-        start = content.find('(net_class', idx)
-        if start == -1:
-            break
-        end = _balanced_block_end(content, start)
-        block = content[start:end]
-
-        m = re.match(r'\(net_class\s+("([^"]+)"|(\S+))', block)
-        if not m:
-            idx = end
-            continue
-        cname = (m.group(2) or m.group(3)).strip('"')
-
-        # internal key names (via_dia/via_drill/uvia_*)
-        params = {}
-        for key in ('clearance', 'trace_width', 'via_dia',
-                    'via_drill', 'uvia_dia', 'uvia_drill'):
-            pm = re.search(rf'\({key}\s+([0-9.]+)\)', block)
-            if pm:
-                params[key] = float(pm.group(1))
-        class_params[cname] = params
-
-        for mn in re.finditer(
-                r'\(add_net\s+("([^"]+)"|([^)"]+))\)', block):
-            name = (mn.group(2) or mn.group(3)).strip()
-            net_to_class[name] = cname
-
-        idx = end
+    classes, net_to_class = parse_legacy_net_classes(content)
+    class_params = {c: {k: v for k, v in p.items() if k in LEGACY_PRESERVED_KEYS} for c, p in classes.items()}
     return class_params, net_to_class
 
 
@@ -315,7 +274,7 @@ def apply_net_widths_to_tracks(content, net_id_to_width):
                 out.append(src[idx:])
                 break
             out.append(src[idx:start])
-            end = _balanced_block_end(src, start)
+            end = balanced_block_end(src, start)
             block = src[start:end]
             nm = re.search(r'\(net\s+(\d+)\)', block)
             if nm and nm.group(1) in net_id_to_width:
@@ -343,7 +302,7 @@ def remove_routing_v9(content):
                 out.append(content[idx:])
                 break
             out.append(content[idx:start])
-            end = _balanced_block_end(content, start)
+            end = balanced_block_end(content, start)
             # drop the preceding whitespace/newline as well
             while out and out[-1].endswith(('\n\t', '\n ', '\n')):
                 tail = out[-1]
@@ -439,6 +398,12 @@ def build_guide_pro(orig_pro, groups, class_info):
             pro_k = INTERNAL_TO_PRO.get(internal_k)
             if pro_k:
                 new_cls[pro_k] = val
+        # a diff-pair field that follows its class (convert_v9.py fills unset ones that way,
+        # netclass_defaults.py) keeps following it at the guide values; a designer's value stays
+        for field, (source, _, _) in UNSET_DIFF_PAIR_FIELDS.items():
+            if template and template.get(field) is not None \
+                    and template.get(field) == template.get(source) and new_cls.get(source) is not None:
+                new_cls[field] = new_cls[source]
         # nets list (omitted for Default — KiCad convention)
         if cname == 'Default':
             new_cls.pop('nets', None)

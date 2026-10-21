@@ -8,7 +8,10 @@ KiCad 5 format (file version 20171130) and no project file. ``drc_fix_v9.py``
 needs the KiCad 9 form — ``processed.kicad_pcb`` + ``processed.kicad_pro``, the
 project file that KiCad 9 fills from the legacy ``(setup ...)`` block on load.
 Loading each board with the ``pcbnew`` Python module and saving it again performs
-exactly that migration (the round trip the KiCad GUI does on "Save").
+exactly that migration (the round trip the KiCad GUI does on "Save"). The round trip
+fills net-class fields the legacy board never set with KiCad defaults; the diff-pair
+ones then follow the class's own track width / clearance unless the board set a value of its own
+(``netclass_defaults.fill_unset_diff_pair``; the count lands in ``_results.json``).
 
 Every board is converted in its own ``pcbnew`` child process, so a board that
 crashes the loader only fails itself. ``metadata.json`` / ``final.json`` are copied
@@ -34,6 +37,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import kicad_tools
+import netclass_defaults
 
 CONVERT_TIMEOUT = 300
 
@@ -81,11 +85,24 @@ def convert_sample(name: str, pcbs_dir: Path, out_dir: Path, helper: Path) -> di
         return {"name": name, "status": "failed",
                 "error": (proc.stderr or proc.stdout)[-400:]}
 
-    for extra in ("metadata.json", "final.json"):
-        ep = src_dir / extra
-        if ep.exists():
-            shutil.copy(ep, dst / extra)
-    return {"name": name, "status": "ok"}
+    pro_dst = pcb_dst.with_suffix(".kicad_pro")
+    try:
+        pro = json.loads(pro_dst.read_text(encoding="utf-8"))
+        legacy = netclass_defaults.parse_legacy_net_classes(pcb_src.read_text(encoding="utf-8", errors="replace"))[0]
+        filled = netclass_defaults.fill_unset_diff_pair(pro, legacy)
+        pro_dst.write_text(json.dumps(pro, indent=2), encoding="utf-8")
+        for extra in ("metadata.json", "final.json"):
+            ep = src_dir / extra
+            if ep.exists():
+                shutil.copy(ep, dst / extra)
+    except (OSError, ValueError) as e:   # bad input: this board fails, the run goes on
+        shutil.rmtree(dst, ignore_errors=True)
+        return {"name": name, "status": "failed", "error": f"post-processing: {type(e).__name__}: {e}"}
+    except BaseException:                # a bug: leave no half-processed board behind, then fail loudly
+        shutil.rmtree(dst, ignore_errors=True)
+        raise
+
+    return {"name": name, "status": "ok", "diff_pair_fields_filled": len(filled)}
 
 
 def main():

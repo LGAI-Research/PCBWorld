@@ -104,6 +104,13 @@ choice on its first line):
   `uvia_drill` — only those actually present on some input class. They are carried into
   the guide class unchanged; only the track width is new. In the `.kicad_pro` they are
   written back under their KiCad names (`via_diameter`, `microvia_diameter`, …).
+- `diff_pair_width` / `diff_pair_gap` that equal the source class's track width / clearance
+  (how [convert_v9.py](convert_v9.py) leaves every one the designer did not set to a value of its
+  own, [netclass_defaults.py](netclass_defaults.py)) take the guide class's track width / clearance;
+  a designer value on the source class is copied unchanged. The source class is the same-named
+  original class or Default — guide classes are named `Default` / `guide_W*`, so a designer value
+  on another original class is not carried. KiCad routes a net it detects as a diff pair by name at
+  `diff_pair_width`, so a stray default would override the guide width.
 - Two nets share a guide class only if both their width **and** their preserved
   parameters match, so a board that uses different clearances per class keeps that
   distinction.

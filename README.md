@@ -4,7 +4,7 @@ A reinforcement-learning environment for PCB routing, built on KiCad's interacti
 
 | | |
 |---|---|
-| **Version** | <!--VERSION-->v1.1.0<!--/VERSION--> |
+| **Version** | <!--VERSION-->v1.1.1<!--/VERSION--> |
 | **KiCad** | 9.0.8 (via the engine submodule) |
 | **Python** | 3.12+ |
 | **Platform** | Linux x86_64 (primary), macOS |

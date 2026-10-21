@@ -39,9 +39,10 @@ the setup scripts build the board set and its split json in one pass, so a missi
 
 ## Gotchas (derived facts the tree does not show)
 
-- **Rebuilt vs paper files.** A rebuild by the pcbench_prep chain reproduces the paper's 679 boards, order, splits and `.kicad_pro` rules; the
-  guide boards differ only in the per-net track width chosen on 40 boards (the paper's set is one sample of a then non-deterministic `kicad-cli`
-  DRC — details: pcbench_prep README, "Expected result"). One split file serves both: `pcbench/exacad_sorted` holds the 679 corpus
+- **Rebuilt vs paper files.** A rebuild by the pcbench_prep chain reproduces the paper's 679 boards, order and splits; the files differ in the
+  per-net track width chosen on 40 guide boards (the paper's set is one sample of a then non-deterministic `kicad-cli` DRC) and in the
+  diff-pair width / gap of net classes the KiCad 5 boards left unset, which now follow the class track width / clearance (details:
+  pcbench_prep README, "Determinism"). One split file serves both: `pcbench/exacad_sorted` holds the 679 corpus
   folders and `d3.json` selects D3 (677 boards) from them — the two excluded boards stay on disk, so the folder numbering is unchanged.
 - **`d3.json`'s `train` key mirrors the full list — deliberately.** It is the canonical full board list, consumed test-only; the `train` key
   keeps the full list as provision for a possible future D3-train split, so `test` ⊂ `train` in every difficulty. Not leakage — the

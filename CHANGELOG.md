@@ -6,6 +6,15 @@ with its own version line — its notes are in the
 — and every environment tag pins exactly one engine commit: check out the tag and run
 `git submodule update --init` to get the engine it was tested with.
 
+## v1.1.1 — 2026-10-21
+
+PCBench preparation fix. Rebuild the D3 set with `tools/quickstart/prepare_pcbench.sh` to pick it up: D3 results on the 72 affected
+boards are not comparable with a v1.1.0-built set. The environment, the engine (v1.1.0, unchanged) and checkpoints are as in v1.1.0.
+
+### Fixed
+- PCBench preparation — diff-pair width / gap that the source board's net classes left unset now follow the class track width / clearance,
+  not KiCad's 0.2 / 0.25 mm defaults, which routed name-paired nets (e.g. `D+`/`D-`, `CAN_P`/`CAN_N`) at 0.2 mm or the board minimum on 72 of D3's 677 boards
+
 ## v1.1.0 — 2026-10-20
 
 Configuration and checkpoint-compatibility release. Observations, actions, the shipped reward and
