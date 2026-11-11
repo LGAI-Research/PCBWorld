@@ -4,7 +4,7 @@ A reinforcement-learning environment for PCB routing, built on KiCad's interacti
 
 | | |
 |---|---|
-| **Version** | <!--VERSION-->v1.2.0<!--/VERSION--> |
+| **Version** | <!--VERSION-->v1.2.1<!--/VERSION--> |
 | **KiCad** | 9.0.8 (via the engine submodule) |
 | **Python** | 3.12+ |
 | **Platform** | Linux x86_64 (primary); macOS on Apple Silicon (experimental, [see below](#macos-apple-silicon)) |
@@ -17,7 +17,7 @@ scored by KiCad's own design-rule checker. What routes here routes in KiCad.
 The repository ships the environment, synthetic board generators, the real-board benchmark
 splits, one evaluation pipeline shared by every method, and three families of baselines:
 a decoder-only PPO/GRPO transformer, LLM tool-calling agents, and the rule-based routers
-FreeRouting and KRT.
+Freerouting and KRT.
 
 ## Demo
 
@@ -115,6 +115,33 @@ it only prints the prompt and runs a single fixed step.
 The shipped defaults use a newer potential-function combination than the paper. To reproduce the
 KDD submission with its original reward, follow [experiments/kdd/](experiments/kdd/README.md).
 
+## Benchmark results
+
+Routing quality on D3-A, the 99 small open-source PCBench boards; the RL policy is trained on
+synthetic D2 boards only and routes the D3-A boards zero-shot. Table 3 of the paper (arXiv:2607.05915), under
+the @5 protocol of [docs/METRICS.md](docs/METRICS.md); Freerouting and PPO are means over 4 seeds.
+
+| Method | CP ↑ | Pot. ↑ | Rout. ↑ | Time (s) ↓ |
+|---|---|---|---|---|
+| Reference (the boards' original routed traces) | 1.00 | 23.16 | 1.00 | - |
+| Freerouting | 0.80 | **22.71** | 0.91 | 7.09 |
+| KRT (KiCadRoutingTools) | 0.74 | 20.00 | 0.94 | 0.65 |
+| LLM agent, GPT-5.4 | 0.65 | 19.42 | 0.91 | 231.15 |
+| LLM agent, GPT-5.4-mini | 0.28 | 14.22 | 0.72 | 56.85 |
+| LLM agent, GPT-5.4-nano | 0.30 | 14.16 | 0.73 | 100.76 |
+| LLM agent, Qwen3.5-397B | 0.34 | 14.88 | 0.75 | 81.82 |
+| PPO, decoder-only Transformer | **0.86** | 21.46 | 0.95 | 1.83 |
+
+Best CP and Pot. per column of this table, excluding Reference, in bold. The full table (D2, D3-B,
+OrthoRoute, the RL variants) is Table 3 of [PCBWorld.pdf](PCBWorld.pdf). Pot. uses the paper's reward, so it is reproduced
+through [experiments/kdd/](experiments/kdd/README.md), not the quick start (see above).
+
+The trained policies from the paper are on Hugging Face: [LG-AI-Research/PCBWorld](https://huggingface.co/LG-AI-Research/PCBWorld)
+(download notes: [docs/QUICKSTART.md](docs/QUICKSTART.md)).
+The checkpoints are licensed separately from this code, under the EXAONE AI Model License Agreement 1.2 - NC:
+research and educational use only, with no commercial use of the checkpoints or of their output (see the license in the
+Hugging Face repository).
+
 ## Licensing
 
 PCBWorld is two programs, distributed separately:
@@ -147,4 +174,4 @@ Accepted to the KDD 2026 Workshop on Evaluation and Trustworthiness of Agentic A
 
 ## Contact
 
-Open an issue, or write to hyungseok.song@lgresearch.ai. Bug reports and pull requests are welcome.
+Open an issue, or write to yj.park@lgresearch.ai. Bug reports and pull requests are welcome.

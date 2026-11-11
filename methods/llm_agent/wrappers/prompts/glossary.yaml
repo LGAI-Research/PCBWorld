@@ -4,7 +4,9 @@
 #   origin: v7        — the prompt v7 sentence, unchanged
 #           v7-fixed  — v7 was wrong or incomplete (`v7:` keeps the old text)
 #           new       — reviewed new sentence
-#           unreviewed — written with the generator, not yet reviewed
+#           unreviewed — a draft written with the generator; review it and mark it `new`
+#                        before it lands (tests/test_llm_env_knobs.py: every sentence carries a
+#                        mark, its own or its group's, and only the three above pass)
 #   when:   the condition under which the entry renders (the generator owns the meaning)
 #
 # Reviewed 2026-11-02 and 2026-11-11 (base: prompt v7). {placeholders} are filled from the EnvConfig.
@@ -243,12 +245,16 @@ observation:
         text: "The board state is provided in S-expression format. All floating-point values are rounded to 3 decimal places, except the (candidates ...) coordinates, which are exact — copy them as written. Each element is enclosed in parentheses: (tag value ...) or (tag (child ...) ...)."
   board_static:
     - element: board_static.bbox_x
+      origin: v7
       text: "(bbox x y w h)          — board bounding box origin and size in mm"
     - element: board_static.scale
+      origin: v7
       text: "(scale N)               — max(w, h), for normalization reference"
     - element: board_static.net_count
+      origin: v7
       text: "(net_count N)           — total number of nets"
     - element: board_static.copper_layers
+      origin: v7
       text: "(copper_layers N)       — number of copper layers"
     - element: board_static.boardlines
       origin: new
@@ -257,6 +263,7 @@ observation:
       origin: new
       text: "(nets (net CODE \"NAME\" (pads (pad ID x y layer (size w h) (shape S)) ...)) ...)   — nets with pad center positions, sizes and shapes; layer is a copper layer number (1=Top, N=Bottom) or `th` for a through-hole pad (plated through every copper layer — start_route / make_via may land on any layer)"
     - element: board_static.nets.net_*.constraints
+      origin: new
       text: "(constraints (track_width W) (clearance C) (via_diameter D)) inside each net — that net's design rules (see Design rules)"
     - element: board_static.obstacles
       origin: new
@@ -272,29 +279,37 @@ observation:
       origin: new
       text: "(vias (via ID (center PID x y) (layers start end) (diameter D)) ...)    — placed vias"
     - element: routing_geometry.net_*.points
+      origin: v7
       text: "(points (point ID x y) ...))                                  — unconnected ratsnest targets; layer info not provided (infer from the target pad or nearby tracks)"
   dynamic:
     - element: drc_violations
       origin: new
       text: "(drc_violations (drc x y layer TYPE SEVERITY \"NET\") ...) — see DRC; layer is a copper layer number (1=Top, N=Bottom) or `-` when the violation is on no copper layer"
     - element: closed_nets
+      origin: new
       text: "(closed_nets CODE ...) — nets released with net_end"
   router_head:
     - element: router_head.current_xy
+      origin: v7
       text: "(xy x y)             — cursor position in mm"
     - element: router_head.current_layer
+      origin: v7
       text: "(layer N)            — active copper layer (1=Top)"
     - element: router_head.current_net
       origin: v7-fixed
       v7: "(net N) — currently selected net code (0=none)"
       text: "(net N)              — currently selected net code (-1 = none)"
     - element: router_head.current_net_phase
+      origin: v7
       text: "(phase N)            — 0=NET_SELECT, 1=START_ROUTE, 2=ROUTING"
     - element: router_head.is_routing
+      origin: v7
       text: "(is_routing true|false)"
     - element: router_head.routing_mode
+      origin: v7
       text: "(routing_mode M)     — m=MarkObstacles, p=PushAndShove, w=Walkaround"
     - element: router_head.step
+      origin: v7
       text: "(step N ratio)       — current step number and step/max_steps ratio"
   candidates:   # rendered after router_head (the worker appends the block to the state)
     - element: candidates

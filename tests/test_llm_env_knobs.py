@@ -3,6 +3,8 @@
 A new EnvConfig field fails here until it is classified; a ``prompt`` knob must change the
 generated prompt (or stop the build when the glossary has no sentence for the value), so a
 rule the RL agent is held to cannot change without the LLM being told.
+The glossary those sentences come from
+may carry only reviewed ``origin`` marks.
 """
 from __future__ import annotations
 
@@ -133,3 +135,40 @@ def test_the_forced_routing_mode_env_var_reaches_the_prompt_or_stops_the_build(m
     b = get_pcbworld_prompts("latest", env_config=env)
     assert forced_line in b.PCBWORLD_SYSTEM_PROMPT and forced_line in b.format_valid_actions(
         [n == "make_line" for n in ACTION_NAMES[:ACT_IDLE]])
+
+
+REVIEWED_ORIGINS = {"v7", "v7-fixed", "new"}
+NOT_A_SENTENCE = {"origin", "when", "element", "example", "v7"}   # glossary keys that hold no prompt text
+
+
+def _sentences(node, path=(), origin=None):
+    """``(path, origin)`` of every prompt string in the glossary: the ``origin`` mark of the
+    node that holds it, else of the nearest group above (None when there is none)."""
+    if isinstance(node, dict):
+        origin = node.get("origin", origin)
+        for key, value in node.items():
+            if key not in NOT_A_SENTENCE:
+                yield from _sentences(value, (*path, key), origin)
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            yield from _sentences(value, (*path, i), origin)
+    elif isinstance(node, str):
+        yield "/".join(map(str, path)), origin
+
+
+def test_a_sentence_takes_its_own_mark_or_its_groups():
+    node = {"a": {"origin": "new", "line": "x", "b": {"origin": "unreviewed", "text": "y", "when": "k"}},
+            "c": [{"text": "no mark"}, {"origin": "v7", "text": "z"}]}
+    assert list(_sentences(node)) == [("a/line", "new"), ("a/b/text", "unreviewed"),
+                                      ("c/0/text", None), ("c/1/text", "v7")]
+
+
+def test_every_glossary_sentence_carries_a_reviewed_origin_mark():
+    """A draft written with the generator (``origin: unreviewed``) is reviewed before it
+    lands — the prompt sends every glossary sentence to the agent as a rule of the env —
+    and a sentence with no mark, or a misspelt one, does not pass as reviewed."""
+    sentences = list(_sentences(latest.glossary()))
+    assert sentences, "no sentence found: the walk no longer matches the glossary's shape"
+    not_reviewed = sorted(f"{path} ({origin})" for path, origin in sentences
+                          if not isinstance(origin, str) or origin not in REVIEWED_ORIGINS)
+    assert not not_reviewed, f"glossary.yaml sentences without a reviewed origin mark: {not_reviewed}"

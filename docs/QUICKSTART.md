@@ -59,6 +59,12 @@ tree at all — it is created on first use by whatever writes there (generators,
 eval). Every checkpoint path below refers to a policy you must train yourself first —
 see §3.5 (`experiments/train.py`) for the recipe that produces each one.
 
+The paper's trained policies are on Hugging Face at
+[LG-AI-Research/PCBWorld](https://huggingface.co/LG-AI-Research/PCBWorld)
+(`hf download LG-AI-Research/PCBWorld --local-dir var/checkpoints/pcbworld`). These checkpoints were trained on
+an earlier release. Results on the current release can differ from the paper. The recipes below do not read
+the downloaded files.
+
 ## 1. `var/` layout
 
 ```text

@@ -6,6 +6,21 @@ with its own version line — its notes are in the
 — and every environment tag pins exactly one engine commit: check out the tag and run
 `git submodule update --init` to get the engine it was tested with.
 
+## v1.2.1 — 2026-11-11
+
+Documentation release. Code, configuration defaults and results are as in v1.2.0; the engine pin moves to v1.2.1, which
+changes only its README.
+
+### Added
+- README "Benchmark results" — the paper's D3-A table (Table 3): Reference, Freerouting, KRT, four LLM agents and PPO
+- Hugging Face checkpoints — README links the paper's trained policies (`LG-AI-Research/PCBWorld`), `docs/QUICKSTART.md` adds the
+  download command; trained on an earlier release (results can differ from the paper), non-commercial license separate from the code
+
+### Changed
+- Contact — yj.park@lgresearch.ai
+- LLM prompt glossary — every sentence carries a reviewed `origin` mark and `tests/test_llm_env_knobs.py` refuses an unreviewed or
+  unmarked one; the prompt text is unchanged
+
 ## v1.2.0 — 2026-11-11
 
 Platform and agent-interface release, pinned to engine v1.2.0. The RL observation format, the action set, the shipped
