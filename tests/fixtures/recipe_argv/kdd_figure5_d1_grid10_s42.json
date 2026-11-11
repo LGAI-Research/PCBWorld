@@ -99,6 +99,7 @@
  ],
  "expected": {
   "action_history_len": 1,
+  "action_target": "candidates",
   "aug_bbox_shifted": false,
   "aug_flip": false,
   "aug_rotate": false,

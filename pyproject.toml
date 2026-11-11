@@ -2,13 +2,14 @@
 name = "pcbworld"
 # Single source of truth = README.md <!--VERSION--> marker; kept in sync by
 # the version tooling.
-version = "1.1.1"
+version = "1.2.0"
 requires-python = ">=3.12"
 license = {file = "LICENSE"}
 
 # All direct dependencies are pinned (==) to the versions measured in the working
 # `pcbworld` env; `requirements.txt` is the fully resolved lock generated from this file
-# (uv pip compile, linux x86_64 / py3.12). Bump pins here, then regenerate the lock.
+# (uv pip compile, linux x86_64 / py3.12); `requirements-macos.txt` is the same for
+# macOS arm64 (its header has the command). Bump pins here, then regenerate both locks.
 dependencies = [
     # --- engine / env core ---
     "kicad-python==0.6.0",
@@ -34,8 +35,9 @@ dependencies = [
     "ray[default]==2.54.1",
     # tensordict is used by verl's rollout buffer.
     "tensordict==0.10.0",
-    # vllm is the LLM inference backend for verl-agent training.
-    "vllm==0.11.0",
+    # vllm is the LLM inference backend for verl-agent training. Linux-only: it ships no
+    # macOS wheel, and every import of it is lazy (inside the vLLM code paths).
+    "vllm==0.11.0 ; sys_platform == 'linux'",
     "transformers==5.5.3",
     # flash-attn: pre-built wheel for CUDA 12 / torch 2.8 / Python 3.12 / Linux x86_64.
     # Platform marker ensures this is silently skipped on non-Linux or non-x86_64 hosts.
@@ -46,8 +48,10 @@ dependencies = [
     "google-genai==2.9.0",
     "wandb==0.26.1",
     # --- rule-based baselines (single-env merge) ---
-    # upstream KRT route.py needs shapely; scipy/psutil/cupy already arrive via vllm/ray
+    # upstream KRT route.py needs shapely and scipy (scipy is pinned here because on Linux
+    # it otherwise arrives only via vllm, which the macOS lock leaves out)
     "shapely==2.1.2",
+    "scipy==1.18.0",
     # --- tooling / tests ---
     # provides the `pynvml` module used by tools/diagnostics/speed_profiler
     "nvidia-ml-py==13.610.43",

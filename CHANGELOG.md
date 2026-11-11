@@ -6,6 +6,46 @@ with its own version line — its notes are in the
 — and every environment tag pins exactly one engine commit: check out the tag and run
 `git submodule update --init` to get the engine it was tested with.
 
+## v1.2.0 — 2026-11-11
+
+Platform and agent-interface release, pinned to engine v1.2.0. The RL observation format, the action set, the shipped
+reward and masking rules and the wire protocol are unchanged, and v1.1.x checkpoints load with their stored settings.
+Not comparable with v1.1.1: routing results (the ratsnest is now ordered by content; when that fix landed, 32 of the 240 D3-A / D3-B
+test boards routed differently, other boards were not compared), and LLM-agent runs — under the defaults (generated prompt, richer
+observation, 1024-step budget, `pcbworld_reward`), and with pinned settings too, since every caller now gets the `same_point` /
+`off_board` / `net_closed` refusals.
+Code that steps `PCBWorld` directly with coordinates outside the candidate set now needs `action_target: free`.
+
+### Added
+- Apple Silicon install (experimental) — `tools/setup/setup_all.sh` picks `environment.macos.yml` and `requirements-macos.txt` on
+  an arm64 Mac, builds the engine from the conda env alone, RL recipes train on MPS; verified scope in the README
+- `action_target` (`candidates` | `free`) — how an agent names a target point: a candidate-set point (default, the RL action
+  space) or any coordinate (LLM default); under `candidates` the LLM observation lists the points each action may take
+
+### Changed
+- Action constraints — `PCBWorld.step` applies the rules in `pcb_world/core/constraints.py` to every caller (a refusal is
+  `mask_reject` plus `info["constraint"]`); the six constraint knobs moved from `RLEnvConfig` to `EnvConfig`, flags and values kept
+- LLM `latest` prompt — generated per run from `methods/llm_agent/wrappers/prompts/glossary.yaml` and the env config, sexpr only
+  (a setting with no sentence stops the run); the hand-written text is frozen as `v8`, `--no-prompt_guidelines` drops the hints
+- LLM `latest` observation — what the RL tokenizer reads: adds pad size and shape, obstacle shape, net-less pads, outline, track
+  and via sizes, DRC violations and closed nets; drops the board-wide constraints, per-net `via_drill` and rule-area keepouts
+- LLM env — follows `configs/env.yaml` (`max_steps` 1024 and `pcbworld_reward`; eval was 20 steps with `grpo_final`); `llm.env` may
+  set only `action_target`, a run's other env values are printed as `DEVIATION` lines and kept in `run_record.yaml`
+- Setup — `setup_all.sh` needs conda's libmamba solver or `mamba` in conda's base and stops otherwise (`SKIP_ENV=1` keeps an
+  existing env), and refuses a `BUILD_DIR` from the shell; `tools/setup/build_engine.sh` rebuilds the engine; no Homebrew path
+
+### Fixed
+- Determinism — same-seed `--deterministic` rollouts could differ between runs on boards with pads of one net at one position;
+  the engine now picks ratsnest anchors by content, not memory order
+- Fresh Linux env — the `BUILD_PCBNEW=1` build failed against newly resolved OCCT 8 / SWIG 4.5 / NNG 2; `environment.yml` pins
+  `occt=7.9`, `swig=4.4`, `nng<2`
+- Closed nets — a caller without the RL net mask (the LLM path) could `net_select` a net it had released with `net_end`; the env
+  refuses it (`net_closed`) unless `net_reselect` is on
+
+### Documentation
+- `docs/QUICKSTART.md` "Crash logs" — where crash traces go (`var/crashlogs/`), `KICAD_CRASH_LOG_DIR`, `KICAD_CRASH_DIAG`;
+  `Notice.md` lists `scipy`, now a direct dependency
+
 ## v1.1.1 — 2026-10-21
 
 PCBench preparation fix. Rebuild the D3 set with `tools/quickstart/prepare_pcbench.sh` to pick it up: D3 results on the 72 affected

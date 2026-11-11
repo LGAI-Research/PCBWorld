@@ -24,10 +24,12 @@ Action body shapes mirror ``methods.llm_agent.wrappers.action_converter._ACTION_
 # max_response_length (currently 256 tokens, ≈1k chars).
 _THINK_BODY = r"[^<]{1,400}"
 
-# Numeric tokens. Coordinates are mm with up to 3 decimals on the env side;
-# integer part up to 4 digits covers boards up to ~1000mm, fraction up to 3
-# digits matches the env's rounding. Optional leading '-' for safety.
-_FLOAT = r"-?\d{1,4}(\.\d{1,3})?"
+# Numeric tokens. Coordinates are mm; integer part up to 4 digits covers boards
+# up to ~1000mm. The observation rounds to 3 decimals, but a listed candidate
+# target (action_target: candidates) is printed as the shortest exact decimal
+# (up to 17 significant digits after at most 3 leading zeros), which the env matches
+# exactly. Optional leading '-' for safety.
+_FLOAT = r"-?\d{1,4}(\.\d{1,20})?"
 _INT_SMALL = r"\d{1,2}"   # layer (1..N copper layers), bounded
 _INT_NETID = r"\d{1,4}"   # net_id, generously bounded
 _MODE = r"[mpw]"          # MarkObstacles / PushAndShove / Walkaround

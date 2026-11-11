@@ -1,0 +1,302 @@
+# LLM prompt glossary — every sentence the `latest` prompt may contain (prompts/latest.py builds the
+# prompt from these entries and the run's EnvConfig; a config value with no entry stops the run).
+#
+#   origin: v7        — the prompt v7 sentence, unchanged
+#           v7-fixed  — v7 was wrong or incomplete (`v7:` keeps the old text)
+#           new       — reviewed new sentence
+#           unreviewed — written with the generator, not yet reviewed
+#   when:   the condition under which the entry renders (the generator owns the meaning)
+#
+# Reviewed 2026-11-02 and 2026-11-11 (base: prompt v7). {placeholders} are filled from the EnvConfig.
+
+terms:
+  net:
+    origin: new
+    text: "net — a set of pads that must be electrically connected to each other. Never connect pads of different nets."
+  pad:
+    origin: new
+    text: "pad — a copper landing spot of a component, given by its center (x, y) and its copper layer."
+  thru_hole_pad:
+    origin: v7
+    text: "`th` pad — a through-hole pad, plated through every copper layer; start_route / make_via may land on any layer."
+  layer:
+    origin: v7
+    text: "layer — copper layer number: 1 = Top, N = Bottom (N = copper_layers)."
+  point:
+    origin: v7
+    text: "point — an unconnected ratsnest target of a net. Points carry no layer; infer it from the target pad or nearby tracks."
+  track:
+    origin: new
+    text: "track — a straight copper segment between two points on one layer."
+  via:
+    origin: new
+    text: "via — a plated hole that connects copper on different layers."
+  cursor:
+    origin: v7
+    text: "cursor (router_head) — the router's current position, layer, selected net and phase."
+  routing_session:
+    origin: new
+    text: "routing session — starts with start_route and ends after every make_line / make_via (success or failure). To keep drawing, issue start_route again from the end of the last track or via."
+  obstacle:
+    origin: v7
+    text: "obstacle — fixed copper or a hole that every net must avoid."
+  board_outline:
+    origin: v7
+    text: "board outline — the board edge (Edge.Cuts). Copper must stay inside it."
+  kept_routing:
+    origin: new
+    when: keep_routing_fraction
+    text: "Some nets start already routed; their tracks and vias are in routing_geometry like any other copper."
+  step_budget:
+    origin: new
+    text: "step budget — the episode ends after {max_steps} steps."
+
+design_rules:
+  when: net_constraint_obs
+  intro:
+    origin: new
+    text: "Each net carries its own design rules (mm). The router draws with them; DRC checks them."
+  clearance:
+    origin: new
+    text: "clearance — minimum gap between this net's copper and any other net's copper or the board edge."
+  track_width:
+    origin: new
+    text: "track_width — width of every track the router draws for this net."
+  via_diameter:
+    origin: new
+    text: "via_diameter — outer copper diameter of a via placed for this net."
+
+drc:
+  when: emit_drc_tokens
+  intro:
+    origin: new
+    text: "drc_violations lists the current design-rule violations, most severe and nearest to the cursor first (at most {k})."
+  types:
+    origin: new
+    clearance: "clearance — copper of two nets closer than the clearance rule."
+    track_width: "track_width — a track narrower or wider than allowed."
+    unconnected: "unconnected — pads of one net not yet joined."
+    short: "short — copper of two different nets touching."
+    via: "via — a via-rule violation (size, drill, or placement such as a via on a pad)."
+    copper_edge: "copper_edge — copper too close to the board edge."
+    other: "other — any other violation."
+  severity:
+    origin: new
+    # drc_severity_mode errors_and_promoted with drc_promoted_codes [12, 13, 37]
+    errors_and_promoted: "Errors count against the score; so do dangling tracks, dangling vias and net conflicts. Plain warnings do not."
+
+modes:
+  origin: v7
+  m: "m = MarkObstacles — stop at blockers."
+  w: "w = Walkaround — detour around blockers."
+  p: "p = PushAndShove — shove other nets' blocking tracks aside to force the current route through."
+  line: "mode: m=MarkObstacles, p=PushAndShove, w=Walkaround"
+  forced_walkaround:
+    origin: new
+    when: force_walkaround
+    text: "The router always routes in w (Walkaround); the mode letter you give is ignored."
+
+# One entry per action; the generator lists the actions the masking rule can grant (idle is never shown).
+action_lines:
+  net_select:
+    origin: v7
+    text: "net_select <net_id> — Select a net to route."
+    example: "net_select 3"
+  start_route:
+    origin: v7-fixed
+    v7: "example: start_route 25.0 40.0 0 (layer 0 is outside the 1..N convention; the engine refuses it)"
+    text: "start_route <x> <y> <layer> — Begin routing from pad at (x, y) on the given layer."
+    example: "start_route 25.0 40.0 1"
+  make_line:
+    origin: v7
+    text: "make_line <x> <y> <mode> — Draw a track from the current position to (x, y)."
+    example: "make_line 30.0 45.0 w"
+  make_via:
+    origin: v7
+    text: "make_via <x> <y> <mode> — Draw a track to (x, y), then place a via to switch layers."
+    example: "make_via 30.0 45.0 w"
+  net_end:
+    origin: v7-fixed
+    v7: "net_end — Mark the current net as fully routed."
+    example: "net_end"
+    # variant = (the masking rule's net_end condition, EnvConfig.net_reselect)
+    variants:
+      after_complete:   # net_end granted only when net_fully_connected
+        text: "net_end — Release the current net once all of its points are connected."
+      anytime:          # net_end granted whenever no route is in progress, net_reselect off
+        origin: new
+        text: "net_end — Release the current net. Allowed whenever no route is in progress, but final: a released net cannot be selected again this episode, and any points it still has stay unconnected. The episode ends when every net is released."
+      anytime_reselect: # net_end granted whenever no route is in progress, net_reselect on
+        origin: new
+        text: "net_end — Release the current net. Allowed whenever no route is in progress; a released net that still has points can be selected again later, but the episode ends as soon as every net is released."
+  finish:
+    origin: v7
+    text: "finish <mode> — Auto-complete the route on the current layer to the nearest unconnected pad (does not place a via or switch layers)."
+    example: "finish w"
+
+# Targets the env refuses (pcb_world/core/constraints.py), by action_target.
+rules:
+  origin: new
+  free:
+    same_point:
+      when: mask_start_point
+      text: "A start_route / make_line / make_via target at the point of the current net's last executed start_route, on that start_route's layer, is refused (make_line / make_via count the cursor's layer)."
+    off_board:
+      when: offboard_mask
+      text: "A start_route / make_line / make_via target outside the board bounding box (bbox) is refused."
+  candidates:
+    listed:
+      text: "start_route / make_line / make_via must name one of the (candidates ...) of that action for this step (x y, and the layer for start_route); any other point is refused."
+
+feedback:
+  no_effect:
+    origin: v7-fixed
+    v7: "\"[no effect]\" in history = action made no progress"
+    text: "\"[no effect]\" in history = the action was accepted but drew nothing; the start_route right before it is marked too."
+  rejected:
+    origin: v7
+    text: "\"Last rejected attempt\" = the action was refused (unparseable or not allowed now), with how many times in a row. Do not repeat either."
+
+objective:
+  role:
+    origin: v7
+    text: "You are a PCB routing agent for KiCad. Connect unconnected pins (points in routing_geometry) within each net. Never connect pins from different nets."
+  priority:
+    origin: v7
+    text: |-
+      # Priority
+      1. Complete all connections (reduce unconnected points to zero).
+      2. Avoid DRC violations (no crossing other nets, respect clearance).
+      3. Minimize total wirelength.
+  success:
+    origin: new
+    text: "A board passes when every net is connected and there are no error-level DRC violations."
+  score:
+    origin: new
+    intro: "Among passing and failing boards alike, the score rewards:"
+    # one line per potential term of the reward rule with a non-zero coefficient; {coef} from the rule
+    unconnected_penalty:
+      origin: new
+      text: "each missing connection (open ratsnest edge) costs {coef}"
+    net_completion_bonus: "completing a net earns {coef}"
+    net_completion_bonus_sized: "completing a net earns {coef}, more for nets with more pads (+{size_scale} × pad groups)"
+    net_clean_bonus: "a completed net with no DRC violations earns another {coef}"
+    completion_bonus_padgroup_scale: "completing the whole board earns {coef} × total pad groups"
+    clean_completion_bonus_padgroup_scale: "completing the whole board with no violations earns another {coef} × total pad groups"
+    drc_log_per_net: "each DRC violation costs, growing logarithmically with the count per net"
+    wirelength_penalty: "wirelength costs {coef} per board-size-normalized length"
+    via_penalty: "each via costs {coef}"
+    step_penalty:
+      origin: new
+      text: "each step costs {coef}"
+    invalid_action_penalty:
+      origin: new
+      text: "each action that is accepted but fails or draws nothing costs {coef}"
+    mask_reject_penalty:
+      origin: new
+      text: "each refused action costs {coef}"
+    parse_fail_penalty:
+      origin: new
+      text: "each unreadable response costs {coef}"
+
+# Strategy hints (v7 Routing Guidelines) — advice, not rules; an LLM prompt option, on by default.
+guidelines:
+  origin: v7
+  items:
+    - "Targets are the (point ...) entries in routing_geometry; the final segment must land on the target pad's (x, y) while the cursor is on that pad's layer (points carry no layer — look up the pad in board_static or the nearby tracks)."
+    - "Use exact coordinates from the observation (pad positions, point targets, track endpoints). Only invent coordinates for detour waypoints."
+    - "Avoid static obstacles, board edges, and existing tracks on the same layer (any net, including the current one)."
+    - "When a path is blocked, detour: switch layers with `make_via` (offset ≥1mm from any pad — never place a via on a pad), route around on the opposite layer, then switch back."
+    - "If a detour looks too long or also blocked, use PushAndShove mode (`p`) on `make_line` / `make_via` to shove other nets' tracks aside and push the current route straight through."
+    - "When the cursor is already near the remaining target with a clear path, draw the final segment directly with `make_line <x> <y> <mode>` onto the target pad's exact (x, y)."
+    - "When the current net's (points ...) list is empty, the net is done — issue `net_end` explicitly to release it before moving on. Continuing with `make_line` / `make_via` on a completed net wastes steps and may trip the no-progress streak."
+  detour_pattern: |-
+    ## Layer-change detour pattern
+    Route from (0, 0) on layer 1 to (10, 10) on layer 1, bypassing an obstacle via layer 2:
+      1. start_route 0.0 0.0 1
+      2. make_via 0.0 0.5 w         # offset off the source pad, then cross to layer 2
+      3. start_route 0.0 0.5 2      # re-enter routing on the new layer
+      4. make_via 10.0 9.5 w        # STOP before the target's (x, y) and cross back
+      5. start_route 10.0 9.5 1     # re-enter routing on the target pad's layer
+      6. make_line 10.0 10.0 w      # final segment lands on the pad, on its own layer
+  wrong_layer: |-
+    ## Do NOT draw or end on a pad from the wrong layer
+    Never let `make_line` or `make_via` reach the target pad's exact (x, y) while the cursor is on a different layer than that pad. If you do, you are trapped:
+      - placing a via at the pad violates the "no via on pad" rule, and
+      - the pad is unreachable from the wrong layer, so the final `make_line` cannot land on it.
+    Always make the layer-return `make_via` at an offset waypoint (≥1mm away from the target pad) *before* the track arrives at the target's (x, y).
+
+response_format:
+  origin: v7
+  text: "Output exactly one <think>...</think> followed by one <action>...</action> with a valid action. Never repeat think-action pairs."
+
+# Observation lines (sexpr). `element`: the OBS_ELEMENTS path whose rendering the line describes —
+# the generator keeps a line only when `latest` renders that element on this env.
+observation:
+  header:
+    variants:   # by action_target
+      rounded:      # free
+        origin: v7
+        text: "The board state is provided in S-expression format. All floating-point values are rounded to 3 decimal places. Each element is enclosed in parentheses: (tag value ...) or (tag (child ...) ...)."
+      candidates:
+        origin: new
+        text: "The board state is provided in S-expression format. All floating-point values are rounded to 3 decimal places, except the (candidates ...) coordinates, which are exact — copy them as written. Each element is enclosed in parentheses: (tag value ...) or (tag (child ...) ...)."
+  board_static:
+    - element: board_static.bbox_x
+      text: "(bbox x y w h)          — board bounding box origin and size in mm"
+    - element: board_static.scale
+      text: "(scale N)               — max(w, h), for normalization reference"
+    - element: board_static.net_count
+      text: "(net_count N)           — total number of nets"
+    - element: board_static.copper_layers
+      text: "(copper_layers N)       — number of copper layers"
+    - element: board_static.boardlines
+      origin: new
+      text: "(boardlines (edge ID (p1 PID x y) (p2 PID x y) (width W)) ...)  — board outline edges and their stroke width; an arc outline entry appears as (arc ID (p1 ...) (mid PID x y) (p2 ...) (width W)) with mid on the arc between p1 and p2 (full circle: p1 == p2, mid = opposite point)"
+    - element: board_static.nets
+      origin: new
+      text: "(nets (net CODE \"NAME\" (pads (pad ID x y layer (size w h) (shape S)) ...)) ...)   — nets with pad center positions, sizes and shapes; layer is a copper layer number (1=Top, N=Bottom) or `th` for a through-hole pad (plated through every copper layer — start_route / make_via may land on any layer)"
+    - element: board_static.nets.net_*.constraints
+      text: "(constraints (track_width W) (clearance C) (via_diameter D)) inside each net — that net's design rules (see Design rules)"
+    - element: board_static.obstacles
+      origin: new
+      text: "(obstacles (obs ID x y (size w h) (layer N) (shape S)) ...)      — static obstacles; layer 0 = on every copper layer"
+    - element: board_static.unconnected_pads
+      origin: new
+      text: "(unconnected_pads (upad ID x y layer (size w h) (shape S)) ...) — pads with no net; obstacles like any other copper"
+  routing_geometry:
+    - element: routing_geometry.net_*.tracks
+      origin: new
+      text: "(tracks (track ID (p1 PID x y) (p2 PID x y) (layer N) (width W)) ...)  — placed track segments"
+    - element: routing_geometry.net_*.vias
+      origin: new
+      text: "(vias (via ID (center PID x y) (layers start end) (diameter D)) ...)    — placed vias"
+    - element: routing_geometry.net_*.points
+      text: "(points (point ID x y) ...))                                  — unconnected ratsnest targets; layer info not provided (infer from the target pad or nearby tracks)"
+  dynamic:
+    - element: drc_violations
+      origin: new
+      text: "(drc_violations (drc x y layer TYPE SEVERITY \"NET\") ...) — see DRC; layer is a copper layer number (1=Top, N=Bottom) or `-` when the violation is on no copper layer"
+    - element: closed_nets
+      text: "(closed_nets CODE ...) — nets released with net_end"
+  router_head:
+    - element: router_head.current_xy
+      text: "(xy x y)             — cursor position in mm"
+    - element: router_head.current_layer
+      text: "(layer N)            — active copper layer (1=Top)"
+    - element: router_head.current_net
+      origin: v7-fixed
+      v7: "(net N) — currently selected net code (0=none)"
+      text: "(net N)              — currently selected net code (-1 = none)"
+    - element: router_head.current_net_phase
+      text: "(phase N)            — 0=NET_SELECT, 1=START_ROUTE, 2=ROUTING"
+    - element: router_head.is_routing
+      text: "(is_routing true|false)"
+    - element: router_head.routing_mode
+      text: "(routing_mode M)     — m=MarkObstacles, p=PushAndShove, w=Walkaround"
+    - element: router_head.step
+      text: "(step N ratio)       — current step number and step/max_steps ratio"
+  candidates:   # rendered after router_head (the worker appends the block to the state)
+    - element: candidates
+      origin: new
+      text: "(candidates (start_route (c x y layer TYPE) ...) (make_line ...) (make_via ...)) — the points each coordinate action may target this step (TYPE = what the point is)"

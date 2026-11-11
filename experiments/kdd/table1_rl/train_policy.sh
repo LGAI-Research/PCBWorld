@@ -120,7 +120,7 @@ cmd=(
   --n-heads "$TABLE1_N_HEADS"
   --n-layers "$TABLE1_N_LAYERS"
   --d-ff "$TABLE1_D_FF"
-  --device cuda
+  --device "$PAPER_TRAIN_DEVICE"
   --seed "$SEED"
   --log-dir "${OUTPUT_ROOT}/${METHOD}/tb"
   --save-dir "${OUTPUT_ROOT}/${METHOD}/checkpoints"

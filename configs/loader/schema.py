@@ -35,7 +35,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from configs.loader import load_config
 from configs.loader.knob import knob
@@ -305,6 +305,56 @@ class EnvConfig:
              "(uniform random nets; rest re-routed from scratch). "
              "Requires boards whose file carries complete routing. "
              "None = off; eval always off.")
+    # --- Action constraints (pcb_world.core.constraints): the candidate pool and the act-time
+    # masks. Env fields so every agent (RL wrapper, LLM, serving paths) meets the same rules.
+    force_walkaround: bool = knob(_ENV["force_walkaround"], "experiment",
+        readback=None, readback_reason=_HELD_AS_GIVEN,
+        help="Override routing_mode to 2 (Walkaround) for all "
+             "make_line/make_via/finish actions, matching the MLP trainer's "
+             "hardcoded mode. Use for fair comparison.")
+    # mask_start_point: variable lives here (visible) but its CLI form is the
+    # inverted --no-mask-start-point, so the generator skips it.
+    mask_start_point: bool = knob(_ENV["mask_start_point"], "experiment", cli_skip=True,
+        readback=None, readback_reason=_HELD_AS_GIVEN)
+    directional_candidates: str | None = knob(_ENV["directional_candidates"], "arch",
+        readback=None, readback_reason=_HELD_AS_GIVEN,
+        help="Directional candidate generation mode: a preset name "
+             "(e.g. 'multi_resolution' = 8 dirs × 0.2/1.0/5.0/25.0mm; see "
+             "candidate_pool.DIRECTIONAL_DISTANCE_PRESETS) or 'grid<N>' "
+             "(1-layer Grid mode, e.g. grid200). None/'none' = the default "
+             "8-direction 0.5 mm ring.")
+    # connectivity_filter: variable lives here (visible) but its CLI form is the
+    # --connectivity-filter / --no-connectivity-filter pair, so the generator
+    # skips it. It trims already-connected existing copper from the candidate
+    # pool = it changes the ACTION SPACE, so train and eval must agree.
+    connectivity_filter: bool = knob(_ENV["connectivity_filter"], "experiment", cli_skip=True,
+        readback=None, readback_reason=_HELD_AS_GIVEN)
+    # Pad-graze guard width (mm; 0 = off). Drops DIRECTIONAL
+    # candidates landing in the sliver annulus outside a same-net pad (copper
+    # the track cleaner deletes) — changes the CANDIDATE SET, so like
+    # connectivity_filter it round-trips through checkpoints. CLI form is the
+    # bespoke --pad-graze-margin-mm in the args module (richer help text), so
+    # the generator skips it; that flag's default reads THIS field.
+    pad_graze_margin_mm: float = knob(_ENV["pad_graze_margin_mm"], "experiment", cli_skip=True,
+        readback=None, readback_reason=_HELD_AS_GIVEN)
+    # Off-board pointer mask (act time, every cand row): blocks DIRECTIONAL
+    # candidates whose (x, y) falls outside the board bbox — the long rungs of
+    # a ladder preset (mres8: 25 / 50 mm) overshoot most boards. Leaves the
+    # candidate SET (pool / pointer index space) untouched, but a policy trained
+    # with it never learned to avoid off-board targets, so it round-trips
+    # through checkpoints like the other constraint knobs.
+    offboard_mask: bool = knob(_ENV["offboard_mask"], "arch",
+        readback=None, readback_reason=_HELD_AS_GIVEN,
+        help="Hard-mask DIRECTIONAL candidates whose (x, y) falls outside "
+             "the board bbox at act time (every cand row: neither make_line "
+             "nor make_via can target them). Off by default; stored in the "
+             "checkpoint and restored when it is evaluated.")
+    action_target: str = knob(_ENV["action_target"], "arch",
+        readback=None, readback_reason=_HELD_AS_GIVEN, choices=["candidates", "free"],
+        help="How an agent names a target point: 'candidates' = a point of the "
+             "candidate pool under its masks (the RL action space); 'free' = any "
+             "coordinate, under the rules that need no pool (closed net, same "
+             "point, off board). PCBWorld.step enforces it for every caller.")
     reward: RewardOverrides = field(default_factory=RewardOverrides, metadata={
         "readback": None,
         "readback_reason": "folded with reward_rule into one reward config (None = the "
@@ -401,50 +451,14 @@ def _field_values(args: Any) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class RLEnvConfig:
-    """Env-core + the RL-wrapper knobs — what ``make_decoder_env`` builds from."""
+    """Env-core + the RL-wrapper knobs (slot permutation, per-episode augmentation) — what
+    ``make_decoder_env`` builds from. The action-constraint knobs are env fields."""
 
     env: EnvConfig = field(default_factory=EnvConfig)
-    force_walkaround: bool = knob(False, "experiment",
-        help="Override routing_mode to 2 (Walkaround) for all "
-             "make_line/make_via/finish actions, matching the MLP trainer's "
-             "hardcoded mode. Use for fair comparison.")
-    # mask_start_point: variable lives here (visible) but its CLI form is the
-    # inverted --no-mask-start-point, so the generator skips it.
-    mask_start_point: bool = knob(True, "experiment", cli_skip=True)
     slot_perm: bool = knob(False, "experiment",
         help="v1: per-episode random permutation of the net slot embedding "
              "table (net-exchangeability augmentation). v0 (default) uses "
              "identity mapping sorted-net-k -> slot-k.")
-    directional_candidates: str | None = knob(_ENV["directional_candidates"], "arch",
-        help="Directional candidate generation mode: a preset name "
-             "(e.g. 'multi_resolution' = 8 dirs × 0.2/1.0/5.0/25.0mm; see "
-             "candidate_pool.DIRECTIONAL_DISTANCE_PRESETS) or 'grid<N>' "
-             "(1-layer Grid mode, e.g. grid200). None/'none' = the default "
-             "8-direction 0.5 mm ring.")
-    # connectivity_filter: variable lives here (visible) but its CLI form is the
-    # --connectivity-filter / --no-connectivity-filter pair, so the generator
-    # skips it. It trims already-connected existing copper from the candidate
-    # pool = it changes the ACTION SPACE, so train and eval must agree.
-    connectivity_filter: bool = knob(True, "experiment", cli_skip=True)
-    # Pad-graze guard width (mm; 0 = off). Drops DIRECTIONAL
-    # candidates landing in the sliver annulus outside a same-net pad (copper
-    # the track cleaner deletes) — changes the CANDIDATE SET, so like
-    # connectivity_filter it round-trips through checkpoints. CLI form is the
-    # bespoke --pad-graze-margin-mm in the args module (richer help text), so
-    # the generator skips it; that flag's default reads THIS field.
-    pad_graze_margin_mm: float = knob(0.0, "experiment", cli_skip=True)
-    # Off-board pointer mask (act time, every cand row): blocks DIRECTIONAL
-    # candidates whose (x, y) falls outside the board bbox — the long rungs of
-    # a ladder preset (mres8: 25 / 50 mm) overshoot most boards. Leaves the
-    # candidate SET (pool / pointer index space) untouched, but a policy trained
-    # with it never learned to avoid off-board targets, so it round-trips
-    # through checkpoints like the other wrapper knobs. Default off = existing
-    # checkpoints keep their exact behaviour.
-    offboard_mask: bool = knob(_ENV["offboard_mask"], "arch",
-        help="Hard-mask DIRECTIONAL candidates whose (x, y) falls outside "
-             "the board bbox at act time (every cand row: neither make_line "
-             "nor make_via can target them). Off by default; stored in the "
-             "checkpoint and restored when it is evaluated.")
     # Per-episode augmentation toggles (5 independent boolean axes). Train-only
     # (TRAIN_LAYER, applied by for_training); validation and eval never enable them.
     aug_bbox_shifted: bool = knob(False, "experiment",
@@ -518,12 +532,12 @@ class RLEnvConfig:
         env = EnvConfig(
             max_steps=max_steps,
             keep_routing_fraction=None,
+            directional_candidates=_none_if_off(ckpt["directional_candidates"]),
             reward=RewardOverrides(**{f.name: ckpt[f.name] for f in fields(RewardOverrides)}),
             **{f.name: ckpt[f.name] for f in fields(EnvConfig) if f.name not in explicit},
         )
         return cls(
             env=env,
-            directional_candidates=_none_if_off(ckpt["directional_candidates"]),
             **{f.name: ckpt[f.name] for f in fields(cls) if f.name not in explicit},
         )
 
@@ -989,14 +1003,50 @@ class LLMEnvConfig:
         help="Observation serialization format (default: sexpr).")
 
 
-def _llm_env_config(base: EnvConfig, section: Mapping[str, Any], own: Any, where: str) -> EnvConfig:
+#: The EnvConfig keys ``llm.env`` (configs/llm.yaml) may set. Every other env key of the LLM
+#: eval program is the shared configs/env.yaml value, so a change to a shared rule reaches the
+#: LLM program as it reaches RL; a run may set another value only for a key the LLM CLI exposes
+#: (``eval.args.ENV_ARG_KEYS``, also via ``--recipe``) and is reported as a deviation
+#: (:func:`env_deviations`); the other shared keys follow configs/env.yaml.
+LLM_ENV_OVERRIDES: frozenset[str] = frozenset({"action_target"})
+
+
+def _llm_env_config(base: EnvConfig, section: Mapping[str, Any], own: Any, where: str,
+                    allowed: frozenset[str] | None = None) -> EnvConfig:
     """``base`` with the EnvConfig keys of an LLM config section applied; every other
-    key of the section must be a field of the dataclass ``own``."""
+    key of the section must be a field of the dataclass ``own``. With ``allowed``, an
+    EnvConfig key outside it raises."""
     unknown = sorted(set(section) - _ENV_FLAT_KEYS - {f.name for f in fields(own)})
     if unknown:
         raise ValueError(f"{where}: unknown keys {unknown} — not {own.__name__} fields "
                          "nor EnvConfig keys (configs/loader/schema.py)")
+    if allowed is not None:
+        shared = sorted(set(section) & _ENV_FLAT_KEYS - allowed)
+        if shared:
+            raise ValueError(f"{where}: {shared} are shared env keys (configs/env.yaml) — only "
+                             f"{sorted(allowed)} may differ for the LLM program "
+                             "(LLM_ENV_OVERRIDES); a per-run value is possible only for a key "
+                             "the LLM CLI exposes (eval/args.py ENV_ARG_KEYS, also via --recipe)")
     return base.with_flat({k: v for k, v in section.items() if k in _ENV_FLAT_KEYS})
+
+
+def env_deviations(env: EnvConfig) -> dict[str, tuple[Any, Any]]:
+    """``{key: (shared value, run value)}`` for each flat env key an LLM run sets apart from
+    the shared configs/env.yaml value, the :data:`LLM_ENV_OVERRIDES` keys aside."""
+    shared = EnvConfig().to_env_kwargs()
+    return {k: (shared[k], v) for k, v in env.to_env_kwargs().items()
+            if k not in LLM_ENV_OVERRIDES and v != shared[k]}
+
+
+def report_env_deviations(env: EnvConfig,
+                          source_of: Callable[[str], str]) -> dict[str, tuple[Any, Any]]:
+    """Print each :func:`env_deviations` entry of ``env`` as a ``[config] DEVIATION`` line,
+    naming ``source_of(key)`` as what set it, and return them."""
+    dev = env_deviations(env)
+    for k, (shared, value) in dev.items():
+        print(f"[config] DEVIATION from the shared env (configs/env.yaml): {k} = {value!r} "
+              f"(shared {shared!r}, set by {source_of(k)})")
+    return dev
 
 
 @dataclass(frozen=True)
@@ -1028,6 +1078,9 @@ class LLMPromptConfig:
     """
 
     prompt_version: str = knob(_LLM["prompt"]["prompt_version"], "experiment", cli_skip=True)
+    prompt_guidelines: bool = knob(_LLM["prompt"]["prompt_guidelines"], "experiment",
+        help="latest: add the strategy hints (Routing Guidelines); legacy versions always "
+             "carry them.")
 
 
 @dataclass(frozen=True)
@@ -1125,12 +1178,12 @@ class LLMConfig:
     One nested sub-config per eval/args.py CLI group; each is generated via
     :func:`configs.loader.cli.add_dataclass_args` (``style='underscore'``). Defaults live
     in configs/llm.yaml (llm:). :attr:`env` is the same :class:`EnvConfig` RL
-    builds (``env:`` defaults; ``llm.env`` sets the few LLM-specific values) and
+    builds (``env:`` defaults; ``llm.env`` may set only :data:`LLM_ENV_OVERRIDES`) and
     the ``env`` CLI group carries both it and :attr:`llm_env`.
     """
 
     env: EnvConfig = field(default_factory=lambda: _llm_env_config(
-        EnvConfig(), _LLM["env"], LLMEnvConfig, "configs/llm.yaml llm.env"))
+        EnvConfig(), _LLM["env"], LLMEnvConfig, "configs/llm.yaml llm.env", LLM_ENV_OVERRIDES))
     llm_env: LLMEnvConfig = field(default_factory=LLMEnvConfig)
     boards: LLMBoardsConfig = field(default_factory=LLMBoardsConfig)
     prompt: LLMPromptConfig = field(default_factory=LLMPromptConfig)
@@ -1165,10 +1218,11 @@ class LLMTrainConfig:
     """
 
     env: EnvConfig = field(default_factory=lambda: _llm_env_config(
-        EnvConfig(), _LLM_TRAIN, LLMTrainConfig, "configs/llm.yaml llm_train"))
+        EnvConfig(), _LLM_TRAIN, LLMTrainConfig, "configs/llm.yaml llm_train", LLM_ENV_OVERRIDES))
     state_format: str = knob(_LLM_TRAIN["state_format"], "experiment")
     # prompt (methods/llm_agent/training/manager.py)
     prompt_version: str = knob(_LLM_TRAIN["prompt_version"], "experiment")
+    prompt_guidelines: bool = knob(_LLM_TRAIN["prompt_guidelines"], "experiment")
     history_length: int = knob(_LLM_TRAIN["history_length"], "experiment")
     # board scheduling — train
     boards_order: str = knob(_LLM_TRAIN["boards_order"], "experiment")
@@ -1236,10 +1290,12 @@ class LLMTrainConfig:
             raise ValueError(f"env.pcbworld: {misplaced} not allowed — max_steps / "
                              "history_length / seed are read from env.max_steps / "
                              "env.history_length / env.seed")
+        run_env = _llm_env_config(d.env, {**cad, "max_steps": g(env, "max_steps", d.env.max_steps)},
+                                  cls, "env.pcbworld")
+        report_env_deviations(run_env, lambda _: "the verl config")
         return replace(
             d,
-            env=_llm_env_config(d.env, {**cad, "max_steps": g(env, "max_steps", d.env.max_steps)},
-                                cls, "env.pcbworld"),
+            env=run_env,
             history_length=int(g(env, "history_length", d.history_length)),
             seed=int(g(env, "seed", d.seed)),
             **{k: v for k, v in cad.items() if k not in _ENV_FLAT_KEYS},

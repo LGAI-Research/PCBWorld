@@ -25,6 +25,7 @@ from functools import lru_cache
 from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Tuple
 
 from methods.llm_agent.wrappers.prompts.dispatcher import LATEST, PCBWORLD_PROMPT_VERSIONS
+from pcb_world.core.action_schema import ACT_IDLE, ACTION_NAMES
 from pcb_world.core.action_schema import MODE_INT_TO_LETTER as _MODE_INT_TO_LETTER
 
 
@@ -34,31 +35,38 @@ from pcb_world.core.action_schema import MODE_INT_TO_LETTER as _MODE_INT_TO_LETT
 
 class ObsElement(NamedTuple):
     """One JSON obs element: ``kind`` ``render`` (``note`` = how it is drawn) or
-    ``drop`` (``note`` = why not; its whole subtree is dropped); ``versions``
-    ``legacy`` (every prompt version, v1–v7 included) or ``latest`` (only
-    ``latest``)."""
+    ``drop`` (``note`` = why not; its whole subtree is dropped). A rendered element
+    reaches the text of the prompt versions ``since`` … ``until`` (inclusive; ``None``
+    = open-ended, ``latest`` counts as newer than every legacy version)."""
 
     kind: str
     note: str
-    versions: str
+    since: str = "v1"
+    until: Optional[str] = None
 
 
-def _r(note: str, versions: str = "legacy") -> ObsElement:
-    return ObsElement("render", note, versions)
+def _r(note: str, since: str = "v1", until: Optional[str] = None) -> ObsElement:
+    return ObsElement("render", note, since, until)
 
 
 def _d(reason: str) -> ObsElement:
-    return ObsElement("drop", reason, "legacy")
+    return ObsElement("drop", reason)
+
+
+def _version_rank(version: str) -> float:
+    """``v<N>`` -> N; ``latest`` -> newer than every legacy version."""
+    return float("inf") if version == LATEST else float(version[1:])
 
 
 # Keys are JSON paths: ``.`` between dict keys, ``*`` for the numbered key of a
 # dict entry (``net_3`` -> ``net_*``), ``[]`` for a list item. Every key of an
 # all-obs-knobs-on observation must be listed here or under a dropped parent
 # (test_llm_prompt_render.py) — a new obs field needs a decision before it ships.
-# The serializers consult the table only for the per-net ``constraints`` today
-# (the one ``latest``-only element); every other entry records what the fixed
-# legacy rendering draws or why it drops the element, and the rendered set feeds
-# each prompt bundle's ``content_hash``.
+# The frozen legacy versions render a fixed set (their text is pinned); ``latest``
+# renders exactly what the RL tokenizer reads, apart from :data:`PARITY_EXCEPTIONS`
+# (tests/test_llm_obs_parity.py). The rendered set feeds each prompt bundle's
+# ``content_hash``.
+L = LATEST
 OBS_ELEMENTS: Dict[str, ObsElement] = {
     "board_static": _r("board_static section"),
     "board_static.bbox_x": _r("bbox"), "board_static.bbox_y": _r("bbox"),
@@ -78,7 +86,7 @@ OBS_ELEMENTS: Dict[str, ObsElement] = {
     "board_static.boardlines.edge_*.mid": _r("mid (arc outline)"),
     "board_static.boardlines.edge_*.mid.id": _r("mid id"),
     "board_static.boardlines.edge_*.mid.xy": _r("mid x y"),
-    "board_static.boardlines.edge_*.width": _d("outline stroke width does not bound routing"),
+    "board_static.boardlines.edge_*.width": _r("(width W) — outline stroke width", L),
     "board_static.nets": _r("nets"),
     "board_static.nets.net_*": _r("net code + name"),
     "board_static.nets.net_*.net_name": _r("net name"),
@@ -89,16 +97,16 @@ OBS_ELEMENTS: Dict[str, ObsElement] = {
     "board_static.nets.net_*.pads.pad_*.center.xy": _r("pad x y"),
     "board_static.nets.net_*.pads.pad_*.center.id": _d("the pad id names the pad"),
     "board_static.nets.net_*.pads.pad_*.layer": _r("pad layer (th = through-hole)"),
-    "board_static.nets.net_*.pads.pad_*.width": _d("pad extent: routing targets the pad center"),
-    "board_static.nets.net_*.pads.pad_*.height": _d("pad extent: routing targets the pad center"),
-    "board_static.nets.net_*.pads.pad_*.shape": _d("pad extent: routing targets the pad center"),
-    "board_static.nets.net_*.constraints": _r("constraints", LATEST),
-    "board_static.nets.net_*.constraints.track_width": _r("track_width", LATEST),
-    "board_static.nets.net_*.constraints.clearance": _r("clearance", LATEST),
-    "board_static.nets.net_*.constraints.via_diameter": _r("via_diameter", LATEST),
-    "board_static.nets.net_*.constraints.via_drill": _r("via_drill", LATEST),
+    "board_static.nets.net_*.pads.pad_*.width": _r("(size w h); v1-v8 drop it", L),
+    "board_static.nets.net_*.pads.pad_*.height": _r("(size w h); v1-v8 drop it", L),
+    "board_static.nets.net_*.pads.pad_*.shape": _r("(shape S); v1-v8 drop it", L),
+    "board_static.nets.net_*.constraints": _r("constraints", "v8"),
+    "board_static.nets.net_*.constraints.track_width": _r("track_width", "v8"),
+    "board_static.nets.net_*.constraints.clearance": _r("clearance", "v8"),
+    "board_static.nets.net_*.constraints.via_diameter": _r("via_diameter", "v8"),
+    "board_static.nets.net_*.constraints.via_drill": _r("via_drill", "v8", "v8"),
     "board_static.obstacles": _r("obstacles"),
-    "board_static.obstacles.obs_*": _r("obs"),
+    "board_static.obstacles.obs_*": _r("obs (latest skips rule-area keepouts, shape polygon)"),
     "board_static.obstacles.obs_*.id": _r("obs id"),
     "board_static.obstacles.obs_*.center": _r("obs x y"),
     "board_static.obstacles.obs_*.center.xy": _r("obs x y"),
@@ -106,16 +114,25 @@ OBS_ELEMENTS: Dict[str, ObsElement] = {
     "board_static.obstacles.obs_*.width": _r("size w"),
     "board_static.obstacles.obs_*.height": _r("size h"),
     "board_static.obstacles.obs_*.layer": _r("obs layer"),
-    "board_static.obstacles.obs_*.shape": _d("drawn as its bounding box"),
-    "board_static.obstacles.obs_*.pts": _d("keepout polygon drawn as its bounding box"),
-    "board_static.unconnected_pads": _d("no-net pads; the ratsnest points carry the targets"),
-    "board_static.board_constraints": _r("board_constraints"),
-    "board_static.board_constraints.clearance_mm": _r("clearance"),
-    "board_static.board_constraints.track_width_mm": _r("track_width"),
-    "board_static.board_constraints.via_diameter_mm": _r("via_diameter"),
-    "board_static.board_constraints.via_drill_mm": _r("via_drill"),
-    "board_static.board_constraints.uvia_diameter_mm": _r("uvia_diameter"),
-    "board_static.board_constraints.uvia_drill_mm": _r("uvia_drill"),
+    "board_static.obstacles.obs_*.shape": _r("(shape S); v1-v8 draw the bounding box", L),
+    "board_static.obstacles.obs_*.pts": _d("keepout polygon outline (latest skips keepouts; v1-v8 draw the bbox)"),
+    "board_static.unconnected_pads": _r("unconnected_pads; v1-v8 drop them", L),
+    "board_static.unconnected_pads.upad_*": _r("upad", L),
+    "board_static.unconnected_pads.upad_*.id": _r("upad id", L),
+    "board_static.unconnected_pads.upad_*.center": _r("upad x y", L),
+    "board_static.unconnected_pads.upad_*.center.xy": _r("upad x y", L),
+    "board_static.unconnected_pads.upad_*.center.id": _d("the upad id names the pad"),
+    "board_static.unconnected_pads.upad_*.width": _r("(size w h)", L),
+    "board_static.unconnected_pads.upad_*.height": _r("(size w h)", L),
+    "board_static.unconnected_pads.upad_*.layer": _r("upad layer", L),
+    "board_static.unconnected_pads.upad_*.shape": _r("(shape S)", L),
+    "board_static.board_constraints": _r("board_constraints", until="v8"),
+    "board_static.board_constraints.clearance_mm": _r("clearance", until="v8"),
+    "board_static.board_constraints.track_width_mm": _r("track_width", until="v8"),
+    "board_static.board_constraints.via_diameter_mm": _r("via_diameter", until="v8"),
+    "board_static.board_constraints.via_drill_mm": _r("via_drill", until="v8"),
+    "board_static.board_constraints.uvia_diameter_mm": _r("uvia_diameter", until="v8"),
+    "board_static.board_constraints.uvia_drill_mm": _r("uvia_drill", until="v8"),
     "routing_geometry": _r("routing_geometry section"),
     "routing_geometry.net_*": _r("net code"),
     "routing_geometry.net_*.tracks": _r("tracks"),
@@ -128,7 +145,7 @@ OBS_ELEMENTS: Dict[str, ObsElement] = {
     "routing_geometry.net_*.tracks.track_*.p2": _r("p2"),
     "routing_geometry.net_*.tracks.track_*.p2.id": _r("p2 id"),
     "routing_geometry.net_*.tracks.track_*.p2.xy": _r("p2 x y"),
-    "routing_geometry.net_*.tracks.track_*.width": _d("set by the net's design rules, not by the agent"),
+    "routing_geometry.net_*.tracks.track_*.width": _r("(width W); v1-v8 drop it", L),
     "routing_geometry.net_*.vias": _r("vias"),
     "routing_geometry.net_*.vias.via_*": _r("via"),
     "routing_geometry.net_*.vias.via_*.id": _r("via id"),
@@ -137,7 +154,7 @@ OBS_ELEMENTS: Dict[str, ObsElement] = {
     "routing_geometry.net_*.vias.via_*.center.xy": _r("center x y"),
     "routing_geometry.net_*.vias.via_*.layer_start": _r("layers start"),
     "routing_geometry.net_*.vias.via_*.layer_end": _r("layers end"),
-    "routing_geometry.net_*.vias.via_*.via_width": _d("set by the net's design rules, not by the agent"),
+    "routing_geometry.net_*.vias.via_*.via_width": _r("(diameter D); v1-v8 drop it", L),
     "routing_geometry.net_*.points": _r("points"),
     "routing_geometry.net_*.points[].id": _r("point id"),
     "routing_geometry.net_*.points[].xy": _r("point x y"),
@@ -155,24 +172,61 @@ OBS_ELEMENTS: Dict[str, ObsElement] = {
     "router_head.router_state_code": _d("engine-internal state"),
     "router_head.via_toggle": _d("engine-internal state"),
     "router_head.is_dragging": _d("engine-internal state"),
-    "drc_violations": _d("the prompt never carried DRC markers; rejections reach the agent as feedback"),
+    "drc_violations": _r("(drc_violations ...); v1-v8 drop them", L),
+    "drc_violations[].x_mm": _r("drc x", L),
+    "drc_violations[].y_mm": _r("drc y", L),
+    "drc_violations[].layer": _r("drc layer", L),
+    "drc_violations[].type_id": _r("drc type bucket name", L),
+    "drc_violations[].severity": _r("error | warning", L),
+    "drc_violations[].net_names": _r("first net name (the RL token binds the first net)", L),
+    "drc_violations[].error_type": _d("free KiCad text; the type bucket names it"),
     "action_history": _d("the prompt's History block comes from the rollout memory"),
-    "closed_nets": _d("a closed net drops out of the valid net_select targets"),
+    "closed_nets": _r("(closed_nets CODE ...); v1-v8 drop it", L),
+}
+del L
+
+#: Obs paths where ``latest`` and the RL tokenizer (configs/rl.yaml policy defaults)
+#: deliberately differ, with the reason. ``llm_only``: rendered for the LLM, never read
+#: by the tokenizer; ``rl_only``: read by the tokenizer, not rendered.
+PARITY_EXCEPTIONS: Dict[str, Dict[str, str]] = {
+    "llm_only": {
+        **{p: "ids name items in the text (the RL tokens are positional)" for p in (
+            "board_static.boardlines.edge_*.id", "board_static.boardlines.edge_*.p1.id",
+            "board_static.boardlines.edge_*.p2.id", "board_static.boardlines.edge_*.mid.id",
+            "board_static.nets.net_*.pads.pad_*.id", "board_static.obstacles.obs_*.id",
+            "board_static.unconnected_pads.upad_*.id",
+            "routing_geometry.net_*.tracks.track_*.id",
+            "routing_geometry.net_*.tracks.track_*.p1.id",
+            "routing_geometry.net_*.tracks.track_*.p2.id",
+            "routing_geometry.net_*.vias.via_*.id", "routing_geometry.net_*.vias.via_*.center.id",
+            "routing_geometry.net_*.points[].id")},
+        "board_static.scale": "max(bbox w, h) — derived from the bbox both see",
+        "board_static.net_count": "the number of nets — derived from the nets both see",
+        "router_head.step": "the step budget: the RL head reads steps_remaining",
+        "router_head.step_ratio": "the step budget: the RL head reads steps_remaining",
+    },
+    "rl_only": {
+        "router_head.steps_remaining": "the step budget: the LLM reads step and step/max_steps",
+        "action_history": "both see their past actions: the RL tokens read the env's window, "
+                          "the LLM prompt's History block comes from the rollout memory "
+                          "(history_length)",
+    },
 }
 
 
 @lru_cache(maxsize=None)
 def obs_elements(prompt_version: str) -> FrozenSet[str]:
     """The rendered element paths of ``prompt_version`` (case-insensitive, like
-    ``get_pcbworld_prompts``): the ``legacy`` set for every version, plus the
-    ``latest`` elements for ``latest``."""
+    ``get_pcbworld_prompts``): every ``render`` element whose ``since`` … ``until``
+    range holds the version."""
     key = prompt_version.lower()
     if key not in PCBWORLD_PROMPT_VERSIONS:
         raise ValueError(f"unknown prompt version {prompt_version!r}; "
                          f"choose from: {', '.join(PCBWORLD_PROMPT_VERSIONS)}")
-    allowed = ("legacy", LATEST) if key == LATEST else ("legacy",)
+    rank = _version_rank(key)
     return frozenset(path for path, e in OBS_ELEMENTS.items()
-                     if e.kind == "render" and e.versions in allowed)
+                     if e.kind == "render" and _version_rank(e.since) <= rank
+                     and (e.until is None or rank <= _version_rank(e.until)))
 
 
 _NET_CONSTRAINTS = "board_static.nets.net_*.constraints"
@@ -181,11 +235,69 @@ _NET_CONSTRAINT_PATHS = frozenset(p for p in OBS_ELEMENTS
                                   if p == _NET_CONSTRAINTS or p.startswith(_NET_CONSTRAINTS + "."))
 
 
-def _rendered(prompt_version: str, net_constraint_obs: bool) -> FrozenSet[str]:
+_DRC_PATHS = frozenset(p for p in OBS_ELEMENTS
+                      if p == "drc_violations" or p.startswith("drc_violations["))
+
+
+def _rendered(prompt_version: str, net_constraint_obs: bool,
+              emit_drc_tokens: bool = True) -> FrozenSet[str]:
     """:func:`obs_elements` of ``prompt_version`` minus the elements the env did not
-    produce: the per-net ``constraints`` exist only with ``net_constraint_obs`` on."""
+    produce: the per-net ``constraints`` exist only with ``net_constraint_obs`` on, the
+    DRC rows only with ``emit_drc_tokens`` on."""
     elements = obs_elements(prompt_version)
-    return elements if net_constraint_obs else elements - _NET_CONSTRAINT_PATHS
+    if not net_constraint_obs:
+        elements -= _NET_CONSTRAINT_PATHS
+    return elements if emit_drc_tokens else elements - _DRC_PATHS
+
+
+_EDGE_WIDTH = "board_static.boardlines.edge_*.width"
+_PAD_SIZE = "board_static.nets.net_*.pads.pad_*.width"
+_OBS_SHAPE = "board_static.obstacles.obs_*.shape"
+_UPADS = "board_static.unconnected_pads"
+_BOARD_CONSTRAINTS = "board_static.board_constraints"
+_TRACK_WIDTH = "routing_geometry.net_*.tracks.track_*.width"
+_VIA_DIAMETER = "routing_geometry.net_*.vias.via_*.via_width"
+_DRC = "drc_violations"
+_CLOSED_NETS = "closed_nets"
+_KEEPOUT_SHAPE = "polygon"   # a rule-area keepout entry in board_static.obstacles
+
+
+def _net_constraint_keys(elements: FrozenSet[str]) -> List[str]:
+    return [k for k in _NET_CONSTRAINT_KEYS if f"{_NET_CONSTRAINTS}.{k}" in elements]
+
+
+def _drawn_obstacles(bs: Dict[str, Any], elements: FrozenSet[str]) -> List[Dict[str, Any]]:
+    """board_static obstacles in render order; a version that renders the obstacle shape
+    skips rule-area keepouts, as the RL tokenizer does."""
+    items = list(bs.get("obstacles", {}).values())
+    if _OBS_SHAPE in elements:
+        items = [o for o in items if o.get("shape", "") != _KEEPOUT_SHAPE]
+    return items
+
+
+def _drc_type_name(type_id: Any) -> str:
+    """DRC type bucket name (the RL token's 7 buckets): clearance … copper_edge, other."""
+    from pcb_world.engine.drc import DRC_TYPE_ID_DEFAULT, VIOLATION_KEYWORDS
+
+    tid = int(type_id)
+    if not 0 <= tid < DRC_TYPE_ID_DEFAULT:
+        return "other"
+    return VIOLATION_KEYWORDS[tid].replace(" ", "_")
+
+
+def _drc_rows(violations: List[Dict[str, Any]],
+              copper_layers: int) -> List[Tuple[str, str, str, str, str, str]]:
+    """(x, y, layer, type, severity, net) per violation — the fields the RL token reads
+    (layer as the prompt's copper number 1 = Top … N = Bottom, ``-`` when the marker sits
+    on no copper layer; severity error | warning; the first net, ``-`` when none)."""
+    from pcb_world.engine.drc import DRC_SEVERITY_ERROR
+    from pcb_world.engine.layer_mapping import LayerMapping
+
+    human = {lid: n for n, lid in enumerate(LayerMapping(copper_layers).board_layer_order, 1)}
+    return [(_fmt(float(v["x_mm"])), _fmt(float(v["y_mm"])), str(human.get(v["layer"], "-")),
+             _drc_type_name(v["type_id"]),
+             "error" if int(v["severity"]) == DRC_SEVERITY_ERROR else "warning",
+             (v.get("net_names") or ["-"])[0]) for v in violations]
 
 
 # ===========================================================================
@@ -567,8 +679,18 @@ def _router_head_to_xml(rh: Dict[str, Any], ind: int = 0) -> str:
     )
 
 
+def _xml_elements(prompt_version: str, net_constraint_obs: bool,
+                  emit_drc_tokens: bool = True) -> FrozenSet[str]:
+    """:func:`_rendered`, for the versions with an XML form: ``latest`` describes and renders
+    the S-expression form only."""
+    if prompt_version.lower() == LATEST:
+        raise ValueError("prompt_version latest renders the sexpr state format only "
+                         "(its glossary describes that syntax); use state_format sexpr")
+    return _rendered(prompt_version, net_constraint_obs, emit_drc_tokens)
+
+
 def format_state(obs: Dict[str, Any], prompt_version: str, *,
-                 net_constraint_obs: bool) -> str:
+                 net_constraint_obs: bool, emit_drc_tokens: bool = True) -> str:
     """Convert build_json_observation() output to an XML-like string.
 
     Carries the same information as :func:`format_state_sexpr` — the
@@ -580,15 +702,17 @@ def format_state(obs: Dict[str, Any], prompt_version: str, *,
         prompt_version: selects the rendered elements (:func:`obs_elements`).
         net_constraint_obs: the env's ``EnvConfig.net_constraint_obs`` — whether
             the per-net ``constraints`` exist to be rendered.
+        emit_drc_tokens: the env's ``EnvConfig.emit_drc_tokens`` — whether the DRC
+            rows exist to be rendered (off: no ``drc_violations`` element).
 
     Returns:
         Multi-line XML-like string.
     """
     obs = dict(obs)
+    elements = _xml_elements(prompt_version, net_constraint_obs, emit_drc_tokens)
     sections = []
     if "board_static" in obs:
-        sections.append(_board_static_to_xml(obs["board_static"],
-                                             _rendered(prompt_version, net_constraint_obs)))
+        sections.append(_board_static_to_xml(obs["board_static"], elements))
     if "routing_geometry" in obs:
         sections.append(_routing_geometry_to_xml(obs["routing_geometry"]))
     if "router_head" in obs:
@@ -597,7 +721,7 @@ def format_state(obs: Dict[str, Any], prompt_version: str, *,
 
 
 def format_state_split(obs: Dict[str, Any], prompt_version: str, *,
-                       net_constraint_obs: bool) -> Tuple[str, str]:
+                       net_constraint_obs: bool, emit_drc_tokens: bool = True) -> Tuple[str, str]:
     """Like :func:`format_state`, but returns board_static separately.
 
     Args:
@@ -605,6 +729,8 @@ def format_state_split(obs: Dict[str, Any], prompt_version: str, *,
         prompt_version: selects the rendered elements (:func:`obs_elements`).
         net_constraint_obs: the env's ``EnvConfig.net_constraint_obs`` — whether
             the per-net ``constraints`` exist to be rendered.
+        emit_drc_tokens: the env's ``EnvConfig.emit_drc_tokens`` — whether the DRC
+            rows exist to be rendered (off: no ``drc_violations`` element).
 
     Returns:
         (board_static_xml, dynamic_xml) where dynamic_xml contains
@@ -612,7 +738,8 @@ def format_state_split(obs: Dict[str, Any], prompt_version: str, *,
     """
     obs = dict(obs)
     static = (_board_static_to_xml(obs["board_static"],
-                                   _rendered(prompt_version, net_constraint_obs))
+                                   _xml_elements(prompt_version, net_constraint_obs,
+                                                 emit_drc_tokens))
               if "board_static" in obs else "")
     dynamic_sections = []
     if "routing_geometry" in obs:
@@ -637,6 +764,13 @@ def _fmt(x: Any) -> str:
 
 def _sindent(level: int) -> str:
     return "  " * level
+
+
+def _sexpr_size_shape(pad: Dict[str, Any], elements: FrozenSet[str]) -> str:
+    """`` (size w h) (shape S)`` when the version renders pad extents, else ``""``."""
+    if _PAD_SIZE not in elements:
+        return ""
+    return f" (size {_fmt(float(pad['width']))} {_fmt(float(pad['height']))}) (shape {pad['shape']})"
 
 
 def _board_static_to_sexpr(bs: Dict[str, Any], elements: FrozenSet[str], ind: int = 0) -> str:
@@ -676,19 +810,20 @@ def _board_static_to_sexpr(bs: Dict[str, Any], elements: FrozenSet[str], ind: in
             x1, y1 = edge["p1"]["xy"]
             x2, y2 = edge["p2"]["xy"]
             mid = edge.get("mid")
+            width = f" (width {_fmt(float(edge['width']))})" if _EDGE_WIDTH in elements else ""
             if mid is not None:
                 mx, my = mid["xy"]
                 lines.append(
                     f"{p2}(arc {e_id}"
                     f" (p1 {edge['p1']['id']} {_fmt(x1)} {_fmt(y1)})"
                     f" (mid {mid['id']} {_fmt(mx)} {_fmt(my)})"
-                    f" (p2 {edge['p2']['id']} {_fmt(x2)} {_fmt(y2)}))"
+                    f" (p2 {edge['p2']['id']} {_fmt(x2)} {_fmt(y2)}){width})"
                 )
             else:
                 lines.append(
                     f"{p2}(edge {e_id}"
                     f" (p1 {edge['p1']['id']} {_fmt(x1)} {_fmt(y1)})"
-                    f" (p2 {edge['p2']['id']} {_fmt(x2)} {_fmt(y2)}))"
+                    f" (p2 {edge['p2']['id']} {_fmt(x2)} {_fmt(y2)}){width})"
                 )
         lines.append(f"{p1})")
     else:
@@ -709,41 +844,56 @@ def _board_static_to_sexpr(bs: Dict[str, Any], elements: FrozenSet[str], ind: in
                     pad_id = pad["id"]
                     cx, cy = pad["center"]["xy"]
                     pl = _fmt_pad_layer(pad["layer"])
-                    lines.append(f"{p4}(pad {pad_id} {_fmt(cx)} {_fmt(cy)} {pl})")
+                    lines.append(f"{p4}(pad {pad_id} {_fmt(cx)} {_fmt(cy)} {pl}"
+                                 f"{_sexpr_size_shape(pad, elements)})")
                 lines.append(f"{p3})")
             else:
                 lines.append(f"{p3}(pads)")
             if _NET_CONSTRAINTS in elements:
                 c = net_val["constraints"]
                 lines.append(f"{p3}(constraints " + " ".join(
-                    f"({k} {_fmt(float(c[k]))})" for k in _NET_CONSTRAINT_KEYS) + ")")
+                    f"({k} {_fmt(float(c[k]))})" for k in _net_constraint_keys(elements)) + ")")
             lines.append(f"{p2})")
         lines.append(f"{p1})")
     else:
         lines.append(f"{p1}(nets)")
 
     # obstacles
-    obstacles = bs.get("obstacles", {})
+    obstacles = _drawn_obstacles(bs, elements)
     if obstacles:
         lines.append(f"{p1}(obstacles")
-        for _ok, obs in obstacles.items():
+        for obs in obstacles:
             o_id = obs["id"]
             cx, cy = obs["center"]["xy"]
             w, h = obs["width"], obs["height"]
             layer = obs["layer"]
+            shape = f" (shape {obs['shape']})" if _OBS_SHAPE in elements else ""
             lines.append(
                 f"{p2}(obs {o_id} {_fmt(cx)} {_fmt(cy)}"
-                f" (size {_fmt(w)} {_fmt(h)}) (layer {layer}))"
+                f" (size {_fmt(w)} {_fmt(h)}) (layer {layer}){shape})"
             )
         lines.append(f"{p1})")
     else:
         lines.append(f"{p1}(obstacles)")
 
+    # unconnected_pads — net-less pads: copper every net must avoid
+    if _UPADS in elements:
+        upads = bs.get("unconnected_pads", {})
+        if upads:
+            lines.append(f"{p1}(unconnected_pads")
+            for up in upads.values():
+                cx, cy = up["center"]["xy"]
+                lines.append(f"{p2}(upad {up['id']} {_fmt(cx)} {_fmt(cy)} "
+                             f"{_fmt_pad_layer(up['layer'])}{_sexpr_size_shape(up, elements)})")
+            lines.append(f"{p1})")
+        else:
+            lines.append(f"{p1}(unconnected_pads)")
+
     # board_constraints — strictest effective DRC constraints on this
     # board. Keys use full field names (not abbreviations) so the LLM
     # sees unambiguous labels; the trailing ``_mm`` is dropped since every
     # value is in millimetres by convention across this prompt format.
-    bc = bs.get("board_constraints", {})
+    bc = bs.get("board_constraints", {}) if _BOARD_CONSTRAINTS in elements else {}
     if bc:
         _BC_LABELS = {
             "clearance_mm":     "clearance",
@@ -766,10 +916,10 @@ def _board_static_to_sexpr(bs: Dict[str, Any], elements: FrozenSet[str], ind: in
     return "\n".join(lines)
 
 
-def _routing_geometry_to_sexpr(rg: Dict[str, Any], ind: int = 0) -> str:
+def _routing_geometry_to_sexpr(rg: Dict[str, Any], elements: FrozenSet[str], ind: int = 0) -> str:
     """Convert routing_geometry dict to S-expression.
 
-    Simplifications: track width removed, via_width removed.
+    Track width / via diameter only when ``elements`` holds them (``latest``).
     """
     p = _sindent(ind)
     p1 = _sindent(ind + 1)
@@ -797,7 +947,9 @@ def _routing_geometry_to_sexpr(rg: Dict[str, Any], ind: int = 0) -> str:
                     f"{p3}(track {t_id}"
                     f" (p1 {trk['p1']['id']} {_fmt(x1)} {_fmt(y1)})"
                     f" (p2 {trk['p2']['id']} {_fmt(x2)} {_fmt(y2)})"
-                    f" (layer {layer}))"
+                    f" (layer {layer})"
+                    + (f" (width {_fmt(float(trk['width']))})" if _TRACK_WIDTH in elements else "")
+                    + ")"
                 )
             lines.append(f"{p2})")
         else:
@@ -813,7 +965,9 @@ def _routing_geometry_to_sexpr(rg: Dict[str, Any], ind: int = 0) -> str:
                 lines.append(
                     f"{p3}(via {v_id}"
                     f" (center {via['center']['id']} {_fmt(cx)} {_fmt(cy)})"
-                    f" (layers {ls} {le}))"
+                    f" (layers {ls} {le})"
+                    + (f" (diameter {_fmt(float(via['via_width']))})" if _VIA_DIAMETER in elements else "")
+                    + ")"
                 )
             lines.append(f"{p2})")
         else:
@@ -859,8 +1013,35 @@ def _router_head_to_sexpr(rh: Dict[str, Any], ind: int = 0) -> str:
     return "\n".join(lines)
 
 
+def _dynamic_extras_to_sexpr(obs: Dict[str, Any], elements: FrozenSet[str], ind: int = 0) -> List[str]:
+    """``(drc_violations ...)`` and ``(closed_nets ...)`` when ``elements`` holds them."""
+    p, p1 = _sindent(ind), _sindent(ind + 1)
+    out: List[str] = []
+    if _DRC in elements:
+        rows = _drc_rows(obs.get("drc_violations") or [], obs["board_static"]["copper_layers"])
+        if rows:
+            out.append("\n".join([f"{p}(drc_violations"] + [
+                f'{p1}(drc {x} {y} {layer} {t} {sev} "{net}")' for x, y, layer, t, sev, net in rows
+            ] + [f"{p})"]))
+        else:
+            out.append(f"{p}(drc_violations)")
+    if _CLOSED_NETS in elements:
+        out.append(f"{p}(closed_nets" + "".join(f" {c}" for c in obs.get("closed_nets") or []) + ")")
+    return out
+
+
+def _dynamic_sexpr(obs: Dict[str, Any], elements: FrozenSet[str]) -> List[str]:
+    sections = []
+    if "routing_geometry" in obs:
+        sections.append(_routing_geometry_to_sexpr(obs["routing_geometry"], elements))
+    sections += _dynamic_extras_to_sexpr(obs, elements)
+    if "router_head" in obs:
+        sections.append(_router_head_to_sexpr(obs["router_head"]))
+    return sections
+
+
 def format_state_sexpr(obs: Dict[str, Any], prompt_version: str, *,
-                       net_constraint_obs: bool) -> str:
+                       net_constraint_obs: bool, emit_drc_tokens: bool = True) -> str:
     """Convert build_json_observation() output to S-expression string.
 
     Args:
@@ -868,6 +1049,8 @@ def format_state_sexpr(obs: Dict[str, Any], prompt_version: str, *,
         prompt_version: selects the rendered elements (:func:`obs_elements`).
         net_constraint_obs: the env's ``EnvConfig.net_constraint_obs`` — whether
             the per-net ``constraints`` exist to be rendered.
+        emit_drc_tokens: the env's ``EnvConfig.emit_drc_tokens`` — whether the DRC
+            rows exist to be rendered (off: no ``drc_violations`` element).
 
     Returns:
         Multi-line S-expression string.
@@ -878,19 +1061,15 @@ def format_state_sexpr(obs: Dict[str, Any], prompt_version: str, *,
             net_key: _normalize_net(net_val)
             for net_key, net_val in obs["routing_geometry"].items()
         }
+    elements = _rendered(prompt_version, net_constraint_obs, emit_drc_tokens)
     sections = []
     if "board_static" in obs:
-        sections.append(_board_static_to_sexpr(obs["board_static"],
-                                               _rendered(prompt_version, net_constraint_obs)))
-    if "routing_geometry" in obs:
-        sections.append(_routing_geometry_to_sexpr(obs["routing_geometry"]))
-    if "router_head" in obs:
-        sections.append(_router_head_to_sexpr(obs["router_head"]))
-    return "\n".join(sections)
+        sections.append(_board_static_to_sexpr(obs["board_static"], elements))
+    return "\n".join(sections + _dynamic_sexpr(obs, elements))
 
 
 def format_state_split_sexpr(obs: Dict[str, Any], prompt_version: str, *,
-                             net_constraint_obs: bool) -> Tuple[str, str]:
+                             net_constraint_obs: bool, emit_drc_tokens: bool = True) -> Tuple[str, str]:
     """Like format_state_sexpr(), but returns board_static separately.
 
     Args:
@@ -898,6 +1077,8 @@ def format_state_split_sexpr(obs: Dict[str, Any], prompt_version: str, *,
         prompt_version: selects the rendered elements (:func:`obs_elements`).
         net_constraint_obs: the env's ``EnvConfig.net_constraint_obs`` — whether
             the per-net ``constraints`` exist to be rendered.
+        emit_drc_tokens: the env's ``EnvConfig.emit_drc_tokens`` — whether the DRC
+            rows exist to be rendered (off: no ``drc_violations`` element).
 
     Returns:
         (board_static_sexpr, dynamic_sexpr) where dynamic_sexpr contains
@@ -909,25 +1090,21 @@ def format_state_split_sexpr(obs: Dict[str, Any], prompt_version: str, *,
             net_key: _normalize_net(net_val)
             for net_key, net_val in obs["routing_geometry"].items()
         }
-    static = (_board_static_to_sexpr(obs["board_static"],
-                                     _rendered(prompt_version, net_constraint_obs))
+    elements = _rendered(prompt_version, net_constraint_obs, emit_drc_tokens)
+    static = (_board_static_to_sexpr(obs["board_static"], elements)
               if "board_static" in obs else "")
-    dynamic_sections = []
-    if "routing_geometry" in obs:
-        dynamic_sections.append(_routing_geometry_to_sexpr(obs["routing_geometry"]))
-    if "router_head" in obs:
-        dynamic_sections.append(_router_head_to_sexpr(obs["router_head"]))
-    return static, "\n".join(dynamic_sections)
+    return static, "\n".join(_dynamic_sexpr(obs, elements))
 
 
 _FORMAT_FUNCS = {"xml": format_state, "sexpr": format_state_sexpr}
 
 
 def serialize_obs(obs: Dict[str, Any], state_format: str, prompt_version: str, *,
-                  net_constraint_obs: bool) -> str:
+                  net_constraint_obs: bool, emit_drc_tokens: bool = True) -> str:
     """Observation dict → prompt text in ``state_format`` (``sexpr`` | ``xml``)."""
     return _FORMAT_FUNCS[state_format](obs, prompt_version,
-                                       net_constraint_obs=net_constraint_obs)
+                                       net_constraint_obs=net_constraint_obs,
+                                       emit_drc_tokens=emit_drc_tokens)
 
 
 # ===========================================================================
@@ -960,23 +1137,30 @@ _ACTION_USAGE: List[Tuple[str, str, str]] = [
 
 _MODE_ACTIONS = {"make_line", "make_via", "finish"}
 _MODE_DESC = "mode: m=MarkObstacles, p=PushAndShove, w=Walkaround"
+_USAGE_LINES = {name: f"{usage}  e.g. {example}" for name, usage, example in _ACTION_USAGE}
 
 
-def format_valid_actions(mask: List[bool]) -> str:
+def format_valid_actions(mask: List[bool], action_lines: Optional[Dict[str, str]] = None,
+                         mode_lines: Tuple[str, ...] = (_MODE_DESC,)) -> str:
     """Convert a boolean action mask to a usage string for valid actions.
 
     Args:
         mask: List of bools aligned with ACTION_REGISTRY order.
               Only the first 6 entries (index 0..5) are used; idle (6) is excluded.
+        action_lines: each action's line (default: the legacy ``_ACTION_USAGE`` table;
+              ``latest`` passes its generated lines).
+        mode_lines: appended when a mode-using action is valid.
 
     Returns:
         Newline-separated action usage strings for valid actions.
-        Appends mode description if any mode-using action is valid.
+        Appends the mode lines if any mode-using action is valid.
     """
-    valid_actions = [(name, usage, example) for (name, usage, example), valid in zip(_ACTION_USAGE, mask) if valid]
-    lines = [f"{usage}  e.g. {example}" for _, usage, example in valid_actions]
-    if any(name in _MODE_ACTIONS for name, _, _ in valid_actions):
-        lines.append(_MODE_DESC)
+    if action_lines is None:
+        action_lines = _USAGE_LINES
+    names = [n for n, ok in zip(ACTION_NAMES[:ACT_IDLE], mask) if ok]
+    lines = [action_lines[n] for n in names]
+    if any(n in _MODE_ACTIONS for n in names):
+        lines += mode_lines
     return "\n".join(lines)
 
 
@@ -1005,3 +1189,40 @@ def split_board_static(text_obs: str, state_format: str = "sexpr") -> Tuple[str,
     if len(m) >= 3:
         return m[0] + m[1], m[2]
     return "", text_obs
+
+
+# ===========================================================================
+# Candidate targets → S-expression (EnvConfig action_target: candidates)
+# ===========================================================================
+
+def _fmt_mm_exact(x: float) -> str:
+    """``_fmt`` of a coordinate when 3 decimals give it back, else the shortest decimal
+    that parses back to the same float (no exponent, no trailing dot)."""
+    import numpy as np
+
+    s = _fmt(float(x))
+    return s if abs(float(s) - x) < 1e-9 else np.format_float_positional(float(x), trim="-")
+
+
+def format_candidates(rows: Dict[str, List[Tuple[float, float, int, int]]]) -> str:
+    """``{action name: [(x_mm, y_mm, layer, ctype), ...]}`` → the ``(candidates ...)``
+    block, one ``(c X Y LAYER TYPE)`` line per allowed target; an action with no
+    target renders bare (``(make_line)``). A coordinate that 3 decimals would round
+    (KiCad nm values, 100/N grid spacings) is printed in full, since the env matches a
+    candidate target exactly."""
+    from pcb_world.vec.candidate_pool import CTYPE_DIRECTIONAL, CTYPE_PAD, CTYPE_TRACK, CTYPE_VIA
+
+    names = {CTYPE_PAD: "pad", CTYPE_TRACK: "track", CTYPE_VIA: "via",
+             CTYPE_DIRECTIONAL: "directional"}
+    p1, p2 = _sindent(1), _sindent(2)
+    lines = ["(candidates"]
+    for action, cands in rows.items():
+        if not cands:
+            lines.append(f"{p1}({action})")
+            continue
+        lines.append(f"{p1}({action}")
+        lines += [f"{p2}(c {_fmt_mm_exact(x)} {_fmt_mm_exact(y)} {int(layer)} {names[ct]})"
+                  for x, y, layer, ct in cands]
+        lines.append(f"{p1})")
+    lines.append(")")
+    return "\n".join(lines)

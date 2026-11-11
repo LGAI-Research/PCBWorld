@@ -1,7 +1,10 @@
 {
  "EnvConfig": {
   "action_history_len": 1,
+  "action_target": "candidates",
+  "connectivity_filter": true,
   "corner_mode": 45,
+  "directional_candidates": "multi_resolution",
   "drc_config_path": null,
   "drc_incremental": true,
   "drc_promoted_codes": [
@@ -12,13 +15,17 @@
   "emit_drc_tokens": true,
   "engine_seed": 77,
   "followbranch_iter_limit": 1000000,
+  "force_walkaround": false,
   "keep_routing_fraction": null,
+  "mask_start_point": true,
   "masking_rule": "pcbworld_masking",
   "max_steps": 1024,
   "net_constraint_obs": true,
   "net_reselect": false,
   "obs_format": "json",
+  "offboard_mask": true,
   "outline_obs": "arc",
+  "pad_graze_margin_mm": 0.0,
   "reject_if_stuck": true,
   "reward": {
    "drc_log_agg_scale": null,
@@ -70,7 +77,10 @@
   },
   "env": {
    "action_history_len": 1,
+   "action_target": "free",
+   "connectivity_filter": true,
    "corner_mode": 45,
+   "directional_candidates": "multi_resolution",
    "drc_config_path": null,
    "drc_incremental": true,
    "drc_promoted_codes": [
@@ -81,13 +91,17 @@
    "emit_drc_tokens": true,
    "engine_seed": 77,
    "followbranch_iter_limit": 1000000,
+   "force_walkaround": false,
    "keep_routing_fraction": null,
+   "mask_start_point": true,
    "masking_rule": "pcbworld_masking",
-   "max_steps": 20,
+   "max_steps": 1024,
    "net_constraint_obs": true,
    "net_reselect": false,
    "obs_format": "json",
+   "offboard_mask": true,
    "outline_obs": "arc",
+   "pad_graze_margin_mm": 0.0,
    "reject_if_stuck": true,
    "reward": {
     "drc_log_agg_scale": null,
@@ -101,7 +115,7 @@
    },
    "reward_noise_clip_sigma": 4.0,
    "reward_noise_std": 0.0,
-   "reward_rule": "grpo_final",
+   "reward_rule": "pcbworld_reward",
    "rules_source": "board",
    "shove_iter_limit": 250,
    "simplify_outline": true,
@@ -111,6 +125,7 @@
    "state_format": "sexpr"
   },
   "prompt": {
+   "prompt_guidelines": true,
    "prompt_version": "latest"
   },
   "rollout": {
@@ -143,7 +158,10 @@
   "boards_split": "train",
   "env": {
    "action_history_len": 1,
+   "action_target": "free",
+   "connectivity_filter": true,
    "corner_mode": 45,
+   "directional_candidates": "multi_resolution",
    "drc_config_path": null,
    "drc_incremental": true,
    "drc_promoted_codes": [
@@ -154,13 +172,17 @@
    "emit_drc_tokens": true,
    "engine_seed": 77,
    "followbranch_iter_limit": 1000000,
+   "force_walkaround": false,
    "keep_routing_fraction": null,
+   "mask_start_point": true,
    "masking_rule": "pcbworld_masking",
-   "max_steps": 200,
+   "max_steps": 1024,
    "net_constraint_obs": true,
    "net_reselect": false,
    "obs_format": "json",
+   "offboard_mask": true,
    "outline_obs": "arc",
+   "pad_graze_margin_mm": 0.0,
    "reject_if_stuck": true,
    "reward": {
     "drc_log_agg_scale": null,
@@ -174,7 +196,7 @@
    },
    "reward_noise_clip_sigma": 4.0,
    "reward_noise_std": 0.0,
-   "reward_rule": "default",
+   "reward_rule": "pcbworld_reward",
    "rules_source": "board",
    "shove_iter_limit": 250,
    "simplify_outline": true,
@@ -184,6 +206,7 @@
   "eval_reward_config": "pcbworld_reward",
   "guided_decoding_grammar": null,
   "history_length": 0,
+  "prompt_guidelines": true,
   "prompt_version": "latest",
   "score_train_episodes": false,
   "seed": 0,
@@ -199,7 +222,10 @@
   "boards_split": "train",
   "env": {
    "action_history_len": 1,
+   "action_target": "free",
+   "connectivity_filter": true,
    "corner_mode": 45,
+   "directional_candidates": "multi_resolution",
    "drc_config_path": null,
    "drc_incremental": true,
    "drc_promoted_codes": [
@@ -210,13 +236,17 @@
    "emit_drc_tokens": true,
    "engine_seed": 77,
    "followbranch_iter_limit": 1000000,
+   "force_walkaround": false,
    "keep_routing_fraction": null,
+   "mask_start_point": true,
    "masking_rule": "pcbworld_masking",
-   "max_steps": 200,
+   "max_steps": 1024,
    "net_constraint_obs": true,
    "net_reselect": false,
    "obs_format": "json",
+   "offboard_mask": true,
    "outline_obs": "arc",
+   "pad_graze_margin_mm": 0.0,
    "reject_if_stuck": true,
    "reward": {
     "drc_log_agg_scale": null,
@@ -230,7 +260,7 @@
    },
    "reward_noise_clip_sigma": 4.0,
    "reward_noise_std": 0.0,
-   "reward_rule": "default",
+   "reward_rule": "pcbworld_reward",
    "rules_source": "board",
    "shove_iter_limit": 250,
    "simplify_outline": true,
@@ -240,6 +270,7 @@
   "eval_reward_config": "pcbworld_reward",
   "guided_decoding_grammar": null,
   "history_length": 0,
+  "prompt_guidelines": true,
   "prompt_version": "latest",
   "score_train_episodes": false,
   "seed": 0,
@@ -277,11 +308,12 @@
   "aug_rotate": false,
   "aug_trans": false,
   "aug_zoom": false,
-  "connectivity_filter": true,
-  "directional_candidates": "multi_resolution",
   "env": {
    "action_history_len": 1,
+   "action_target": "candidates",
+   "connectivity_filter": true,
    "corner_mode": 45,
+   "directional_candidates": "multi_resolution",
    "drc_config_path": null,
    "drc_incremental": true,
    "drc_promoted_codes": [
@@ -292,13 +324,17 @@
    "emit_drc_tokens": true,
    "engine_seed": 77,
    "followbranch_iter_limit": 1000000,
+   "force_walkaround": false,
    "keep_routing_fraction": null,
+   "mask_start_point": true,
    "masking_rule": "pcbworld_masking",
    "max_steps": 1024,
    "net_constraint_obs": true,
    "net_reselect": false,
    "obs_format": "json",
+   "offboard_mask": true,
    "outline_obs": "arc",
+   "pad_graze_margin_mm": 0.0,
    "reject_if_stuck": true,
    "reward": {
     "drc_log_agg_scale": null,
@@ -318,10 +354,6 @@
    "simplify_outline": true,
    "trim_at_contact": false
   },
-  "force_walkaround": false,
-  "mask_start_point": true,
-  "offboard_mask": true,
-  "pad_graze_margin_mm": 0.0,
   "slot_perm": false
  },
  "RLEvalConfig": {
@@ -418,6 +450,10 @@
   "action_history_len": {
    "source": "ckpt",
    "value": 1
+  },
+  "action_target": {
+   "source": "legacy",
+   "value": "candidates"
   },
   "async_val": {
    "source": "defaults",
@@ -993,6 +1029,10 @@
   }
  },
  "program/eval_llm": {
+  "action_target": {
+   "source": "defaults",
+   "value": "free"
+  },
   "api_disable_thinking": {
    "source": "defaults",
    "value": false
@@ -1057,6 +1097,10 @@
    "source": "defaults",
    "value": 45
   },
+  "directional_candidates": {
+   "source": "defaults",
+   "value": "multi_resolution"
+  },
   "drc_config_path": {
    "source": "defaults",
    "value": null
@@ -1105,6 +1149,10 @@
    "source": "defaults",
    "value": null
   },
+  "force_walkaround": {
+   "source": "defaults",
+   "value": false
+  },
   "gpu_devices": {
    "source": "defaults",
    "value": null
@@ -1135,7 +1183,7 @@
   },
   "max_steps": {
    "source": "defaults",
-   "value": 20
+   "value": 1024
   },
   "mode": {
    "source": "defaults",
@@ -1165,9 +1213,17 @@
    "source": "defaults",
    "value": null
   },
+  "offboard_mask": {
+   "source": "defaults",
+   "value": true
+  },
   "outline_obs": {
    "source": "defaults",
    "value": "arc"
+  },
+  "prompt_guidelines": {
+   "source": "defaults",
+   "value": true
   },
   "prompt_version": {
    "source": "defaults",
@@ -1177,13 +1233,17 @@
    "source": "defaults",
    "value": null
   },
+  "reject_if_stuck": {
+   "source": "defaults",
+   "value": true
+  },
   "reward_noise_std": {
    "source": "defaults",
    "value": 0.0
   },
   "reward_rule": {
    "source": "defaults",
-   "value": "grpo_final"
+   "value": "pcbworld_reward"
   },
   "reward_step_penalty": {
    "source": "defaults",
@@ -1280,6 +1340,10 @@
   "action_history_len": {
    "source": "defaults",
    "value": 1
+  },
+  "action_target": {
+   "source": "defaults",
+   "value": "candidates"
   },
   "async_val": {
    "source": "defaults",
@@ -1762,6 +1826,10 @@
   "action_history_len": {
    "source": "defaults",
    "value": 1
+  },
+  "action_target": {
+   "source": "defaults",
+   "value": "candidates"
   },
   "async_val": {
    "source": "defaults",
@@ -2340,6 +2408,10 @@
   "action_history_len": {
    "source": "defaults",
    "value": 1
+  },
+  "action_target": {
+   "source": "defaults",
+   "value": "candidates"
   },
   "async_val": {
    "source": "defaults",

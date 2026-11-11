@@ -94,7 +94,7 @@ def _run_episode(reward_rule: str):
 
     env = PCBWorld(
         BOARD,
-        EnvConfig.with_overrides(max_steps=200, masking_rule="default_no_finish", reward_rule=reward_rule),
+        EnvConfig.with_overrides(action_target="free", max_steps=200, masking_rule="default_no_finish", reward_rule=reward_rule),
     )
     env.reset()
     # Read the env's own cached initial state (DRC included iff mode=='per_step')

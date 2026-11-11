@@ -42,6 +42,11 @@ def _resolve_route_py() -> Path:
     return route_py
 
 
+def _cargo_lib_name() -> str:
+    """File name cargo gives KRT's ``grid_router`` cdylib on this host."""
+    return "libgrid_router.dylib" if sys.platform == "darwin" else "libgrid_router.so"
+
+
 def _build_grid_router_so(target_so: Path) -> None:
     """Build ``grid_router.so`` from KRT's rust_router source.
 
@@ -68,6 +73,9 @@ def _build_grid_router_so(target_so: Path) -> None:
     build_dir = target_so.parent / "rust_build"
     build_dir.mkdir(parents=True, exist_ok=True)
 
+    # cwd: cargo reads .cargo/config.toml from the working directory, not from
+    # --manifest-path, and KRT's config carries the macOS link flags
+    # (-undefined dynamic_lookup) a PyO3 extension needs.
     subprocess.run(
         [
             "cargo", "build", "--release",
@@ -75,9 +83,10 @@ def _build_grid_router_so(target_so: Path) -> None:
             "--target-dir", str(build_dir),
         ],
         check=True,
+        cwd=manifest.parent,
     )
 
-    built = build_dir / "release" / "libgrid_router.so"
+    built = build_dir / "release" / _cargo_lib_name()
     if not built.is_file():
         raise RuntimeError(f"cargo build succeeded but {built} is missing")
     if target_so.exists() or target_so.is_symlink():
@@ -118,10 +127,10 @@ def _ensure_grid_router_so() -> Path:
     """Materialize a usable ``grid_router.so`` and return its parent dir.
 
     KRT's ``startup_checks`` looks for ``grid_router.so`` on
-    ``sys.path``. The shared KRT install ships only
-    ``rust_router/target/release/libgrid_router.so`` and (a) is
-    typically not writable by the user, and (b) may be built against
-    a newer glibc than the host. We stage a per-user copy:
+    ``sys.path``. The shared KRT install ships only the cargo artifact
+    ``rust_router/target/release/libgrid_router.so`` (``.dylib`` on macOS) and
+    (a) is typically not writable by the user, and (b) may be built against
+    a newer glibc or another arch than the host. We stage a per-user copy:
 
     Resolution (first match wins):
       1. env var ``KRT_RUST_SO_DIR`` — directory containing
@@ -145,7 +154,7 @@ def _ensure_grid_router_so() -> Path:
 
     upstream = (
         get_krt_root() / "rust_router" / "target" / "release"
-        / "libgrid_router.so"
+        / _cargo_lib_name()
     )
     if upstream.is_file():
         # Try the upstream pre-built first — if loadable, mirror it.

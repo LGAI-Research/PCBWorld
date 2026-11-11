@@ -21,8 +21,8 @@ class CrashLogger:
     page cache, which outlives the process (never fsync: that would cost ms on
     NFS for nothing). The file shares its stem with the process's fatal-signal
     log (crash_handler) so postmortems pair by pid. Truncated on env.reset()
-    (current episode only); a clean close() deletes the file — anything left in
-    the crashlog dir means an incident. KICAD_CRASH_DIAG=0 disables all writes
+    (current episode only); a clean close() deletes the file — a plain step
+    stream left in the crashlog dir means an incident. KICAD_CRASH_DIAG=0 disables all writes
     (every method no-ops).
 
     Slow-step preservation: an episode whose engine dispatch exceeded

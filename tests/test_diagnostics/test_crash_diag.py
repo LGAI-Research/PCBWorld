@@ -271,3 +271,34 @@ def test_sigkill_worker_postmortem_and_respawn(tmp_path, monkeypatch):
         assert rec["respawn_count"] == 1
     finally:
         pool.close()
+
+
+def test_rss_is_read_without_proc(monkeypatch):
+    """Where there is no /proc (macOS) RSS comes from psutil, so the engine server's
+    KICAD_ENGINE_MAX_RSS_MB budget still fires; a gone process still reads None."""
+    import subprocess
+    import sys
+
+    import pcb_world.diag as diag
+
+    monkeypatch.setattr(diag, "_HAS_PROC", False)
+    assert diag.read_rss_mb() > 1
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait()
+    assert diag.read_rss_mb(child.pid) is None
+
+
+def test_rss_without_proc_does_not_hide_access_denied(monkeypatch):
+    """A budget that cannot read the server's RSS must fail loudly, not read None forever."""
+    import psutil
+    import pytest
+
+    import pcb_world.diag as diag
+
+    def denied(_pid=None):
+        raise psutil.AccessDenied(1)
+
+    monkeypatch.setattr(diag, "_HAS_PROC", False)
+    monkeypatch.setattr(psutil, "Process", denied)
+    with pytest.raises(psutil.AccessDenied):
+        diag.read_rss_mb(1)

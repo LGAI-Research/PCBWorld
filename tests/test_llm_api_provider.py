@@ -555,7 +555,7 @@ def test_llm_rows_record_the_angle_the_episode_was_scored_at(monkeypatch, tmp_pa
 def test_eval_manager_scores_at_the_env_corner_mode():
     """The LLM eval manager (flat CLI args, no ``env.pcbworld`` block) takes the
     workers' corner_mode as its scoring angle."""
-    envs = SimpleNamespace(prompt_version="v5", state_format="sexpr",
+    envs = SimpleNamespace(prompt_version="v5", prompt_guidelines=True, state_format="sexpr",
                            env_config=LLMConfig().env.with_flat({"corner_mode": 90}))
     mgr = R._EvalRolloutManager(envs, SimpleNamespace(max_steps=10, history_length=0))
     assert mgr._eval_check_angle == 90

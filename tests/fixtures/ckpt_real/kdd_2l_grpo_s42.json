@@ -75,6 +75,7 @@
   "load": {
    "sources": {
     "action_history_len": "derived",
+    "action_target": "legacy",
     "connectivity_filter": "legacy",
     "detach_critic": "legacy",
     "directional_candidates": "renamed",
@@ -106,6 +107,7 @@
    },
    "values": {
     "action_history_len": 1,
+    "action_target": "candidates",
     "connectivity_filter": false,
     "coord_encoding": "fourier",
     "corner_mode": 45,
@@ -169,6 +171,7 @@
   "resume": {
    "sources": {
     "action_history_len": "derived",
+    "action_target": "legacy",
     "board": "cli",
     "connectivity_filter": "legacy",
     "detach_critic": "legacy",
@@ -200,6 +203,7 @@
    },
    "values": {
     "action_history_len": 1,
+    "action_target": "candidates",
     "aug_bbox_shifted": false,
     "aug_flip": false,
     "aug_rotate": false,

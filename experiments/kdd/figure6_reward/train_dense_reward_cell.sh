@@ -115,7 +115,7 @@ cmd=(
   --n-heads "$FIGURE6_N_HEADS"
   --n-layers "$FIGURE6_N_LAYERS"
   --d-ff "$FIGURE6_D_FF"
-  --device cuda
+  --device "$PAPER_TRAIN_DEVICE"
   --seed "$SEED"
   --log-dir "${OUTPUT_ROOT}/tb"
   --save-dir "${OUTPUT_ROOT}/checkpoints"

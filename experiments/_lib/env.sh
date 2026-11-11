@@ -34,6 +34,17 @@ if [[ -z "${T1_BASELINE_PYTHON:-}" ]]; then
   export T1_BASELINE_PYTHON="$PYTHON_BIN"
 fi
 
+# Torch device the RL training recipes pass as --device: CUDA on Linux, the Apple GPU on
+# macOS (torch's macOS wheels have no CUDA). Explicit rather than "auto", so a Linux host
+# without a working GPU fails loudly instead of training on the CPU.
+if [[ -z "${PAPER_TRAIN_DEVICE:-}" ]]; then
+  if [[ "$(uname -s)" == Darwin ]]; then
+    export PAPER_TRAIN_DEVICE=mps
+  else
+    export PAPER_TRAIN_DEVICE=cuda
+  fi
+fi
+
 if [[ -z "${ROUTER_BUILD_DIR:-}" ]]; then
   if [[ -d "${PCBWORLD_REPO_ROOT}/build_rl/pcbnew/python/rl" ]]; then
     export ROUTER_BUILD_DIR="${PCBWORLD_REPO_ROOT}/build_rl"

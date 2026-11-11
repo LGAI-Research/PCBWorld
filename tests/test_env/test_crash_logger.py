@@ -105,13 +105,8 @@ class TestCrashLoggerUnit:
         assert entries[1]["action"]["action_type"] == 3
         assert entries[1]["action"]["x_mm"] == 15.0
         assert entries[1]["router_head"]["is_routing"] is True
-        # Evidence for OOM diagnosis. read_rss_mb() reads /proc/self/statm, so
-        # the field is None off Linux (macOS dev boxes) — assert the value
-        # only where the source exists, but always require the key to be
-        # emitted.
-        assert "rss_mb" in entries[1]
-        if Path("/proc/self/statm").exists():
-            assert entries[1]["rss_mb"] and entries[1]["rss_mb"] > 0
+        # Evidence for OOM diagnosis (/proc on Linux, psutil on macOS).
+        assert entries[1]["rss_mb"] and entries[1]["rss_mb"] > 0
         assert entries[2]["event"] == "post_step"
         assert entries[2]["success"] is True
         logger.close()

@@ -23,7 +23,7 @@ _FULL_NS = dict(
     rules_source="board_or_yaml", drc_config_path="/tmp/drc.yaml",
     connectivity_filter=False, pad_graze_margin_mm=0.0, outline_obs="tess",
     simplify_outline=False, action_history_len=1, net_constraint_obs=False,
-    net_reselect=False, obs_format="indexed", keep_routing_fraction=None,
+    net_reselect=False, obs_format="indexed", keep_routing_fraction=None, action_target="free",
     # Engine knobs (no flag: the training parser puts them on the namespace).
     engine_seed=5, shove_iter_limit=9, followbranch_iter_limit=11,
     reject_if_stuck=False, trim_at_contact=True,
@@ -56,7 +56,7 @@ def test_from_namespace_matches_legacy_mapper():
         "outline_obs": "tess", "simplify_outline": False,
         "action_history_len": 1, "net_constraint_obs": False,
         "net_reselect": False,
-        "keep_routing_fraction": None,
+        "keep_routing_fraction": None, "action_target": "free",
         "engine_seed": 5, "shove_iter_limit": 9, "followbranch_iter_limit": 11,
         "reject_if_stuck": False, "trim_at_contact": True,
         "drc_incremental": False, "drc_promoted_codes": [13],
@@ -118,6 +118,8 @@ def test_from_checkpoint_full():
         # (False regardless of the YAML)
         "net_constraint_obs": False,
         "net_reselect": False,
+        # pre-knob ckpt: a pointer policy targets pool points
+        "action_target": "candidates",
         # train-only augmentation: from_checkpoint pins it OFF at eval
         "keep_routing_fraction": None,
         **_TRAIN_LAYER_OFF,
@@ -244,9 +246,11 @@ def test_env_core_to_env_kwargs():
         "trim_at_contact", "reward_noise_clip_sigma", "drc_incremental", "drc_promoted_codes",
         "obs_format", "outline_obs", "simplify_outline", "action_history_len",
         "net_constraint_obs", "net_reselect", "keep_routing_fraction",
+        # the action constraints (shared by every agent)
+        "force_walkaround", "mask_start_point", "directional_candidates",
+        "connectivity_filter", "pad_graze_margin_mm", "offboard_mask", "action_target",
     }
-    for leaked in ("force_walkaround", "mask_start_point", "slot_perm",
-                   "directional_candidates"):
+    for leaked in ("slot_perm", "aug_flip", "policy_net_select"):
         assert leaked not in kw
 
 
@@ -273,7 +277,7 @@ def test_convenience_construction_and_flat_overrides():
     with pytest.raises(TypeError):
         EnvConfig.with_overrides(nope=1)
     cfg = RLEnvConfig().with_flat({"max_steps": 7, "via_penalty": 0.5, "offboard_mask": True})
-    assert (cfg.env.max_steps, cfg.env.reward.via_penalty, cfg.offboard_mask) == (7, 0.5, True)
+    assert (cfg.env.max_steps, cfg.env.reward.via_penalty, cfg.env.offboard_mask) == (7, 0.5, True)
     assert RLEnvConfig().with_flat(cfg.to_record()) == cfg     # the record round-trips
     with pytest.raises(TypeError):
         RLEnvConfig().with_flat({"nope": 1})
@@ -288,18 +292,18 @@ def test_convenience_construction_and_flat_overrides():
 # landmine is fixed, keep RLPolicyConfig coverage in the build-path suites.
 
 
-def test_llm_env_net_reselect_is_its_own_knob():
-    """The LLM path takes net_reselect from llm.env (CLI --net_reselect), not from
-    the RL env: default, and carries it to the env in the one EnvConfig."""
+def test_llm_env_net_reselect_follows_the_shared_env():
+    """The LLM path takes net_reselect from the shared env: (llm.env may not set it); the
+    CLI --net_reselect still sets it per run, in the one EnvConfig."""
     from configs.loader import schema
     from configs.loader.cli import StrictArgumentParser
     from eval.args import add_env_args, llm_env_config
 
-    assert "net_reselect" in schema._LLM["env"]
-    assert schema.LLMConfig().env.net_reselect is schema._LLM["env"]["net_reselect"] is False
+    assert "net_reselect" not in schema._LLM["env"]
+    assert schema.LLMConfig().env.net_reselect is schema.EnvConfig().net_reselect
     p = StrictArgumentParser()
     add_env_args(p)
-    assert llm_env_config(p.parse_args([])).net_reselect is False
+    assert llm_env_config(p.parse_args([])).net_reselect is schema.EnvConfig().net_reselect
     assert llm_env_config(p.parse_args(["--net_reselect"])).net_reselect is True
 
 

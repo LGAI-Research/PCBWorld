@@ -117,6 +117,7 @@ def _build_envs(args, board_path: str | None = None):
         env_config=llm_env_config(args),
         state_format=args.state_format,
         prompt_version=args.prompt_version,
+        prompt_guidelines=args.prompt_guidelines,
         board_path=board_path if board_path is not None else args.board_path,
         seed=args.seed,
         env_num=args.env_num,
@@ -1334,9 +1335,13 @@ def main() -> None:
     # per-episode dumps. Without --dump_dir the run keeps no files, so no record either.
     if args.dump_dir:
         from configs.loader.record import board_record, write_run_record
+        from configs.loader.schema import env_deviations
+        from eval.args import llm_env_config
         write_run_record(args.dump_dir, args, boards=board_record(
             [p for _, p in _resolve_eval_boards(args)], board_path=args.board_path,
-            boards_json=args.boards_json))
+            boards_json=args.boards_json), extra={"env_deviations": {
+                k: {"shared": a, "run": b}
+                for k, (a, b) in env_deviations(llm_env_config(args)).items()}})
     else:
         print("[config] no --dump_dir: no run record is written (the provenance table follows)")
         from configs.loader.explain import format_table

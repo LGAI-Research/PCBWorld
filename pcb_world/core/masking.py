@@ -126,6 +126,7 @@ class YamlConditionMask:
     def __init__(self, rule: MaskingRuleSchema) -> None:
         self.name: str = rule.name
         self.actions: frozenset[str] = frozenset(rule.actions)
+        self.conditions: Mapping[str, Mapping[str, Any]] = rule.actions   # action -> its `when`
         # _action_conditions: [(action_index, {field: required_value})]
         self._action_conditions: list[tuple[int, dict[str, Any]]] = [
             (_ACTION_NAME_TO_IDX[action], dict(when)) for action, when in rule.actions.items()

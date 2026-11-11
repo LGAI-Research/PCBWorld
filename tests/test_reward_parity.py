@@ -212,7 +212,7 @@ def test_env_and_offline_scorer_price_the_board_identically(
 
     env = PCBWorld(
         str(BOARD),
-        EnvConfig.with_overrides(max_steps=200, masking_rule="default_no_finish", reward_rule=rule_arg),
+        EnvConfig.with_overrides(action_target="free", max_steps=200, masking_rule="default_no_finish", reward_rule=rule_arg),
     )
     try:
         env.reset()
@@ -266,7 +266,7 @@ def _route_and_score_inline(tmp_path, train_rule: str, score_rule: str):
     from pcb_world.core.env import PCBWorld
 
     routed_pcb = tmp_path / "routed.kicad_pcb"
-    env = PCBWorld(str(BOARD), EnvConfig.with_overrides(
+    env = PCBWorld(str(BOARD), EnvConfig.with_overrides(action_target="free", 
         max_steps=200, masking_rule="default_no_finish", reward_rule=train_rule))
     try:
         env.reset()

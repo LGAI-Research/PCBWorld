@@ -16,7 +16,9 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from configs.loader.schema import EnvConfig
-from methods.llm_agent.wrappers.state_converter import serialize_obs
+from methods.llm_agent.wrappers.state_converter import format_candidates, serialize_obs
+from pcb_world.core.action_schema import ACT_MAKE_LINE, ACT_MAKE_VIA, ACT_START_ROUTE, ACTION_NAMES
+from pcb_world.core.constraints import ActConstraints, allowed_candidates
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +41,26 @@ def _count_board_nets(obs_dict: Optional[Dict[str, Any]]) -> int:
     if obs_dict is None:
         return 0
     return len(obs_dict.get("board_static", {}).get("nets", {}))
+
+
+def candidate_rows(act: ActConstraints) -> Dict[str, list]:
+    """``{action name: [(x_mm, y_mm, layer, ctype), ...]}`` — the pool points each
+    coordinate action the state's action mask allows may target (the RL pointer set)."""
+    return {ACTION_NAMES[at]: [act.cand_raw[i] for i in allowed_candidates(act, at)]
+            for at in (ACT_START_ROUTE, ACT_MAKE_LINE, ACT_MAKE_VIA) if act.masks["action"][at]}
+
+
+def render_text_obs(obs: Dict[str, Any], env, state_format: str, prompt_version: str) -> str:
+    """Prompt text of ``obs`` from the :class:`PCBWorld` ``env`` — the obs elements of
+    ``prompt_version`` the env produces, and under ``action_target: candidates`` the
+    ``(candidates ...)`` block of the targets the env accepts in this state. The batch
+    worker and the interactive REPL both render with it."""
+    text = serialize_obs(obs, state_format, prompt_version,
+                         net_constraint_obs=env.net_constraint_obs,
+                         emit_drc_tokens=env._emit_drc_tokens)
+    if env.action_target != "candidates":
+        return text
+    return f"{text}\n{format_candidates(candidate_rows(env.act_constraints()))}"
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +102,9 @@ class KiCadLLMWrapper:
 
         return PCBWorld(board_path=board_path, env_config=self._env_config)
 
+    def _text_obs(self, obs: Dict[str, Any]) -> str:
+        return render_text_obs(obs, self.env, self.state_format, self.prompt_version)
+
     def step(self, action: Dict[str, Any]):
         """Execute one action step.
 
@@ -97,8 +122,7 @@ class KiCadLLMWrapper:
         # ``get_last_obs_dict`` without re-running the env.
         self._last_obs_dict = obs
 
-        text_obs = serialize_obs(obs, self.state_format, self.prompt_version,
-                                 net_constraint_obs=self._env_config.net_constraint_obs)
+        text_obs = self._text_obs(obs)
         # REVIEW(metric-semantics): bare ``terminated`` is NOT "fully routed"
         # since the voluntary all-nets-closed finish (v0.11.28) — give-up
         # episodes also terminate. Canonical success = env ``info["success"]``
@@ -126,8 +150,7 @@ class KiCadLLMWrapper:
         obs, info = self.env.reset(seed=self._seed)
         self._last_obs_dict = obs
 
-        text_obs = serialize_obs(obs, self.state_format, self.prompt_version,
-                                 net_constraint_obs=self._env_config.net_constraint_obs)
+        text_obs = self._text_obs(obs)
         info["action_mask"] = self.env.action_masks().tolist()
         info["action_mask_dict"] = self.env.action_mask_dict()
 

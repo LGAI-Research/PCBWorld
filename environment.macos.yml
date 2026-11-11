@@ -1,0 +1,57 @@
+# macOS (Apple Silicon, osx-arm64) variant of environment.yml — same env name, same role.
+# tools/setup/setup_all.sh picks this file on Darwin. Differences from the Linux file:
+#   - toolchain: conda-forge clang (cxx-compiler) instead of the pinned GCC + glibc sysroot;
+#     it compiles against the macOS SDK, so the Xcode Command Line Tools must be installed
+#     (`xcode-select --install`).
+#   - no libgl-devel / libglx-devel (Linux libglvnd): macOS ships OpenGL as a system framework.
+#   - no ngspice (no osx-arm64 build): the patched KiCad CMake leaves the library optional, and
+#     the one header KiCad still includes is fetched, pinned, by engine/build_rl_router.sh.
+#   - pip deps from requirements-macos.txt: no CUDA wheels, no vLLM / flash-attn, so
+#     LLM-policy training (verl-agent) and the vLLM local provider are Linux-only.
+# Library pins follow the versions the Linux env resolves (wxWidgets 3.2, OCCT 7.9, SWIG 4.4, NNG 1.x);
+# conda-forge's newer majors are untested against KiCad 9.0.8.
+#
+#   conda env create -f environment.macos.yml        # or: bash tools/setup/setup_all.sh
+#   (libmamba solver or mamba, as for environment.yml)
+name: pcbworld
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  # --- C++ router build toolchain (engine/build_rl_router.sh) ---
+  - cxx-compiler
+  - cmake
+  - ninja
+  - pkg-config
+  - boost
+  - wxwidgets<3.3
+  - zlib
+  - expat
+  - occt=7.9
+  - protobuf
+  - libprotobuf
+  - glew
+  - glfw
+  - glm
+  - libgit2
+  - swig=4.4
+  - nng<2
+  - unixodbc
+  - libsecret
+  - git-lfs
+  # Pulled in transitively on Linux by the GTK wxWidgets build; the macOS (Cocoa) build does
+  # not, and KiCad's CMake requires them.
+  - cairo
+  - pixman
+  - harfbuzz
+  # The repo's scripts use bash >= 4 (mapfile, assoc arrays, ${a[-1]}); macOS ships 3.2.
+  - bash>=5
+  # GNU diff: engine/tools/make_upstream_diff.sh's view is checked byte for byte (check_docs),
+  # and Apple's FreeBSD diff picks different, equally valid hunks.
+  - diffutils
+  # --- rule-based baselines toolchain ---
+  - openjdk>=21   # FreeRouting JVM
+  - rust          # KRT grid_router build
+  - pip
+  - pip:
+      - -r requirements-macos.txt

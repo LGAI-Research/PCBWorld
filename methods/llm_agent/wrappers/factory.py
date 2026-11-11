@@ -55,6 +55,7 @@ class KiCadLLMVecEnv(RayVecBackend):
         env_config: EnvConfig,
         state_format: str,
         prompt_version: str,
+        prompt_guidelines: bool,
         seed: int,
         env_num: int,
         group_n: int,
@@ -63,7 +64,7 @@ class KiCadLLMVecEnv(RayVecBackend):
         board_paths: Optional[List[str]] = None,
         is_train: bool = True,
     ) -> None:
-        check_prompt_masking(prompt_version, env_config.masking_rule)
+        check_prompt_masking(prompt_version, env_config.masking_rule, env_config.net_reselect)
         board_paths = _normalize_board_paths(board_path, board_paths, env_num)
         super().__init__(
             worker_cls=KiCadLLMWrapper,
@@ -78,12 +79,14 @@ class KiCadLLMVecEnv(RayVecBackend):
         self.env_config = env_config
         self.state_format = state_format
         self.prompt_version = prompt_version
+        self.prompt_guidelines = prompt_guidelines
 
 
 def build_pcbworld_envs(
     env_config: EnvConfig,
     state_format: str,
     prompt_version: str,
+    prompt_guidelines: bool,
     seed: int,
     env_num: int,
     group_n: int,
@@ -100,6 +103,7 @@ def build_pcbworld_envs(
         env_config=env_config,
         state_format=state_format,
         prompt_version=prompt_version,
+        prompt_guidelines=prompt_guidelines,
         board_path=board_path,
         board_paths=board_paths,
         seed=seed,

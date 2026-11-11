@@ -69,24 +69,35 @@ and scale first, so the same geometry gives the same token on any board. The typ
 
 ### Text wrapper
 
-Read by tool-calling LLM agents. The same dict as S-expressions, nesting and keys
-unchanged. The bare fixture board, abridged:
+Read by tool-calling LLM agents. The default prompt (`prompt_version latest`) shows the same
+observation the RL tokenizer reads, as S-expressions. The bare fixture board, abridged:
 
 ```
 (board_static
   (bbox -0.075 -0.075 50.150 30.150) (net_count 4) (copper_layers 2)
-  (boardlines (edge E0 (p1 P0 0.000 0.000) (p2 P1 50.000 0.000)) ...)
+  (boardlines (edge E0 (p1 P0 0.000 0.000) (p2 P1 50.000 0.000) (width 0.150)) ...)
   (nets
-    (net 1 "NET1" (pads (pad D0 10.000 10.000 1) (pad D1 40.000 10.000 1))) ...)
-  (board_constraints (clearance 0.200) (track_width 0.200) ...))
+    (net 1 "NET1"
+      (pads (pad D0 10.000 10.000 1 (size 1.000 1.000) (shape roundrect)) ...)
+      (constraints (track_width 0.200) (clearance 0.200) (via_diameter 0.600))) ...)
+  (obstacles) (unconnected_pads))
 (routing_geometry
   (net 1 (tracks) (vias) (points (point Q0 10.000 10.000) (point Q1 40.000 10.000))) ...)
+(drc_violations (drc 10.000 10.000 - other error "NET1") ...)
+(closed_nets)
 (router_head
   (xy 0.000 0.000) (layer -1) (net -1) (phase 0) (is_routing false) (routing_mode w))
 ```
 
 Nothing is routed yet, so every `tracks` list is empty and each net's two pads are still open
-`points`. Pad `D0` of net 1 sits at (10, 10) on layer 1.
+`points`; DRC reports each open net as an error. Pad `D0` of net 1 sits at (10, 10) on layer 1.
+
+Every sentence of that prompt (terms, design rules, DRC types, actions, the rules the env
+enforces, the score, the routing hints, the description of each field above) comes from
+[glossary.yaml](../methods/llm_agent/wrappers/prompts/glossary.yaml), picked for the run's env
+configuration ([latest.py](../methods/llm_agent/wrappers/prompts/latest.py)); edit that file to change
+the wording. A configuration the glossary has no sentence for (a new masking or reward rule) stops the
+run until an entry is added. The frozen prompts `v1`–`v8` stay selectable with `--prompt_version`.
 
 ## Actions
 
@@ -112,10 +123,13 @@ pad centers, the endpoints and via centers of the copper drawn so far, the open 
 targets, and eight near neighbours a fixed short step around the router head
 ([candidate_pool.py](../pcb_world/vec/candidate_pool.py)). The agent picks one of them.
 
-The token wrapper enforces this. The policy decodes a triple `(action_type, pointer into the
-candidate set, routing_mode)`, fills only the slots the type uses, and a pointer cannot leave
-the set. The text wrapper lists the same points but also accepts a free coordinate, which is
-how it takes a detour waypoint.
+The environment enforces this. Under `action_target: candidates` (the default) `PCBWorld.step`
+refuses a point outside the set or one the current state rules out: the step is a `mask_reject`
+and `info["constraint"]` names the rule. The token wrapper never hits it: the policy decodes a triple
+`(action_type, pointer into the candidate set, routing_mode)`, fills only the slots the type uses, a pointer
+cannot leave the set, and it samples under the mask of the same rules. The text wrapper by default (`action_target: free`) takes a free coordinate instead, which is
+how it names a detour waypoint; with `action_target: candidates` it is shown the same allowed
+points (coordinates exact) and accepts only those.
 
 **Mask.** Which actions are legal depends on the router's current state, and that is a YAML
 rule in [configs/masking/](../configs/masking/) — one condition per action. `env.action_masks()`

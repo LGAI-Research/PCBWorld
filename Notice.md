@@ -57,6 +57,7 @@ pytorch	BSD 3-clause "New" or "Revised" License
 PyYAML	MIT License
 RonnyPfannschmidt/iniconfig	MIT License
 ray	Apache License 2.0
+scipy	BSD 3-clause "New" or "Revised" License
 shapely	BSD 3-clause "New" or "Revised" License
 sniffio	(MIT License AND Apache License 2.0)
 SymPy	BSD 3-clause "New" or "Revised" License
@@ -390,6 +391,11 @@ ray
 Apache License 2.0
 https://github.com/ray-project/ray
 Copyright 2023 Ray Authors
+
+scipy
+BSD 3-clause "New" or "Revised" License
+https://scipy.org/
+Copyright (c) 2001-2002 Enthought, Inc. 2003, SciPy Developers.
 
 shapely
 BSD 3-clause "New" or "Revised" License

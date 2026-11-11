@@ -1,7 +1,10 @@
 # One-shot conda environment for PCBWorld — single env for training, eval AND the
-# rule-based baselines (FreeRouting/KRT; OrthoRoute for the KDD record). Linux x86_64 / CUDA 12 primary.
+# rule-based baselines (FreeRouting/KRT; OrthoRoute for the KDD record). Linux x86_64 / CUDA 12;
+# Apple Silicon uses environment.macos.yml.
 #
 #   conda env create -f environment.yml        # or: bash tools/setup/setup_all.sh
+#   (needs conda's libmamba solver, the default from conda 23.10, or mamba: the classic
+#   solver does not finish on this file)
 #
 # Python deps come exclusively from requirements.txt (the compiled lock of the
 # pinned pyproject.toml). Conda supplies the interpreter, the C++ router build
@@ -36,15 +39,20 @@ dependencies:
   - zlib
   - expat
   - ngspice
-  - occt
+  # OCCT and SWIG are pinned for the optional pcbnew build (BUILD_PCBNEW=1): KiCad 9.0.8's
+  # STEP exporter needs OCCT 7.x headers (8.x drops TColStd_MapIteratorOfPackedMapOfInteger),
+  # and SWIG 4.5 emits Python-2 calls (PyInt_FromLong) into pcbnew_wrap.cxx. Not lower either:
+  # swig 4.2 pulls an old pcre2 that makes the solver drop wxwidgets, openjdk and gtk3.
+  - occt=7.9
   - protobuf
   - libprotobuf
   - glew
   - glfw
   - glm
   - libgit2
-  - swig
-  - nng
+  - swig=4.4
+  # NNG 2 moved the protocol headers (nng/protocol/reqrep0/rep.h) that KiCad 9.0.8's kinng includes.
+  - nng<2
   - unixodbc
   - libsecret
   - git-lfs

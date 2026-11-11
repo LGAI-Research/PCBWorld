@@ -134,7 +134,7 @@ cmd=(
   --n-heads "$T1_TRANSFORMER_N_HEADS"
   --n-layers "$T1_TRANSFORMER_N_LAYERS"
   --d-ff "$T1_TRANSFORMER_D_FF"
-  --device cuda
+  --device "$PAPER_TRAIN_DEVICE"
   --seed "$SEED"
   --log-dir "${OUTPUT_ROOT}/tb"
   --save-dir "${OUTPUT_ROOT}/checkpoints"

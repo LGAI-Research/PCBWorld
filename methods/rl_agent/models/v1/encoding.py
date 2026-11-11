@@ -12,15 +12,15 @@ from the former scattered codec modules:
   * **State**    — norm context + dataclasses (from ``policy/state_tokenizer_common``)
                    + obs→net/cand ordering (from ``wrappers/state_converter``)
   * **Action**   — triple decode + pointer→value (from ``wrappers/action_converter``)
-  * **Mask**     — mode/pointer/net/off-layer/off-board masks + the per-state payload
-                   + the wrapper-less serving ``DistInputs`` (``dist_from_obs``)
+  * **Mask**     — the wrapper-less serving ``DistInputs`` (``dist_from_obs``); the masks
+                   and the candidate pool themselves are env rules in
+                   ``pcb_world.core.constraints`` (re-exported here)
 
 Those source modules have been removed; import the codec from here.
 """
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,11 +28,22 @@ import numpy as np
 import torch
 
 from pcb_world.core.action_schema import MODE_WALKAROUND
-from pcb_world.core.indexed_obs import is_indexed
-from pcb_world.vec.candidate_pool import (
-    CTYPE_DIRECTIONAL,
-    build_directional_candidates,
-    collect_raw_candidates,
+# The candidate pool and the act-time masks are env rules (pcb_world.core.constraints);
+# re-exported here so the codec keeps one import surface.
+from pcb_world.core.constraints import (  # noqa: F401
+    FORCE_ROUTING_MODE,
+    _parse_net_code,
+    _sorted_net_keys,
+    act_constraints,
+    cand_mm_list_from_obs,
+    cand_raw_list_from_obs,
+    mask_payload,
+    mode_mask,
+    net_valid_mask,
+    offboard_pointer_indices,
+    offlayer_pointer_indices,
+    sorted_net_codes_from_obs,
+    start_route_pointer_indices,
 )
 from methods.rl_agent.models.v1.spec import (
     ACTION_ARITY, MAX_COPPER, NUM_ROUTING_MODES, DistInputs,
@@ -299,68 +310,6 @@ def _safe_encode_layer_elem(layer_human, n_copper):
     return dist_top, dist_bot
 
 
-def _parse_net_code(net_key: str) -> int:
-    return int(net_key.split("_", 1)[1])
-
-
-def _sorted_net_keys(d: dict) -> list[str]:
-    return sorted(d.keys(), key=_parse_net_code)
-
-
-def sorted_net_codes_from_obs(obs: dict) -> list[int]:
-    """Return net codes in the exact order used by StateTokenizer.
-
-    Mirrors ``_sorted_net_keys`` — numeric ascending.
-    """
-    if is_indexed(obs):
-        return sorted(int(c) for c in obs["board_static"]["net_code"])
-    nets = (obs.get("board_static") or {}).get("nets") or {}
-    codes: list[int] = []
-    for key in nets.keys():
-        try:
-            codes.append(int(key.split("_", 1)[1]))
-        except (IndexError, ValueError):
-            continue
-    codes.sort()
-    return codes
-
-
-def cand_raw_list_from_obs(obs: dict) -> list[tuple[float, float, int, int]]:
-    """Rebuild the raw candidate ``(x_mm, y_mm, layer, ctype)`` list in
-    tokenizer order.
-
-    Uses the same shared helpers as ``StateTokenizer._build_candidate_pool``:
-    ``collect_raw_candidates`` + ``build_directional_candidates`` (when routing).
-    The tokenizer's ``cand_mm_list`` and this function's output must be
-    tuple-wise identical for the wrapper's pointer decode to be correct.
-
-    ``obs["_aug"]["directional_candidates"]`` selects the directional mode
-    (None = 8-dir / 0.5mm, preset name = 8-dir distance ladder, "grid<N>" =
-    1-layer Grid mode) — see ``candidate_pool.parse_directional_mode``.
-    """
-    rh = obs.get("router_head", {})
-    current_net_id = rh.get("current_net", -1)
-    if current_net_id is None or current_net_id <= 0:
-        current_net_id = None
-
-    extra = None
-    if rh.get("is_routing", False):
-        head_xy = rh.get("current_xy", [0.0, 0.0])
-        aug = obs.get("_aug") or {}
-        extra = build_directional_candidates(
-            (head_xy[0], head_xy[1]), int(rh.get("current_layer", 1)),
-            mode=aug.get("directional_candidates"),
-        )
-
-    return collect_raw_candidates(obs, current_net_id, extra)
-
-
-def cand_mm_list_from_obs(obs: dict) -> list[tuple[float, float, int]]:
-    """:func:`cand_raw_list_from_obs` without the ctype column — the wrapper's
-    pointer-decode table."""
-    return [(x, y, layer) for (x, y, layer, _ctype) in cand_raw_list_from_obs(obs)]
-
-
 # ===========================================================================
 # Action — normalize the policy triple, resolve pointers to env-space
 # ===========================================================================
@@ -410,192 +359,6 @@ def pointer_to_cand(
 # ===========================================================================
 # Mask — hard masks the policy applies before sampling
 # ===========================================================================
-def mode_mask(*, force_routing_mode: int | None, force_walkaround: bool) -> np.ndarray:
-    """``(3,)`` bool mask over routing modes.
-
-    ``force_routing_mode`` (env-var override) wins; then ``force_walkaround``
-    permits only Walkaround (index 2); otherwise all three modes are allowed.
-    """
-    if force_routing_mode is not None:
-        mask = np.zeros(NUM_ROUTING_MODES, dtype=bool)
-        mask[force_routing_mode] = True
-        return mask
-    if force_walkaround:
-        mask = np.zeros(NUM_ROUTING_MODES, dtype=bool)
-        mask[MODE_WALKAROUND] = True
-        return mask
-    return np.ones(NUM_ROUTING_MODES, dtype=bool)
-
-
-def start_route_pointer_indices(
-    *,
-    mask_start_point: bool,
-    start_route_xy: tuple[float, float, int] | None,
-    cand_mm: list[tuple[float, float, int]],
-) -> np.ndarray:
-    """Cand-pool indices matching ``start_route_xy`` — same ``(x, y)`` AND
-    same ``layer``.
-
-    Layer-aware on purpose: the exclusion key must equal the candidate
-    identity ``(x, y, layer)``. An xy-only match wipes ALL layer variants
-    of the point, and for a net whose every candidate shares one xy
-    (stacked front/back SMD pad pair — zero-length ratsnest, e.g. d3b
-    0218 net 9) that empties the pool and start_route's pointer row goes
-    all-(-inf). Excluding only the started layer keeps the sibling-layer
-    candidate selectable.
-
-    Empty ``(0,) int64`` when masking is disabled, no active start point, or
-    nothing matches.
-    """
-    if not mask_start_point or start_route_xy is None:
-        return np.zeros((0,), dtype=np.int64)
-    sx, sy, sl = start_route_xy
-    idxs = [
-        i for i, (cx, cy, layer) in enumerate(cand_mm)
-        if abs(cx - sx) < 0.01 and abs(cy - sy) < 0.01 and layer == sl
-    ]
-    return np.asarray(idxs, dtype=np.int64)
-
-
-def net_valid_mask(
-    *,
-    sorted_net_codes: list[int],
-    last_obs: dict,
-    net_reselect: bool = False,
-) -> np.ndarray:
-    """``(M,) bool`` — True for nets that still have ratsnest points AND were
-    not consumed by a ``net_end`` this episode (``obs["closed_nets"]``), in
-    ``sorted_net_codes`` order — the valid ACT_NET_SELECT targets. By default
-    a net_end retires its net for the episode (give-up under permissive
-    masking rules); once every routable net is closed the env terminates.
-
-    ``net_reselect`` (the env knob, :attr:`PCBWorld.net_reselect`) drops the
-    closed condition: every net with ratsnest points is a target, closed or
-    not, and the env reopens a closed net when it is selected. Pass the value
-    of the env the observation came from — a mask that keeps closed nets for
-    an env that does not reopen them changes the episode semantics.
-
-    Invariant: a valid-net count of 0 occurs only in the state right before
-    termination, so all-False cannot appear at a net_select decision point on
-    the normal path. If all-False ever reaches the policy, net.py's
-    all-(-inf) pointer-row guard fails loudly with context.
-    """
-    M = len(sorted_net_codes)
-    if M == 0:
-        return np.zeros((0,), dtype=bool)
-    closed = set() if net_reselect else set(last_obs.get("closed_nets") or [])
-    mask = np.zeros((M,), dtype=bool)
-    if is_indexed(last_obs):
-        # Array path: "net has ratsnest points" == rat_count > 0 for the
-        # net's row (net_code is ascending — searchsorted lookup).
-        rg = last_obs["routing_geometry"]
-        codes = rg["net_code"]
-        rat_count = rg["rat_count"]
-        for i, nid in enumerate(sorted_net_codes):
-            p = int(np.searchsorted(codes, nid))
-            if (p < len(codes) and codes[p] == nid
-                    and rat_count[p] > 0 and nid not in closed):
-                mask[i] = True
-        return mask
-    routing_geom = last_obs.get("routing_geometry") or {}
-    for i, nid in enumerate(sorted_net_codes):
-        net_geom = routing_geom.get(f"net_{nid}")
-        if net_geom is not None and net_geom.get("points") and nid not in closed:
-            mask[i] = True
-    return mask
-
-
-def offlayer_pointer_indices(
-    *, obs: dict, cand_mm: list[tuple[float, float, int]],
-) -> np.ndarray:
-    """Cand-pool indices on a layer other than the router head's — blocked on
-    the make_line row only (rule and rationale:
-    ``KiCadRLWrapper.offlayer_pointer_indices``). Empty ``(0,) int64`` when not
-    routing or nothing is off-layer."""
-    rh = obs.get("router_head") or {}
-    if not rh.get("is_routing", False):
-        return np.zeros((0,), dtype=np.int64)
-    cur = int(rh.get("current_layer", -1))
-    if cur < 0 or not cand_mm:
-        return np.zeros((0,), dtype=np.int64)
-    return np.asarray(
-        [i for i, (_x, _y, lay) in enumerate(cand_mm) if int(lay) != cur], dtype=np.int64,
-    )
-
-
-def offboard_pointer_indices(
-    *,
-    offboard_mask: bool,
-    obs: dict,
-    cand_mm: list[tuple[float, float, int]],
-    cand_ctype: list[int],
-) -> np.ndarray:
-    """Cand-pool indices of DIRECTIONAL candidates outside the ``board_static``
-    bbox (edges inclusive) — blocked on every cand row (rule and rationale:
-    ``KiCadRLWrapper.offboard_pointer_indices``). Empty ``(0,) int64`` when
-    ``offboard_mask`` is off or nothing is off-board."""
-    if not offboard_mask or not cand_mm:
-        return np.zeros((0,), dtype=np.int64)
-    bs = obs["board_static"]
-    x0, y0 = float(bs["bbox_x"]), float(bs["bbox_y"])
-    x1, y1 = x0 + float(bs["bbox_w"]), y0 + float(bs["bbox_h"])
-    return np.asarray([
-        i for i, ((x, y, _l), ct) in enumerate(zip(cand_mm, cand_ctype))
-        if ct == CTYPE_DIRECTIONAL and not (x0 <= x <= x1 and y0 <= y <= y1)
-    ], dtype=np.int64)
-
-
-# Env-var hook for routing-mode ablation experiments. When set to "0", "1",
-# or "2" (mark_obstacles / shove / walkaround), every routing_mode the
-# policy emits is replaced by this value and the mode_mask exposes only the
-# forced mode as valid. Read at module import time so forkserver/spawn
-# workers inherit the override from the parent's environment. Unset = no
-# override (normal behavior).
-FORCE_ROUTING_MODE: int | None = (
-    int(os.environ["PCBWORLD_FORCE_ROUTING_MODE"])
-    if os.environ.get("PCBWORLD_FORCE_ROUTING_MODE", "").strip() != ""
-    else None
-)
-if FORCE_ROUTING_MODE is not None and FORCE_ROUTING_MODE not in (0, 1, 2):
-    raise ValueError(
-        f"PCBWORLD_FORCE_ROUTING_MODE must be 0/1/2, got {FORCE_ROUTING_MODE}",
-    )
-
-
-def mask_payload(
-    *,
-    action_mask: np.ndarray,
-    obs: dict,
-    cand_mm: list[tuple[float, float, int]],
-    cand_ctype: list[int],
-    sorted_net_codes: list[int],
-    start_route_xy: tuple[float, float, int] | None,
-    mask_start_point: bool,
-    offboard_mask: bool,
-    force_walkaround: bool,
-    net_reselect: bool,
-) -> dict[str, np.ndarray]:
-    """The six act-time mask arrays of one state — the payload
-    ``DistInputs.from_payloads`` stacks. One rule set for the wrapper
-    (``obs["_masks"]``) and the bare-PCBWorld inference paths (``rl_provider``,
-    ``rl_act_server``), so all of them mask the pool they are given as training
-    did (the pool itself is :func:`cand_raw_list_from_obs` of that obs)."""
-    return {
-        "action": np.asarray(action_mask, dtype=bool),
-        "pointer": start_route_pointer_indices(
-            mask_start_point=mask_start_point, start_route_xy=start_route_xy, cand_mm=cand_mm,
-        ),
-        "mode": mode_mask(force_routing_mode=FORCE_ROUTING_MODE, force_walkaround=force_walkaround),
-        "net_valid": net_valid_mask(
-            sorted_net_codes=sorted_net_codes, last_obs=obs, net_reselect=net_reselect,
-        ),
-        "offlayer": offlayer_pointer_indices(obs=obs, cand_mm=cand_mm),
-        "offboard": offboard_pointer_indices(
-            offboard_mask=offboard_mask, obs=obs, cand_mm=cand_mm, cand_ctype=cand_ctype,
-        ),
-    }
-
-
 def dist_from_obs(
     obs_list: list[dict],
     action_masks: list[np.ndarray],
@@ -610,23 +373,18 @@ def dist_from_obs(
     ``offboard_mask`` · ``force_walkaround`` · ``net_reselect``), stacked into
     one ``DistInputs``. Returns ``(dist, cand_mm per obs, sorted net codes per
     obs)`` — the pointer-decode tables of each row."""
-    payloads, pools, net_codes = [], [], []
-    for obs, am, xy in zip(obs_list, action_masks, start_route_xys, strict=True):
-        raw = cand_raw_list_from_obs(obs)
-        cand_mm = [(x, y, ly) for (x, y, ly, _ct) in raw]
-        codes = sorted_net_codes_from_obs(obs)
-        payloads.append(mask_payload(
-            action_mask=am, obs=obs, cand_mm=cand_mm,
-            cand_ctype=[ct for (_x, _y, _l, ct) in raw],
-            sorted_net_codes=codes, start_route_xy=xy,
+    # The obs already carries its pool ``_aug`` (or none, on bare PCBWorld): nothing to add.
+    acts = [
+        act_constraints(
+            obs, action_mask=am, cand_aug={}, start_route_xy=xy,
             mask_start_point=knobs.mask_start_point,
             offboard_mask=knobs.offboard_mask,
             force_walkaround=knobs.force_walkaround,
             net_reselect=knobs.net_reselect,
-        ))
-        pools.append(cand_mm)
-        net_codes.append(codes)
+        )
+        for obs, am, xy in zip(obs_list, action_masks, start_route_xys, strict=True)
+    ]
     return (
-        DistInputs.from_payloads(payloads, policy_net_select=policy_net_select),
-        pools, net_codes,
+        DistInputs.from_payloads([a.masks for a in acts], policy_net_select=policy_net_select),
+        [a.cand_mm for a in acts], [a.sorted_net_codes for a in acts],
     )

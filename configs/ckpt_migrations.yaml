@@ -26,6 +26,7 @@ ckpt_args:
     pad_graze_margin_mm:     {value: 0.0}   # no graze guard
     action_history_len:      {value: 1}   # single previous-action window
     net_reselect:            {value: false}   # net_end retired the net for the episode
+    action_target:           {value: candidates}   # a pointer policy only ever targets pool points
     drc_config_path:         {value: null}   # no YAML DRC fallback file
     # Engine knobs (KiCadEngine): the values every run used before the knob was recorded.
     engine_seed:             {value: 77}

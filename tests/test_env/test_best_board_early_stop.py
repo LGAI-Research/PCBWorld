@@ -67,7 +67,7 @@ def _run_script(output_best_board: bool):
     """
     env = PCBWorld(
         BOARD,
-        EnvConfig.with_overrides(max_steps=11, reward=RewardOverrides(wirelength_penalty=0.002)),
+        EnvConfig.with_overrides(action_target="free", max_steps=11, reward=RewardOverrides(wirelength_penalty=0.002)),
         output_best_board=output_best_board,
     )
     env.reset()
@@ -104,7 +104,7 @@ def test_ratsnest_patience_truncates_on_stall():
     patience = 2
     env = PCBWorld(
         BOARD,
-        EnvConfig.with_overrides(max_steps=60),
+        EnvConfig.with_overrides(action_target="free", max_steps=60),
         early_stop_ratsnest_patience=patience,
     )
     env.reset()
@@ -134,7 +134,7 @@ def test_reset_rearms_episode_tracking():
     """
     env = PCBWorld(
         BOARD,
-        EnvConfig.with_overrides(max_steps=60),
+        EnvConfig.with_overrides(action_target="free", max_steps=60),
         early_stop_ratsnest_patience=3,
         output_best_board=True,
     )
@@ -149,7 +149,7 @@ def test_reset_rearms_episode_tracking():
 def test_features_off_by_default():
     """Default construction leaves both features inert (no truncation from the
     guard, no best-board bookkeeping)."""
-    env = PCBWorld(BOARD, EnvConfig.with_overrides(max_steps=60))
+    env = PCBWorld(BOARD, EnvConfig.with_overrides(action_target="free", max_steps=60))
     env.reset()
     assert env._ratsnest_patience == 0
     assert env._output_best_board is False

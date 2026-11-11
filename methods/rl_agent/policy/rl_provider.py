@@ -170,9 +170,9 @@ class CkptMaskKnobs:
         # max_steps is not a mask knob; the env config is read for the knobs only.
         cfg = RLEnvConfig.from_checkpoint(ckpt_args, max_steps=1)
         return cls(
-            mask_start_point=cfg.mask_start_point,
-            offboard_mask=cfg.offboard_mask,
-            force_walkaround=cfg.force_walkaround,
+            mask_start_point=cfg.env.mask_start_point,
+            offboard_mask=cfg.env.offboard_mask,
+            force_walkaround=cfg.env.force_walkaround,
             net_reselect=cfg.env.net_reselect,
         )
 
@@ -285,9 +285,8 @@ class RLPolicyProvider:
                 f"observations length ({len(observations)})"
             )
 
-        from pcb_world.core.masking import (
-            ACT_START_ROUTE, ACT_MAKE_LINE, ACT_MAKE_VIA, ACT_FINISH,
-        )
+        from pcb_world.core.constraints import next_start_route_xy
+        from pcb_world.core.masking import ACT_IDLE, ACT_START_ROUTE
 
         responses: list[str] = []
         token_counts: list[tuple[int, int, int]] = []
@@ -301,7 +300,7 @@ class RLPolicyProvider:
             # Auto-clear stale start-route state when no net is active
             # (env.reset → current_net=-1, ACT_NET_END → current_net=-1).
             # NB: After ACT_FINISH ``is_routing=False`` but ``current_net``
-            # is still set — the wrapper keeps ``_start_route_xy`` in that
+            # is still set — the env keeps ``_start_route_xy`` in that
             # state (so the next ACT_START_ROUTE on the same net can't
             # re-pick the just-used pad), so we mirror that here.
             if rh.get("current_net", -1) == -1:
@@ -320,19 +319,18 @@ class RLPolicyProvider:
             actions, _logp = self._agent.act([obs], dist=dist)
             at, ptr, rm = (int(x) for x in actions[0].tolist())
 
-            # Update _last_start_route_xy after decoding the action — same
-            # transition rules as KiCadRLWrapper.step (lines 423-432).
-            # Done here, not inside the env.step caller, because the
-            # visualizer uses the bare PCBWorld.
-            if at == ACT_START_ROUTE:
-                if 0 <= ptr < len(cand_mm):
-                    self._last_start_route_xy = (
-                        float(cand_mm[ptr][0]), float(cand_mm[ptr][1]),
-                        int(cand_mm[ptr][2]),
-                    )
-                # else: rejected pointer — wrapper leaves state unchanged.
-            elif at not in (ACT_MAKE_LINE, ACT_MAKE_VIA, ACT_FINISH):
-                self._last_start_route_xy = None
+            # Update _last_start_route_xy after decoding the action — the env's
+            # rule (constraints.next_start_route_xy) on the action the wrapper
+            # would send: an out-of-range start_route pointer decodes to the
+            # idle fallback, which keeps the state.
+            if at == ACT_START_ROUTE and 0 <= ptr < len(cand_mm):
+                x, y, layer = cand_mm[ptr]
+                decoded = {"action_type": at, "x_mm": x, "y_mm": y, "layer": layer}
+            else:
+                decoded = {"action_type": ACT_IDLE if at == ACT_START_ROUTE else at}
+            self._last_start_route_xy = next_start_route_xy(
+                self._last_start_route_xy, decoded,
+            )
 
             # Summary for the <think> block — demo integer triple when
             # raw_tokens, else verbose human-readable form.

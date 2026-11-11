@@ -32,7 +32,6 @@ from gymnasium import spaces
 from pcb_world.core.env import PCBWorld
 from pcb_world.core.masking import (
     ACT_FINISH,
-    ACT_IDLE,
     ACT_MAKE_LINE,
     ACT_MAKE_VIA,
     ACT_NET_END,
@@ -41,19 +40,10 @@ from pcb_world.core.masking import (
     NUM_ACTIONS,
 )
 from pcb_world.core.indexed_obs import is_indexed as _is_indexed
-from pcb_world.core.action_schema import FALLBACK_ACTION, MODE_WALKAROUND
-from pcb_world.vec.candidate_pool import parse_directional_mode
+from pcb_world.core.action_schema import FALLBACK_ACTION
 from methods.rl_agent.wrappers import augmentation as _aug
 from methods.rl_agent.models.v1 import encoding as _ac
-from methods.rl_agent.models.v1 import encoding as _mask
-# State-encode pool builders live in state_converter; aliased to the original
-# private names so _refresh_cache and the backward-compat shim are unchanged.
-from methods.rl_agent.models.v1.encoding import (
-    FORCE_ROUTING_MODE as _FORCE_ROUTING_MODE,
-    sorted_net_codes_from_obs as _sorted_net_codes_from_obs,
-    cand_mm_list_from_obs as _cand_mm_list_from_obs,
-    cand_raw_list_from_obs as _cand_raw_list_from_obs,
-)
+from pcb_world.core import constraints as _constraints
 from methods.rl_agent.models.v1.spec import NUM_ROUTING_MODES
 
 # Fixed upper bound for the MultiDiscrete action_space pointer slot.
@@ -75,26 +65,10 @@ class KiCadRLWrapper(gym.Wrapper):
     Args:
         env: A :class:`PCBWorld` instance.
         seed: Unused here; kept for API symmetry with the other wrappers.
-        force_walkaround: If True, override the policy's ``routing_mode``
-            slot to 2 (Walkaround) for all make_line / make_via / finish
-            actions. Useful for fair comparison against the MLP trainer,
-            which hardcodes Walkaround in ``KiCadHLWrapper._build_full_action``.
-            Default False preserves the decoder's ability to select among
-            the 3 routing modes.
-        mask_start_point: If True (default), same-point masking: after
-            ``start_route(x, y, l)`` that exact candidate ``(x, y, l)``
-            is excluded from the pointer pool for every subsequent
-            action, until ``_start_route_xy`` is cleared or overwritten.
-            Layer-aware — the same xy on a *different* layer stays
-            selectable (e.g. a stacked front/back pad pair, as in d3b
-            board 0218 net 9). The indices of the masked cands are exposed via
-            :meth:`start_route_pointer_indices` so the policy can set
-            its pointer logit to ``-inf`` (hard-masking, SB3
-            MaskablePPO-equivalent).
-        offboard_mask: If True, DIRECTIONAL candidates whose ``(x, y)`` lies
-            outside the board bbox are hard-masked on every cand row (see
-            :meth:`offboard_pointer_indices`). Default False keeps existing
-            checkpoints byte-identical.
+        The action-constraint knobs (``force_walkaround`` · ``mask_start_point`` ·
+        ``directional_candidates`` · ``connectivity_filter`` · ``pad_graze_margin_mm`` ·
+        ``offboard_mask``) are the env's (:class:`~configs.loader.schema.EnvConfig`,
+        rules in :mod:`pcb_world.core.constraints`); the wrapper reads them off ``env``.
     Every obs returned by :meth:`reset` / :meth:`step` carries the
     act-time mask arrays under the ``"_masks"`` key (action / pointer /
     mode / net_valid / offlayer / offboard), computed in-worker right after
@@ -120,8 +94,6 @@ class KiCadRLWrapper(gym.Wrapper):
         env: PCBWorld,
         seed: int = 0,
         *,
-        force_walkaround: bool = False,
-        mask_start_point: bool = True,
         aug_bbox_shifted: bool = False,
         aug_flip: bool = False,
         aug_rotate: bool = False,
@@ -129,35 +101,11 @@ class KiCadRLWrapper(gym.Wrapper):
         aug_zoom: bool = False,
         slot_perm: bool = False,
         policy_net_select: bool = False,
-        directional_candidates: str | None = None,
-        connectivity_filter: bool = True,
-        pad_graze_margin_mm: float = 0.0,
-        offboard_mask: bool = False,
     ) -> None:
         super().__init__(env)
         self.env: PCBWorld = env
-        self._force_walkaround = force_walkaround
-        self._mask_start_point = mask_start_point
+        self._force_walkaround = env.force_walkaround
         self._policy_net_select = bool(policy_net_select)
-        # Connectivity filter over existing-copper candidates (pads / vias /
-        # track endpoints; see candidate_pool): drops what the route head is
-        # already connected to. Injected into obs["_aug"] so the tokenizer and
-        # pointer-decode paths apply the identical candidate set.
-        self._connectivity_filter = bool(connectivity_filter)
-        # Directional candidate mode: None = 8-dir/0.5mm, a preset name
-        # (e.g. "multi_resolution") = 8-dir × that distance ladder, "grid<N>"
-        # = 1-layer Grid mode. Parsed here only to fail fast on a typo —
-        # consumers read the raw string from obs["_aug"].
-        parse_directional_mode(directional_candidates)
-        self._directional_candidates: str | None = directional_candidates
-        # Pad-graze guard (mm, 0 = off): drops SYNTHESISED directional
-        # candidates that land in a same-net pad's graze annulus, where a via /
-        # track end would connect by a copper sliver instead of an anchor.
-        self._pad_graze_margin_mm = float(pad_graze_margin_mm or 0.0)
-        # Off-board pointer mask (off by default): act-time block of the
-        # DIRECTIONAL candidates whose (x, y) falls outside the board bbox —
-        # see offboard_pointer_indices().
-        self._offboard_mask = bool(offboard_mask)
 
         # RNG for external net selection (mirrors KiCadHLWrapper._rng).
         self._rng = np.random.default_rng(seed)
@@ -215,13 +163,12 @@ class KiCadRLWrapper(gym.Wrapper):
         self._last_obs: dict = {}
         self._sorted_net_codes: list[int] = []
         self._cand_mm: list[tuple[float, float, int]] = []
-        self._cand_ctype: list[int] = []   # candidate_pool CTYPE_* per _cand_mm entry
-        # Same-point masking state — the last start_route target as the full
-        # candidate key (x, y, LAYER; name kept for the snapshot/serve field).
-        # Set on ACT_START_ROUTE, kept through ACT_MAKE_LINE / ACT_MAKE_VIA /
-        # ACT_FINISH (so a failed finish doesn't allow restarting from the
-        # same pad next step), cleared on ACT_NET_END / ACT_NET_SELECT.
-        self._start_route_xy: tuple[float, float, int] | None = None
+
+    @property
+    def _start_route_xy(self) -> tuple[float, float, int] | None:
+        """The env's same-point state (the last start_route target as ``(x, y, layer)``;
+        rule: ``pcb_world.core.constraints.next_start_route_xy``)."""
+        return self.env._start_route_xy
 
     # ------------------------------------------------------------------
     # Augmentation
@@ -349,56 +296,17 @@ class KiCadRLWrapper(gym.Wrapper):
             nn_dy=self._aug_nn_dy,
             nn_zoom=self._aug_nn_zoom,
             slot_perm=self._slot_perm,
-            directional_candidates=self._directional_candidates,
-            connectivity_filter=self._connectivity_filter,
-            route_start_xy=self._start_route_xy,
-            cluster_keys=self._head_cluster_keys(raw_obs),
-            pad_graze_margin_mm=self._pad_graze_margin_mm,
+            # The candidate-pool keys are the env's (its ActConstraints): the tokenizer
+            # rebuilds the pool from them, the wrapper decodes with the env's pool.
+            **self.env.act_constraints().cand_aug,
         )
         return raw_obs
-
-    def _head_cluster_keys(self, raw_obs: dict) -> tuple | None:
-        """Engine-resolved connectivity cluster of the route head, as
-        ``(x, y, human_layer)`` keys — what ``collect_raw_candidates`` drops.
-        Returned SORTED and as plain tuples so the obs stays JSON-dumpable
-        (the e2e obs-equality guards serialize it) and byte-comparable.
-
-        The wrapper owns the engine handle, so the query lives here and the
-        candidate pool stays a pure obs function (the tokenizer runs in the
-        trainer process, where no engine exists). Queried fresh every
-        reset/step: the head's cluster GROWS as copper is committed, and each
-        make_line commits before returning, so this is always the post-action
-        truth. ``None`` when the filter is off, no route is active, the engine
-        finds no copper under the head (nothing to be connected to), or the
-        wrapped env exposes no engine at all (minimal test doubles — the filter
-        simply stays inactive there).
-        """
-        if not self._connectivity_filter:
-            return None
-        rh = raw_obs.get("router_head") or {}
-        if not rh.get("is_routing", False):
-            return None
-        xy = rh.get("current_xy")
-        layer = rh.get("current_layer", -1)
-        if xy is None or layer is None or int(layer) < 0:
-            return None
-        engine = getattr(self.env, "_engine", None)
-        query = getattr(engine, "get_connected_points", None)
-        if query is None:
-            return None
-        pts = query(float(xy[0]), float(xy[1]), int(layer))
-        if not pts:
-            return None
-        return tuple(sorted(
-            {(round(float(x), 3), round(float(y), 3), int(lay)) for x, y, lay in pts}
-        ))
 
     # ------------------------------------------------------------------
     # Gym interface
     # ------------------------------------------------------------------
     def reset(self, *, seed=None, options=None):
         raw_obs, info = self.env.reset(seed=seed, options=options)
-        self._start_route_xy = None
         self._resample_augmentation(raw_obs)
         # CRITICAL: aug must be attached BEFORE _refresh_cache so the
         # wrapper's `_cand_mm` is built with the same directional_candidates /
@@ -417,21 +325,7 @@ class KiCadRLWrapper(gym.Wrapper):
         # wrapper-level short-circuit. Same invalid-input path as the LLM branch.
         env_action = self._decode_action(at, ptr, mode)
 
-        # Track _start_route_xy for same-point masking, keyed on the DECODED
-        # action so it stays in sync with what the env actually executes. This
-        # MUST happen before env.step so the NEXT step's
-        # start_route_pointer_indices sees the just-committed start point.
-        # An OOR pointer decodes to idle, which (like the old short-circuit)
-        # leaves the start point unchanged.
-        decoded_at = env_action["action_type"]
-        if decoded_at == ACT_START_ROUTE:
-            self._start_route_xy = (
-                float(env_action["x_mm"]), float(env_action["y_mm"]),
-                int(env_action["layer"]),
-            )
-        elif decoded_at not in (ACT_MAKE_LINE, ACT_MAKE_VIA, ACT_FINISH, ACT_IDLE):
-            self._start_route_xy = None
-
+        # The env keeps the same-point state from the action it executes.
         raw_obs, reward, terminated, truncated, info = self.env.step(env_action)
         # See reset() for why aug must be attached before _refresh_cache.
         aug_obs = self._inject_aug(raw_obs)
@@ -452,21 +346,10 @@ class KiCadRLWrapper(gym.Wrapper):
         obs["_masks"] = self.mask_payload()
 
     def mask_payload(self) -> dict[str, np.ndarray]:
-        """The six act-time mask arrays of the current state
-        (``encoding.mask_payload``): ``action`` · ``pointer`` (same-point) ·
-        ``mode`` · ``net_valid`` · ``offlayer`` · ``offboard``."""
-        return _mask.mask_payload(
-            action_mask=self.action_masks(),
-            obs=self._last_obs,
-            cand_mm=self._cand_mm,
-            cand_ctype=self._cand_ctype,
-            sorted_net_codes=self._sorted_net_codes,
-            start_route_xy=self._start_route_xy,
-            mask_start_point=self._mask_start_point,
-            offboard_mask=self._offboard_mask,
-            force_walkaround=self._force_walkaround,
-            net_reselect=self.env.net_reselect,
-        )
+        """The six act-time mask arrays of the current state — the env's
+        (``PCBWorld.act_constraints``, ``constraints.mask_payload``): ``action`` ·
+        ``pointer`` (same-point) · ``mode`` · ``net_valid`` · ``offlayer`` · ``offboard``."""
+        return self.env.act_constraints().masks
 
     # ------------------------------------------------------------------
     # MCTS checkpoint (RL L2): wrapper-owned path-dependent state
@@ -478,13 +361,13 @@ class KiCadRLWrapper(gym.Wrapper):
         ``snapshot_memory``.
 
         The policy is Markov, so the only path-dependent state is the
-        auto-net-select RNG (used only when ``_policy_net_select=False``) and
-        ``_start_route_xy`` (same-point masking); augmentation params are
+        auto-net-select RNG (used only when ``_policy_net_select=False``); the
+        same-point state is the env's (its checkpoint); augmentation params are
         per-episode constants.
 
         ``obs_cache`` additionally carries the derived obs bundle
         (``_last_obs`` + the pointer-decode tables ``_sorted_net_codes`` /
-        ``_cand_mm`` / ``_cand_ctype``). It is pure recomputation — the board restores bit-exactly
+        ``_cand_mm``). It is pure recomputation — the board restores bit-exactly
         and the bundle is a function of the board — but a re-derivation costs a
         full ``PCBWorld._get_obs`` plus an engine connectivity query plus a
         candidate-pool rebuild, and MCTS restores once per simulation. Measured
@@ -494,18 +377,12 @@ class KiCadRLWrapper(gym.Wrapper):
         ``RLSearchEnv.release``. Pass ``obs_cache=False`` for a snapshot that
         re-derives on restore (the pre-260806 behaviour).
         """
-        snap = {
-            "rng_state": copy.deepcopy(self._rng.bit_generator.state),
-            "start_route_xy": self._start_route_xy,
-        }
+        snap = {"rng_state": copy.deepcopy(self._rng.bit_generator.state)}
         # _last_obs only exists once _refresh_cache has run (first reset)
         if obs_cache and getattr(self, "_last_obs", None) is not None:
-            # references, not copies: _refresh_cache rebinds these four
+            # references, not copies: _refresh_cache rebinds these three
             # together and never mutates them in place
-            snap["obs_cache"] = (
-                self._last_obs, self._sorted_net_codes, self._cand_mm,
-                self._cand_ctype,
-            )
+            snap["obs_cache"] = (self._last_obs, self._sorted_net_codes, self._cand_mm)
         return snap
 
     def restore_mcts_state(self, snap: dict) -> bool:
@@ -517,11 +394,10 @@ class KiCadRLWrapper(gym.Wrapper):
         caller must rebuild the obs/pointer tables itself.
         """
         self._rng.bit_generator.state = copy.deepcopy(snap["rng_state"])
-        self._start_route_xy = snap["start_route_xy"]
         cached = snap.get("obs_cache")
         if cached is None:
             return False
-        self._last_obs, self._sorted_net_codes, self._cand_mm, self._cand_ctype = cached
+        self._last_obs, self._sorted_net_codes, self._cand_mm = cached
         return True
 
     def action_masks(self) -> np.ndarray:
@@ -582,10 +458,7 @@ class KiCadRLWrapper(gym.Wrapper):
         Env-var override: ``PCBWORLD_FORCE_ROUTING_MODE`` (0/1/2) wins
         over both flags for ablation experiments.
         """
-        return _mask.mode_mask(
-            force_routing_mode=_FORCE_ROUTING_MODE,
-            force_walkaround=self._force_walkaround,
-        )
+        return self.env.act_constraints().masks["mode"]
 
     def offlayer_pointer_indices(self) -> np.ndarray:
         """Cand-pool indices on a layer OTHER than the router head's — not legal
@@ -616,7 +489,7 @@ class KiCadRLWrapper(gym.Wrapper):
         always has same-layer candidates. Empty ``(0,) int64`` when not routing or
         when nothing is off-layer.
         """
-        return _mask.offlayer_pointer_indices(obs=self._last_obs, cand_mm=self._cand_mm)
+        return self.env.act_constraints().masks["offlayer"]
 
     def via_blocked_pointer_indices(self) -> np.ndarray:
         """Cand-pool indices a ``make_via`` may not land on — the engine's own
@@ -681,10 +554,7 @@ class KiCadRLWrapper(gym.Wrapper):
         the row and trip net.py's ``act_dead_ptr_row`` guard — loudly, by
         design. Empty ``(0,) int64`` when off or nothing is off-board.
         """
-        return _mask.offboard_pointer_indices(
-            offboard_mask=self._offboard_mask, obs=self._last_obs,
-            cand_mm=self._cand_mm, cand_ctype=self._cand_ctype,
-        )
+        return self.env.act_constraints().masks["offboard"]
 
     def start_route_pointer_indices(self) -> np.ndarray:
         """Return cand-pool indices matching ``_start_route_xy`` —
@@ -714,11 +584,7 @@ class KiCadRLWrapper(gym.Wrapper):
         * No cand coordinate matches (rare: routing modes rebuilt the
           cand pool and the start pad is no longer directly listed).
         """
-        return _mask.start_route_pointer_indices(
-            mask_start_point=self._mask_start_point,
-            start_route_xy=self._start_route_xy,
-            cand_mm=self._cand_mm,
-        )
+        return self.env.act_constraints().masks["pointer"]
 
     # ------------------------------------------------------------------
     # Cache (pointer → mm/net_id mapping)
@@ -730,11 +596,15 @@ class KiCadRLWrapper(gym.Wrapper):
         ``_decode_action`` calls see the tokenizer-equivalent ordering
         for the *current* observation.
         """
+        if raw_obs is not self.env._last_obs:
+            raise ValueError("_refresh_cache: raw_obs is not the env's act-time obs — "
+                             "the pool is built from the env's state, not from raw_obs")
         self._last_obs = raw_obs
-        self._sorted_net_codes = _sorted_net_codes_from_obs(raw_obs)
-        raw_cands = _cand_raw_list_from_obs(raw_obs)
-        self._cand_mm = [(x, y, layer) for (x, y, layer, _c) in raw_cands]
-        self._cand_ctype = [ctype for (_x, _y, _l, ctype) in raw_cands]
+        # The env's pool and net order for this state (built once; the tokenizer
+        # rebuilds the same pool from the obs' ``_aug``).
+        act = self.env.act_constraints()
+        self._sorted_net_codes = list(act.sorted_net_codes)
+        self._cand_mm = act.cand_mm
         # Diagnostic guard (not a fallback): an empty candidate pool while a
         # net is selected cannot happen in normal operation — a selectable
         # net always has pads (confirmed by an exhaustive scan of 275 d3b
@@ -911,11 +781,7 @@ class KiCadRLWrapper(gym.Wrapper):
         Only meaningful when ``policy_net_select=True``; otherwise callers
         should ignore this and let the env do its own selection.
         """
-        return _mask.net_valid_mask(
-            sorted_net_codes=self._sorted_net_codes,
-            last_obs=self._last_obs,
-            net_reselect=self.env.net_reselect,
-        )
+        return self.env.act_constraints().masks["net_valid"]
 
     # ------------------------------------------------------------------
     # Pointer resolution
@@ -943,11 +809,8 @@ class KiCadRLWrapper(gym.Wrapper):
         ``force_walkaround=True`` returns Walkaround (2); otherwise delegates
         to :meth:`_clamp_mode` which sanitises the policy's output.
         """
-        if _FORCE_ROUTING_MODE is not None:
-            return _FORCE_ROUTING_MODE
-        if self._force_walkaround:
-            return MODE_WALKAROUND
-        return self._clamp_mode(routing_mode)
+        forced = _constraints.forced_routing_mode(self._force_walkaround)
+        return forced if forced is not None else self._clamp_mode(routing_mode)
 
     @staticmethod
     def _clamp_mode(routing_mode: int) -> int:

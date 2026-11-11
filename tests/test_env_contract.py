@@ -85,11 +85,12 @@ def test_pcbworld_and_engine_signatures_hold_no_schema_defaults():
 def _perturbed(name: str, default):
     """A valid non-default value for field ``name`` (types from the YAML default)."""
     special = {"corner_mode": 90, "outline_obs": "poly16", "obs_format": "indexed",
-               "wire_via_emission": "on_net_end", "directional_candidates": "grid16",
+               "wire_via_emission": "on_net_end", "directional_candidates": "grid10",
                "drc_config_path": "/tmp/drc.yaml", "keep_routing_fraction": [0.1, 0.2],
                "drc_promoted_codes": [12, 13],
                "rules_source": "board_or_yaml",
-               "masking_rule": "probe_masking", "reward_rule": "probe_reward"}
+               "masking_rule": "probe_masking", "reward_rule": "probe_reward",
+               "action_target": "free"}
     if name in special:
         assert special[name] != default, name
         return special[name]
@@ -339,6 +340,5 @@ def test_keep_routing_fraction_cli_default_comes_from_yaml():
     assert (p.get_default("keep_routing_fraction")
             == EnvConfig().keep_routing_fraction)
     # Same class of bypass: bespoke --pad-graze-margin-mm is locked to the schema value too
-    from configs.loader.schema import RLEnvConfig
     assert (p.get_default("pad_graze_margin_mm")
-            == RLEnvConfig().pad_graze_margin_mm)
+            == EnvConfig().pad_graze_margin_mm)

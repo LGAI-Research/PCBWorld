@@ -30,6 +30,10 @@ needs_engine = pytest.mark.skipif(not engine_available(), reason="kicad_rl_route
 #: sha256 of :func:`_rollout_digest` at 8503799da, before the constants were fields.
 BASE_DIGEST = "2e5ed5797c4cee5ca996a0b9ad8c6963c03e8d7738e860dd829ccc5341017897"
 
+#: The rollout picks pointers without the pointer masks, which the env did not enforce at
+#: 8503799da; with these the env applies none of them, as then (the digest's premise).
+_NO_POINTER_RULES = {"action_target": "free", "offboard_mask": False, "mask_start_point": False}
+
 
 def _rollout_digest(**env_overrides) -> tuple[str, list]:
     """A seeded 60-step random-valid rollout on the RL wrapper: per step the action, reward,
@@ -37,7 +41,7 @@ def _rollout_digest(**env_overrides) -> tuple[str, list]:
     from methods.rl_agent.wrappers.factory import make_decoder_env
     from pcb_world.core.action_schema import ACT_NET_SELECT
 
-    cfg = RLEnvConfig().with_flat({"max_steps": 50, **env_overrides})
+    cfg = RLEnvConfig().with_flat({"max_steps": 50, **_NO_POINTER_RULES, **env_overrides})
     env = make_decoder_env(OBSTACLE_BOARD, cfg, seed=123, policy_net_select=True)
     rng = np.random.default_rng(7)
     env.reset()
@@ -155,7 +159,7 @@ def _dangling_track_env(**env_overrides):
     from tests.test_env.test_reward_modes import _net_at
 
     env = PCBWorld(str(ROUTING_BOARD), EnvConfig.with_overrides(
-        max_steps=20, masking_rule="default_no_finish", **env_overrides))
+        max_steps=20, masking_rule="default_no_finish", action_target="free", **env_overrides))
     env.reset()
     env.step({"action_type": ACT_NET_SELECT, "net_id": _net_at(env, 10, 10)})
     env.step({"action_type": ACT_START_ROUTE, "x_mm": 10.0, "y_mm": 10.0, "layer": 1})

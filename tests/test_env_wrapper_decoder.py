@@ -58,10 +58,10 @@ from pcb_world.core.masking import (
 from tests.helpers.dist_inputs import permissive_dist
 from tests.helpers.reference_tokenizer import StateTokenizer
 from methods.rl_agent.policy.agent import gather_dist
-from methods.rl_agent.wrappers.adapter import (
-    KiCadRLWrapper,
-    _cand_mm_list_from_obs,
-    _sorted_net_codes_from_obs,
+from methods.rl_agent.wrappers.adapter import KiCadRLWrapper
+from pcb_world.core.constraints import (
+    cand_mm_list_from_obs as _cand_mm_list_from_obs,
+    sorted_net_codes_from_obs as _sorted_net_codes_from_obs,
 )
 
 
@@ -95,7 +95,7 @@ def real_obs_states() -> dict[str, dict]:
     _skip_if_no_env()
     from pcb_world.core.env import PCBWorld
 
-    env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
+    env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20, **_KNOBS))
     try:
         wrapper = KiCadRLWrapper(env)
 
@@ -126,7 +126,14 @@ def real_obs_states() -> dict[str, dict]:
 # ===================================================================
 # Stub env: captures the action dict the wrapper produces
 # ===================================================================
-class _StubEnv(gym.Env):
+from tests.helpers.constraint_env import ConstraintEnvMixin  # noqa: E402
+
+#: The action-constraint knobs these tests were written against (the wrapper's former own
+#: defaults: the 8-direction 0.5 mm ring, no off-board mask); env fields since they moved.
+_KNOBS = {"directional_candidates": None, "offboard_mask": False}
+
+
+class _StubEnv(ConstraintEnvMixin, gym.Env):
     """Records ``step`` calls so tests can assert on the decoded action.
 
     Subclasses :class:`gym.Env` so :class:`gym.Wrapper` can wrap it
@@ -139,7 +146,6 @@ class _StubEnv(gym.Env):
     """
 
     metadata = {"render_modes": []}
-    net_reselect = False   # PCBWorld property the wrapper's net_valid_mask reads
 
     def __init__(
         self, obs: dict, action_mask: np.ndarray | None = None,
@@ -171,10 +177,12 @@ class _StubEnv(gym.Env):
         self.action_space = spaces.Discrete(6)
 
     def reset(self, *, seed=None, options=None):
+        self._start_route_xy = None   # as PCBWorld.reset
         return self._obs, {}
 
     def step(self, action_dict):
         self.last_action = action_dict
+        self.track_start_point(action_dict)
         return self._obs, 0.0, False, False, {}
 
     def action_masks(self) -> np.ndarray:
@@ -514,7 +522,7 @@ class TestEndToEnd:
         _skip_if_no_env()
         from pcb_world.core.env import PCBWorld
 
-        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
+        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20, **_KNOBS))
         try:
             wrapper = KiCadRLWrapper(env)
             obs, info = wrapper.reset()
@@ -535,7 +543,7 @@ class TestEndToEnd:
         from pcb_world.core.env import PCBWorld
         from methods.rl_agent.models.v1.net import KiCadRLModel
 
-        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
+        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20, **_KNOBS))
         try:
             wrapper = KiCadRLWrapper(env)
             policy = KiCadRLModel(
@@ -576,7 +584,7 @@ class TestStartPointMaskingState:
     def test_reset_clears_state(self, real_obs_states):
         w = _wrap_stub(real_obs_states["net_selected"])
         # Simulate a prior episode's start_route leaving state behind.
-        w._start_route_xy = (1.23, 4.56, 1)
+        w.env._start_route_xy = (1.23, 4.56, 1)
         w.reset()
         assert w._start_route_xy is None
         assert w.start_route_pointer_indices().shape == (0,)
@@ -593,19 +601,19 @@ class TestStartPointMaskingState:
         # is non-empty. Manually prime _start_route_xy to something the
         # stub won't overwrite (stub doesn't advance env state).
         w = _wrap_stub(real_obs_states["routing"])
-        w._start_route_xy = (7.0, 8.0, 1)
+        w.env._start_route_xy = (7.0, 8.0, 1)
         w.step(np.array([ACT_MAKE_LINE, 0, 2], dtype=np.int64))
         assert w._start_route_xy == (7.0, 8.0, 1)
 
     def test_make_via_preserves_xy(self, real_obs_states):
         w = _wrap_stub(real_obs_states["routing"])
-        w._start_route_xy = (7.0, 8.0, 1)
+        w.env._start_route_xy = (7.0, 8.0, 1)
         w.step(np.array([ACT_MAKE_VIA, 0, 2], dtype=np.int64))
         assert w._start_route_xy == (7.0, 8.0, 1)
 
     def test_net_end_clears_xy(self, real_obs_states):
         w = _wrap_stub(real_obs_states["routing"])
-        w._start_route_xy = (7.0, 8.0, 1)
+        w.env._start_route_xy = (7.0, 8.0, 1)
         w.step(np.array([ACT_NET_END, -1, -1], dtype=np.int64))
         assert w._start_route_xy is None
 
@@ -613,13 +621,13 @@ class TestStartPointMaskingState:
         # finish() preserves _start_route_xy so the next start_route cannot
         # restart from the same pad after a finish (success OR fail).
         w = _wrap_stub(real_obs_states["routing"])
-        w._start_route_xy = (7.0, 8.0, 1)
+        w.env._start_route_xy = (7.0, 8.0, 1)
         w.step(np.array([ACT_FINISH, -1, 2], dtype=np.int64))
         assert w._start_route_xy == (7.0, 8.0, 1)
 
     def test_net_select_clears_xy(self, real_obs_states):
         w = _wrap_stub(real_obs_states["idle"])
-        w._start_route_xy = (7.0, 8.0, 1)
+        w.env._start_route_xy = (7.0, 8.0, 1)
         w.step(np.array([ACT_NET_SELECT, 0, -1], dtype=np.int64))
         assert w._start_route_xy is None
 
@@ -627,7 +635,7 @@ class TestStartPointMaskingState:
         """New start_route overwrites any prior value — prior start
         point is no longer masked, the new one is."""
         w = _wrap_stub(real_obs_states["net_selected"])
-        w._start_route_xy = (99.0, 99.0, 1)  # stale prior value
+        w.env._start_route_xy = (99.0, 99.0, 1)  # stale prior value
         expected_x, expected_y, expected_l = w.cand_mm_list[0]
         w.step(np.array([ACT_START_ROUTE, 0, -1], dtype=np.int64))
         assert w._start_route_xy == pytest.approx(
@@ -650,7 +658,7 @@ class TestStartRoutePointerIndices:
         # Pick any cand from the pool and claim it's the start point.
         # Only cands with the same (x, y) AND layer must come back.
         target_x, target_y, target_l = w.cand_mm_list[0]
-        w._start_route_xy = (target_x, target_y, target_l)
+        w.env._start_route_xy = (target_x, target_y, target_l)
         expected = [
             i for i, (cx, cy, cl) in enumerate(w.cand_mm_list)
             if abs(cx - target_x) < 0.01 and abs(cy - target_y) < 0.01
@@ -662,7 +670,7 @@ class TestStartRoutePointerIndices:
 
         if len(w.cand_mm_list) > 2:
             tx, ty, tl = w.cand_mm_list[2]
-            w._start_route_xy = (tx, ty, tl)
+            w.env._start_route_xy = (tx, ty, tl)
             expected2 = [
                 i for i, (cx, cy, cl) in enumerate(w.cand_mm_list)
                 if abs(cx - tx) < 0.01 and abs(cy - ty) < 0.01
@@ -672,17 +680,18 @@ class TestStartRoutePointerIndices:
 
     def test_returns_empty_when_xy_not_in_pool(self, real_obs_states):
         w = _wrap_stub(real_obs_states["routing"])
-        w._start_route_xy = (99999.0, 99999.0, 1)
+        w.env._start_route_xy = (99999.0, 99999.0, 1)
         assert w.start_route_pointer_indices().shape == (0,)
 
     def test_mask_start_point_false_disables(self, real_obs_states):
         """``mask_start_point=False`` turns the whole feature off —
         even with ``_start_route_xy`` set, the result is empty."""
         env = _StubEnv(real_obs_states["routing"])
-        w = KiCadRLWrapper(env, mask_start_point=False)
+        env.mask_start_point = False
+        w = KiCadRLWrapper(env)
         w.reset()
         target_x, target_y, target_l = w.cand_mm_list[0]
-        w._start_route_xy = (target_x, target_y, target_l)
+        w.env._start_route_xy = (target_x, target_y, target_l)
         assert w.start_route_pointer_indices().shape == (0,)
 
     def test_same_xy_other_layer_survives(self):
@@ -891,9 +900,9 @@ class TestDirectionalCandidatesRegression:
         _skip_if_no_env()
         from pcb_world.core.env import PCBWorld
 
-        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
+        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20, **{**_KNOBS, 'directional_candidates': "grid10"}))
         try:
-            wrapper = KiCadRLWrapper(env, directional_candidates="grid10")
+            wrapper = KiCadRLWrapper(env)
             wrapper.reset()
             wrapper.step(np.array([ACT_NET_SELECT, 0, -1], dtype=np.int64))
             obs, *_ = wrapper.step(
@@ -945,9 +954,9 @@ class TestDirectionalCandidatesRegression:
             collect_raw_candidates,
         )
 
-        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
+        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20, **{**_KNOBS, 'directional_candidates': "grid10"}))
         try:
-            wrapper = KiCadRLWrapper(env, directional_candidates="grid10")
+            wrapper = KiCadRLWrapper(env)
             wrapper.reset()
             wrapper.step(np.array([ACT_NET_SELECT, 0, -1], dtype=np.int64))
             obs, *_ = wrapper.step(
@@ -993,9 +1002,9 @@ class TestDirectionalCandidatesRegression:
         _skip_if_no_env()
         from pcb_world.core.env import PCBWorld
 
-        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
+        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20, **{**_KNOBS, 'directional_candidates': "multi_resolution"}))
         try:
-            wrapper = KiCadRLWrapper(env, directional_candidates="multi_resolution")
+            wrapper = KiCadRLWrapper(env)
             wrapper.reset()
             wrapper.step(np.array([ACT_NET_SELECT, 0, -1], dtype=np.int64))
             obs, *_ = wrapper.step(
@@ -1027,11 +1036,9 @@ class TestDirectionalCandidatesRegression:
         from pcb_world.vec.candidate_pool import CTYPE_DIRECTIONAL
 
         for knob in (True, False):
-            env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
+            env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20, directional_candidates="mres8", offboard_mask=knob))
             try:
-                wrapper = KiCadRLWrapper(
-                    env, directional_candidates="mres8", offboard_mask=knob,
-                )
+                wrapper = KiCadRLWrapper(env)
                 wrapper.reset()
                 wrapper.step(np.array([ACT_NET_SELECT, 0, -1], dtype=np.int64))
                 obs, *_ = wrapper.step(
@@ -1051,15 +1058,16 @@ class TestDirectionalCandidatesRegression:
                 if not knob:
                     assert got.shape == (0,)
                     continue
+                ctype = env.act_constraints().cand_ctype
                 want = {
-                    i for i, ((x, y, _l), ct) in enumerate(zip(pool, wrapper._cand_ctype))
+                    i for i, ((x, y, _l), ct) in enumerate(zip(pool, ctype))
                     if ct == CTYPE_DIRECTIONAL
                     and not (x0 <= x <= x1 and y0 <= y <= y1)
                 }
                 assert want, "fixture board should not contain a 50 mm rung"
                 assert set(got.tolist()) == want
                 # existing copper (pads / track ends) is never masked
-                assert all(wrapper._cand_ctype[i] == CTYPE_DIRECTIONAL for i in got)
+                assert all(ctype[i] == CTYPE_DIRECTIONAL for i in got)
             finally:
                 env.close()
 
@@ -1070,9 +1078,9 @@ class TestDirectionalCandidatesRegression:
         _skip_if_no_env()
         from pcb_world.core.env import PCBWorld
 
-        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
+        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20, **{**_KNOBS, 'directional_candidates': "grid10"}))
         try:
-            wrapper = KiCadRLWrapper(env, directional_candidates="grid10")
+            wrapper = KiCadRLWrapper(env)
             obs, _ = wrapper.reset()
             aug = obs.get("_aug")
             assert aug is not None, "obs missing _aug after reset"
@@ -1096,7 +1104,7 @@ class TestConnectivityFilterIntegration:
         _skip_if_no_env()
         from pcb_world.core.env import PCBWorld
 
-        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
+        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20, **_KNOBS))
         try:
             wrapper = KiCadRLWrapper(env)
             obs, _ = wrapper.reset()
@@ -1111,7 +1119,7 @@ class TestConnectivityFilterIntegration:
         _skip_if_no_env()
         from pcb_world.core.env import PCBWorld
 
-        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
+        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20, **_KNOBS))
         try:
             wrapper = KiCadRLWrapper(env)
             wrapper.reset()
@@ -1134,9 +1142,9 @@ class TestConnectivityFilterIntegration:
         _skip_if_no_env()
         from pcb_world.core.env import PCBWorld
 
-        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20))
+        env = PCBWorld(_FIXTURE_BOARD, EnvConfig.with_overrides(max_steps=20, **{**_KNOBS, 'connectivity_filter': False}))
         try:
-            wrapper = KiCadRLWrapper(env, connectivity_filter=False)
+            wrapper = KiCadRLWrapper(env)
             wrapper.reset()
             wrapper.step(np.array([ACT_NET_SELECT, 0, -1], dtype=np.int64))
             obs, *_ = wrapper.step(np.array([ACT_START_ROUTE, 0, -1], dtype=np.int64))

@@ -113,7 +113,7 @@ def env(tmp_path):
     from pcb_world.engine.drc_config import DEFAULT_DRC_CONFIG_PATH
     e = PCBWorld(
         str(board),
-        EnvConfig.with_overrides(reward_rule="drc_dense_promoted", rules_source="board_or_yaml", drc_config_path=str(DEFAULT_DRC_CONFIG_PATH)),
+        EnvConfig.with_overrides(action_target="free", mask_start_point=False, reward_rule="drc_dense_promoted", rules_source="board_or_yaml", drc_config_path=str(DEFAULT_DRC_CONFIG_PATH)),
     )
     e.reset(seed=0)
     yield e
@@ -130,7 +130,7 @@ def tht_env(tmp_path):
     board.write_text(THT_BOARD_TEMPLATE)
     e = PCBWorld(
         str(board),
-        EnvConfig.with_overrides(reward_rule="drc_dense_promoted", rules_source="board_or_yaml", drc_config_path=str(DEFAULT_DRC_CONFIG_PATH)),
+        EnvConfig.with_overrides(action_target="free", mask_start_point=False, reward_rule="drc_dense_promoted", rules_source="board_or_yaml", drc_config_path=str(DEFAULT_DRC_CONFIG_PATH)),
     )
     e.reset(seed=0)
     yield e

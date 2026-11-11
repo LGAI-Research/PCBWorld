@@ -206,6 +206,11 @@ class YamlRewardConfig:
         return self._step_penalty
 
     @property
+    def potential(self) -> Mapping[str, Any]:
+        """The :class:`PotentialReward` arguments this config sets (read-only)."""
+        return MappingProxyType(self._potential_cfg)
+
+    @property
     def invalid_action_penalty(self) -> float:
         return self._invalid_action_penalty
 

@@ -116,7 +116,7 @@ def test_mask_knobs_resolve_like_the_eval_env(generation, train_args, want):
     k = CkptMaskKnobs.from_checkpoint(ta)
     assert (k.mask_start_point, k.offboard_mask, k.force_walkaround, k.net_reselect) == want
     cfg = RLEnvConfig.from_checkpoint(ta, max_steps=8)
-    assert want == (cfg.mask_start_point, cfg.offboard_mask, cfg.force_walkaround,
+    assert want == (cfg.env.mask_start_point, cfg.env.offboard_mask, cfg.env.force_walkaround,
                     cfg.env.net_reselect)
 
 

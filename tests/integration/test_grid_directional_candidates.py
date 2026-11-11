@@ -3,7 +3,7 @@
 For each grid_size in {10, 30, 100, 300, 1000}:
   1. Generate (or reuse) a tiny 1-layer grid dataset via the synthetic
      generator (1 board, --num-layers 1).
-  2. Wrap PCBWorld with KiCadRLWrapper(directional_candidates="grid<N>").
+  2. Wrap PCBWorld with KiCadRLWrapper over an env with directional_candidates="grid<N>".
   3. Run uniform-random actions for several steps × episodes.
   4. Whenever the env is mid-route (is_routing == True), assert that:
        - the count of CTYPE_DIRECTIONAL candidates equals the configured
@@ -185,11 +185,10 @@ def run_one_grid(
     """
     env = PCBWorld(
         str(board_path),
-        EnvConfig.with_overrides(max_steps=n_steps, masking_rule="default", reward_rule="drc_only_dense", emit_drc_tokens=False),
+        EnvConfig.with_overrides(max_steps=n_steps, masking_rule="default", reward_rule="drc_only_dense", emit_drc_tokens=False,
+                                 directional_candidates=f"grid{grid_size}", offboard_mask=False),
     )
-    wrapper = KiCadRLWrapper(
-        env, seed=seed, directional_candidates=f"grid{grid_size}",
-    )
+    wrapper = KiCadRLWrapper(env, seed=seed)
     rng = np.random.default_rng(seed)
     n_routing = 0
     n_total_dir = 0

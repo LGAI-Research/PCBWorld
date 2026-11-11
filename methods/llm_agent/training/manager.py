@@ -44,10 +44,7 @@ from methods.llm_agent.wrappers.feedback import (
 )
 from methods.llm_agent.wrappers.memory import SimpleMemory
 from methods.llm_agent.wrappers.action_converter import extract_think_action
-from methods.llm_agent.wrappers.state_converter import (
-    format_valid_actions,
-    split_board_static,
-)
+from methods.llm_agent.wrappers.state_converter import split_board_static
 from methods.llm_agent.wrappers.prompts import get_pcbworld_prompts
 
 
@@ -79,6 +76,8 @@ class LLMRolloutBackend(Protocol):
 
     env_num: int
     prompt_version: str   # the prompt its text obs is rendered for
+    prompt_guidelines: bool   # whether that prompt carries the routing guidelines
+    env_config: Any   # the EnvConfig every worker env is built with (latest is built from it)
 
     def reset(self) -> Tuple[List[str], Any, List[Dict]]: ...
 
@@ -160,7 +159,8 @@ class KiCadLLMRolloutManager:
 
         # The env was built for this prompt (its obs elements, checked against its
         # masking rule) — one source for the version.
-        self._prompts = get_pcbworld_prompts(envs.prompt_version)
+        self._prompts = get_pcbworld_prompts(envs.prompt_version, env_config=envs.env_config,
+                                             guidelines=envs.prompt_guidelines)
 
         # Workers were just built with the scheduler's iter-0 board, so the
         # very first reset() must NOT advance the scheduler. Subsequent
@@ -595,7 +595,7 @@ class KiCadLLMRolloutManager:
         user_prompts: List[str] = []
         for i in range(len(text_obs)):
             valid_actions_str = (
-                format_valid_actions(action_masks[i]) if action_masks[i] else ""
+                self._prompts.format_valid_actions(action_masks[i]) if action_masks[i] else ""
             )
             _, dynamic_obs = split_board_static(text_obs[i], self._state_format)
 

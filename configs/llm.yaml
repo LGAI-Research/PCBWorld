@@ -8,15 +8,15 @@ llm:
   # The LLM eval program (methods/llm_agent/rollout/pcbworld.py + the interactive REPL) is a
   # separate program from RL train/eval: it evaluates an LLM, not an RL checkpoint.
   # Its env is the same EnvConfig as RL's: every configs/env.yaml value applies (observation,
-  # engine, reward overrides), except the few keys below that the LLM run sets itself.
+  # constraints, engine, reward). This section may set only the EnvConfig keys in
+  # configs.loader.schema.LLM_ENV_OVERRIDES (anything else raises at import); a run may set
+  # another value only for a key the LLM CLI exposes (eval/args.py ENV_ARG_KEYS, also via
+  # --recipe) and is reported as a deviation — the other shared keys follow configs/env.yaml.
   # eval/args.py reads these as its argparse defaults, and the flags are generated
   # from the schema via configs.loader.cli.add_dataclass_args (style=underscore).
 
   env:                      # eval/args.py add_env_args group
-    max_steps: 20           # EnvConfig field — LLM's own value
-    masking_rule: pcbworld_masking   # EnvConfig field — must grant the prompt's actions (checked at env build)
-    net_reselect: false     # EnvConfig field — the prompts describe a closed net as gone
-    reward_rule: grpo_final # EnvConfig field — LLM's own value
+    action_target: free     # EnvConfig (LLM_ENV_OVERRIDES): the prompts name free coordinates
     state_format: sexpr     # LLMEnvConfig (LLM-only): observation serialization (sexpr|xml)
 
   boards:                   # eval/args.py add_boards_args group
@@ -26,7 +26,8 @@ llm:
     boards_split: test
 
   prompt:                   # eval/args.py add_prompt_args group
-    prompt_version: latest  # latest | v1..v7 (frozen legacy prompts)
+    prompt_version: latest  # latest (generated from prompts/glossary.yaml) | v1..v8 (frozen legacy prompts)
+    prompt_guidelines: true # latest: add the strategy hints (Routing Guidelines); legacy versions always have them
 
   rollout:                  # eval/args.py add_rollout_args group
     env_num: 1
@@ -77,15 +78,15 @@ llm_train:
   # config keeps its omegaconf surface, this is only the defaults source — exactly
   # like rl_train: (configs/rl.yaml) for the RL trainer and llm: above for LLM eval.
 
-  # EnvConfig fields with an LLM-training value (every other env field = configs/env.yaml;
-  # env.pcbworld.<any EnvConfig field> overrides it)
-  max_steps: 200            # read from config.env.max_steps
-  masking_rule: pcbworld_masking
-  reward_rule: default
+  # EnvConfig: like llm.env, only the LLM_ENV_OVERRIDES keys (every other env field =
+  # configs/env.yaml, as RL training runs it); a verl run's env.max_steps /
+  # env.pcbworld.<EnvConfig field> overrides it and is reported as a deviation
+  action_target: free       # the prompts name free coordinates (pcb_world/core/constraints.py)
   state_format: sexpr       # LLM-only observation serialization (sexpr|xml)
 
   # prompt (consumed by methods/llm_agent/training/manager.py)
   prompt_version: latest
+  prompt_guidelines: true   # latest: add the strategy hints (Routing Guidelines)
   history_length: 0         # read from config.env.history_length
 
   # board scheduling — train (BoardScheduler / BoardSchedulerConfig)

@@ -99,7 +99,7 @@ def add_shared_args(
                    help="Path to .kicad_pcb file (ignored when "
                         "--boards-order=round_robin)")
     # Generated from RLEnvConfig (nests EnvConfig -> RewardOverrides). emit_drc_tokens
-    # / corner_mode (EnvConfig) and mask_start_point (RLEnvConfig) are cli_skip —
+    # / corner_mode (EnvConfig) and mask_start_point (EnvConfig) are cli_skip —
     # their bespoke inverted/sugar forms are added just below.
     add_dataclass_args(p, _RLENV, style="dash")
     # The no-flag env fields (engine knobs, promoted constants): the namespace still carries
@@ -126,7 +126,7 @@ def add_shared_args(
                         "--init-ckpt take it from the checkpoint (derived from "
                         "its weights); set it only for a fresh run.")
     p.add_argument("--connectivity-filter", dest="connectivity_filter",
-                   action="store_true", default=True,
+                   action="store_true", default=_RLENV.env.connectivity_filter,
                    help="Connectivity candidate filter (curbs redundant same-net "
                         "loops), ON by default. While routing, every existing-copper "
                         "candidate (pad / via / track endpoint) that the route head "
@@ -140,7 +140,7 @@ def add_shared_args(
                    help="Disable the connectivity filter (legacy: already-connected "
                         "copper stays a selectable target).")
     p.add_argument("--pad-graze-margin-mm", type=float,
-                   default=_RLENV.pad_graze_margin_mm,
+                   default=_RLENV.env.pad_graze_margin_mm,
                    help="Pad-graze guard width in mm (0 = off, the default). Drops "
                         "DIRECTIONAL candidates — the only synthesised coordinates in "
                         "the pool — that land in the annulus just outside a same-net "

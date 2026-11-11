@@ -28,7 +28,8 @@ jar=external/freerouting/freerouting-2.1.0.jar
 if [[ ! -f "$jar" ]]; then
   curl -L -o "$jar" "$FREEROUTING_URL"
 fi
-echo "$FREEROUTING_SHA256  $jar" | sha256sum -c -
+if command -v sha256sum >/dev/null; then sha256=(sha256sum); else sha256=(shasum -a 256); fi   # macOS has only shasum
+echo "$FREEROUTING_SHA256  $jar" | "${sha256[@]}" -c -
 
 # -- OrthoRoute (git submodule; the pinned commit does not rerun the KDD logs) --
 git submodule update --init external/OrthoRoute

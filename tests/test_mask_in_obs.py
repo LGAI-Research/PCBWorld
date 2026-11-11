@@ -349,12 +349,12 @@ class TestOffboardPointerMask:
 
     @staticmethod
     def _wrapper(obs, *, offboard_mask):
-        from types import SimpleNamespace
         from methods.rl_agent.wrappers.adapter import KiCadRLWrapper
+        from tests.helpers.constraint_env import ObsEnv
 
         w = object.__new__(KiCadRLWrapper)
-        w.env = SimpleNamespace(board_path="mock.kicad_pcb")
-        w._offboard_mask = offboard_mask
+        w.env = ObsEnv(obs, offboard_mask=offboard_mask,
+                       directional_candidates=obs["_aug"]["directional_candidates"])
         w._refresh_cache(obs)
         return w
 
@@ -382,7 +382,7 @@ class TestOffboardPointerMask:
         got = w.offboard_pointer_indices()
         assert got.dtype == np.int64
         want = {
-            i for i, ((x, y, _l), ct) in enumerate(zip(w.cand_mm_list, w._cand_ctype))
+            i for i, ((x, y, _l), ct) in enumerate(zip(w.cand_mm_list, w.env.act_constraints().cand_ctype))
             if ct == CTYPE_DIRECTIONAL and max(abs(x - hx), abs(y - hy)) >= 25.0
         }
         assert len(want) == 16                      # 8 dirs x {25, 50} mm
@@ -403,12 +403,12 @@ def test_refresh_cache_raises_on_empty_pool_with_net(tmp_path, monkeypatch):
     live in the wrapper. Just before raising, dump_context saves the full
     raw_obs to a .pt file and appends its path as dump=<path> to the message."""
     import pytest
-    from types import SimpleNamespace
     from methods.rl_agent.wrappers.adapter import KiCadRLWrapper
+    from tests.helpers.constraint_env import ObsEnv
 
     monkeypatch.setenv("KICAD_CRASH_LOG_DIR", str(tmp_path))
     w = object.__new__(KiCadRLWrapper)          # bypass __init__
-    w.env = SimpleNamespace(board_path="dummy.kicad_pcb")
+    w.env = ObsEnv(board_path="dummy.kicad_pcb")
     # net_5 exists but has 0 pads and no geometry/ratsnest -> empty pool
     obs = {
         "router_head": {"current_net": 5, "is_routing": False, "step": 7},
@@ -416,6 +416,7 @@ def test_refresh_cache_raises_on_empty_pool_with_net(tmp_path, monkeypatch):
         "routing_geometry": {},
         "closed_nets": [3],
     }
+    w.env.set_obs(obs)
     with pytest.raises(RuntimeError, match="empty candidate pool") as exc_info:
         w._refresh_cache(obs)
     dump_path = str(exc_info.value).rsplit("dump=", 1)[1]
@@ -429,6 +430,7 @@ def test_refresh_cache_raises_on_empty_pool_with_net(tmp_path, monkeypatch):
         "board_static": {"copper_layers": 2, "nets": {}},
         "routing_geometry": {},
     }
+    w.env.set_obs(obs_idle)
     w._refresh_cache(obs_idle)
     assert w.cand_mm_list == []
 

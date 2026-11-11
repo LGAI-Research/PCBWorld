@@ -97,7 +97,7 @@ def netfree_env(tmp_path):
 
     rule = tmp_path / "netfree_test.yaml"
     rule.write_text(NETFREE_RULE)
-    e = PCBWorld(BOARD_PATH, EnvConfig.with_overrides(max_steps=200, masking_rule=str(rule)))
+    e = PCBWorld(BOARD_PATH, EnvConfig.with_overrides(action_target="free", max_steps=200, masking_rule=str(rule)))
     yield e
     e.close()
 
@@ -107,7 +107,7 @@ def default_env():
     _skip_if_unavailable()
     from pcb_world.core.env import PCBWorld
 
-    e = PCBWorld(BOARD_PATH, EnvConfig.with_overrides(max_steps=50, masking_rule="default"))  # the paper rule (net_end masked until complete)
+    e = PCBWorld(BOARD_PATH, EnvConfig.with_overrides(action_target="free", max_steps=50, masking_rule="default"))  # the paper rule (net_end masked until complete)
     yield e
     e.close()
 
@@ -186,7 +186,7 @@ def reselect_env(tmp_path):
     rule.write_text(NETFREE_RULE)
     e = PCBWorld(
         BOARD_PATH,
-        EnvConfig.with_overrides(max_steps=200, masking_rule=str(rule), net_reselect=True),
+        EnvConfig.with_overrides(action_target="free", max_steps=200, masking_rule=str(rule), net_reselect=True),
     )
     yield e
     e.close()
@@ -315,7 +315,7 @@ class TestNetReselect:
 
         env = PCBWorld(
             board,
-            EnvConfig.with_overrides(max_steps=60, masking_rule="default", net_reselect=True),
+            EnvConfig.with_overrides(action_target="free", max_steps=60, masking_rule="default", net_reselect=True),
         )
         try:
             env.reset()

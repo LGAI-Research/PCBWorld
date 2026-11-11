@@ -53,8 +53,8 @@ def _render(version: str, fmt: str) -> str:
                       "===== user_history =====", user_his, ""])
 
 
-def test_legacy_versions_are_v1_to_v7():
-    assert LEGACY == [f"v{n}" for n in range(1, 8)]
+def test_legacy_versions_are_v1_to_v8():
+    assert LEGACY == [f"v{n}" for n in range(1, 9)]
 
 
 @pytest.mark.parametrize("fmt", sorted(FORMATS))
@@ -120,56 +120,65 @@ def test_every_live_obs_key_has_a_render_or_drop_decision():
     assert _uncovered(obs) == set()
 
 
-def test_latest_renders_per_net_constraints_and_legacy_does_not():
+def _latest(**env):
+    from configs.loader.schema import LLMConfig
+
+    return get_pcbworld_prompts(LATEST, env_config=LLMConfig().env.with_flat(env))
+
+
+def test_v8_renders_per_net_constraints_and_v7_does_not():
     for fmt, split in FORMATS.items():
-        latest_static, _ = split(OBS, LATEST, net_constraint_obs=True)
-        legacy_static, _ = split(OBS, "v7", net_constraint_obs=True)
+        v8_static, _ = split(OBS, "v8", net_constraint_obs=True)
+        v7_static, _ = split(OBS, "v7", net_constraint_obs=True)
         tag = "(constraints " if fmt == "sexpr" else "<constraints "
-        assert tag in latest_static and tag not in legacy_static
-        assert "0.250" in latest_static           # net 2's clearance
-        # latest = the legacy text plus the constraint lines only
-        stripped = "\n".join(ln for ln in latest_static.splitlines() if tag not in ln)
-        assert stripped == legacy_static, fmt
+        assert tag in v8_static and tag not in v7_static
+        assert "0.250" in v8_static           # net 2's clearance
+        # v8 = the v7 text plus the constraint lines only
+        stripped = "\n".join(ln for ln in v8_static.splitlines() if tag not in ln)
+        assert stripped == v7_static, fmt
 
 
-def test_latest_on_an_env_without_net_constraint_obs_renders_no_constraints():
-    """With the knob off the env emits no per-net ``constraints``: ``latest`` renders
-    the rest of its elements (it used to index the missing key)."""
+def test_an_env_without_net_constraint_obs_renders_no_constraints():
+    """With the knob off the env emits no per-net ``constraints``: the versions that render
+    them render the rest of their elements (they used to index the missing key)."""
     obs = copy.deepcopy(OBS)
     for net in obs["board_static"]["nets"].values():
         del net["constraints"]
-    for fmt, split in FORMATS.items():
+    for version, fmt in ((LATEST, "sexpr"), ("v8", "sexpr"), ("v8", "xml")):
+        split = FORMATS[fmt]
         tag = "(constraints " if fmt == "sexpr" else "<constraints "
-        off, _ = split(obs, LATEST, net_constraint_obs=False)
-        on, _ = split(OBS, LATEST, net_constraint_obs=True)
-        assert off == "\n".join(ln for ln in on.splitlines() if tag not in ln), fmt
-        assert sc.serialize_obs(obs, fmt, LATEST, net_constraint_obs=False).startswith(off)
+        off, _ = split(obs, version, net_constraint_obs=False)
+        on, _ = split(OBS, version, net_constraint_obs=True)
+        assert off == "\n".join(ln for ln in on.splitlines() if tag not in ln), (version, fmt)
+        assert sc.serialize_obs(obs, fmt, version, net_constraint_obs=False).startswith(off)
 
 
-def _tags(text: str, fmt: str) -> set[str]:
-    if fmt == "sexpr":
-        return set(re.findall(r"\(([a-z_]+)", text))
-    return set(re.findall(r"<([a-z_]+)", text)) | set(re.findall(r"\b([a-z_]+)=", text))
+def _tags(text: str) -> set[str]:
+    return set(re.findall(r"\(([a-z_]+)", text))
 
 
-@pytest.mark.parametrize("fmt", sorted(FORMATS))
-def test_latest_description_mentions_every_tag_it_renders(fmt):
-    desc = get_pcbworld_prompts(LATEST).get_state_format_desc(fmt)
-    missing = {t for t in _tags(sc.serialize_obs(OBS, fmt, LATEST, net_constraint_obs=True), fmt)
+def test_latest_description_mentions_every_tag_it_renders():
+    desc = _latest().get_state_format_desc("sexpr")
+    missing = {t for t in _tags(sc.serialize_obs(OBS, "sexpr", LATEST, net_constraint_obs=True))
                if not re.search(rf"(?<![a-z_]){t}(?![a-z_])", desc)}
     assert missing == set()
 
 
 def test_latest_tells_net_end_may_release_an_unfinished_net():
-    b = get_pcbworld_prompts(LATEST)
-    assert "`net_end` may also release a net that is not finished" in b.PCBWORLD_SYSTEM_PROMPT
+    b = _latest()
+    actions = b.format_valid_actions([False, False, True, False, False, False])
+    assert "Allowed whenever no route is in progress, but final" in actions
     assert "finish" not in re.sub(r"finished", "", b.PCBWORLD_SYSTEM_PROMPT)
+    assert "can be selected again" in _latest(net_reselect=True).format_valid_actions(
+        [False, False, True, False, False, False])
 
 
 def test_obs_elements_reads_the_version_case_insensitively_like_the_prompts():
     """``get_pcbworld_prompts`` accepts ``LATEST``; the converter must render the same
     elements for it instead of rejecting the version."""
-    assert get_pcbworld_prompts("LATEST").version == LATEST
+    from configs.loader.schema import LLMConfig
+
+    assert get_pcbworld_prompts("LATEST", env_config=LLMConfig().env).version == LATEST
     assert sc.obs_elements("LATEST") == sc.obs_elements(LATEST)
     assert sc.serialize_obs(OBS, "sexpr", "Latest", net_constraint_obs=True) == \
         sc.serialize_obs(OBS, "sexpr", LATEST, net_constraint_obs=True)
@@ -180,18 +189,20 @@ def test_obs_elements_rejects_an_unknown_version():
         sc.obs_elements("v99")
 
 
-def test_content_hash_changes_with_a_template_or_the_element_set():
-    latest = get_pcbworld_prompts(LATEST)
-    assert latest.content_hash == get_pcbworld_prompts(LATEST).content_hash
+def test_content_hash_changes_with_a_template_the_element_set_or_the_env():
+    latest = _latest()
+    assert latest.content_hash == _latest().content_hash
     edited = dataclasses.replace(latest, PCBWORLD_SYSTEM_PROMPT=latest.PCBWORLD_SYSTEM_PROMPT + " ")
     assert edited.content_hash != latest.content_hash
     # Same templates, different rendered element set (legacy vs latest) -> different hash.
     as_legacy = dataclasses.replace(latest, version="v7")
     assert as_legacy.content_hash != latest.content_hash
+    assert _latest(net_reselect=True).content_hash != latest.content_hash
 
 
 @pytest.mark.parametrize("version,rule", [
-    (LATEST, "pcbworld_masking"), ("v7", "default_no_finish"), ("v5", "strict"),
+    (LATEST, "pcbworld_masking"), (LATEST, "default"), (LATEST, "strict"),
+    ("v8", "pcbworld_masking"), ("v7", "default_no_finish"), ("v5", "strict"),
     ("v1", "relaxed"), ("v4", "default"),
 ])
 def test_matching_prompt_and_masking_pass(version, rule):
@@ -199,7 +210,7 @@ def test_matching_prompt_and_masking_pass(version, rule):
 
 
 @pytest.mark.parametrize("version,rule", [
-    (LATEST, "default"), (LATEST, "strict"), ("v5", "pcbworld_masking"), ("v7", "relaxed"),
+    ("v8", "default"), ("v8", "strict"), ("v5", "pcbworld_masking"), ("v7", "relaxed"),
     ("v5", "default_no_via"),
 ])
 def test_mismatched_prompt_and_masking_raise(version, rule):

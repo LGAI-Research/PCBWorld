@@ -1,8 +1,8 @@
 """RL-wrapper MCTS state snapshot/restore (RL L2).
 
 The RL policy is Markov, so the wrapper's only path-dependent per-env state is
-the auto-net-select RNG and ``_start_route_xy`` (same-point masking). These
-tests exercise that snapshot/restore pair in isolation (bypassing the heavy
+the auto-net-select RNG (the same-point state is the env's, in its checkpoint).
+These tests exercise that snapshot/restore pair in isolation (bypassing the heavy
 wrapper __init__).
 """
 
@@ -16,23 +16,19 @@ from methods.rl_agent.wrappers.adapter import KiCadRLWrapper
 def wrap():
     w = KiCadRLWrapper.__new__(KiCadRLWrapper)
     w._rng = np.random.default_rng(123)
-    w._start_route_xy = None
     return w
 
 
-def test_rng_stream_and_start_reproduced(wrap):
-    wrap._start_route_xy = (3.0, 4.0, 1)
+def test_rng_stream_reproduced(wrap):
     wrap._rng.random()
     wrap._rng.random()
     snap = wrap.snapshot_mcts_state()
     expected = [wrap._rng.random() for _ in range(5)]
 
-    # explore a branch: advance the RNG further and move the start point
+    # explore a branch: advance the RNG further
     [wrap._rng.random() for _ in range(10)]
-    wrap._start_route_xy = (7.0, 7.0, 2)
 
     wrap.restore_mcts_state(snap)
-    assert wrap._start_route_xy == (3.0, 4.0, 1)
     # RNG stream after restore reproduces the post-snapshot stream exactly
     assert [wrap._rng.random() for _ in range(5)] == expected
 
@@ -59,7 +55,6 @@ def _with_obs(wrap, tag):
     wrap._last_obs = {"router_head": {"tag": tag}}
     wrap._sorted_net_codes = [1, 2, tag]
     wrap._cand_mm = [(float(tag), 0.0, 1)]
-    wrap._cand_ctype = [tag % 3]              # CTYPE_* per _cand_mm entry
     return wrap
 
 
@@ -76,7 +71,6 @@ def test_obs_bundle_round_trips(wrap):
     assert wrap._last_obs == {"router_head": {"tag": 7}}
     assert wrap._sorted_net_codes == [1, 2, 7]
     assert wrap._cand_mm == [(7.0, 0.0, 1)]   # pointer decode sees node 7 again
-    assert wrap._cand_ctype == [7 % 3]        # ctype table travels with it
 
 
 def test_obs_bundle_opt_out_and_absent(wrap):
@@ -89,3 +83,16 @@ def test_obs_bundle_opt_out_and_absent(wrap):
 
     del wrap._last_obs                        # never refreshed (pre-first-reset)
     assert "obs_cache" not in wrap.snapshot_mcts_state()
+
+
+def test_refresh_cache_refuses_an_obs_that_is_not_the_envs():
+    """The pool comes from the env's act-time state, so a different obs is a loud error."""
+    from tests._mock_obs import make_mock_obs
+    from tests.helpers.constraint_env import ObsEnv
+
+    w = KiCadRLWrapper.__new__(KiCadRLWrapper)
+    obs = make_mock_obs(n_nets=1, pads_per_net=2, n_ratsnest_per_net=1)
+    w.env = ObsEnv(obs)
+    w._refresh_cache(obs)
+    with pytest.raises(ValueError, match="not the env's"):
+        w._refresh_cache(dict(obs))

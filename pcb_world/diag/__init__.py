@@ -16,7 +16,9 @@ Artifact pairing contract — one stem per process lifetime,
   <stem>_stderr.log     engine stderr (wx asserts etc.)            [stderr_tail]
   <ts>_<tag>_pid<pid>.pt/.json   guard context dumps               [dump]
   <ts>_<role>_postmortem.json    death cause, written by the PARENT [vec backends]
-A clean exit deletes its own files: anything left in the dir means an incident.
+A clean exit deletes its own files: anything left in the dir means an incident,
+except what is kept by design — the compiled crashtrace helpers, slow-episode
+step copies and stderr tail snapshots.
 """
 from __future__ import annotations
 
@@ -50,8 +52,17 @@ def artifact_stem(role: str, *, with_host: bool = True) -> str:
 
 
 def read_rss_mb(pid: int | None = None) -> float | None:
-    """Resident set size in MB via /proc (Linux; ~µs) — this process, or
-    ``pid``'s. None elsewhere, or once that process is gone."""
+    """Resident set size in MB — this process, or ``pid``'s; None once that
+    process is gone. /proc on Linux (~µs), psutil where there is no /proc (macOS)."""
+    if not _HAS_PROC:
+        import psutil
+        global _PSUTIL_SELF
+        if pid is None and _PSUTIL_SELF is None:
+            _PSUTIL_SELF = psutil.Process()
+        try:   # AccessDenied propagates: a budget that cannot read RSS must not go quiet
+            return (_PSUTIL_SELF if pid is None else psutil.Process(pid)).memory_info().rss / 2**20
+        except psutil.NoSuchProcess:     # includes ZombieProcess
+            return None
     path = "/proc/self/statm" if pid is None else f"/proc/{int(pid)}/statm"
     try:
         with open(path) as f:
@@ -60,6 +71,8 @@ def read_rss_mb(pid: int | None = None) -> float | None:
         return None
 
 
+_HAS_PROC = os.path.exists("/proc/self/statm")
+_PSUTIL_SELF = None   # psutil.Process() of this process, built on first use (no /proc only)
 _PAGE_MB = os.sysconf("SC_PAGE_SIZE") / 2**20 if hasattr(os, "sysconf") else 0.0
 
 from pcb_world.diag.crash_handler import install_crash_handler, remove_log_if_empty  # noqa: E402

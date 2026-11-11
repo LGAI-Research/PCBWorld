@@ -82,6 +82,7 @@
  "expected": {
   "init_ckpt": {
    "sources": {
+    "action_target": "legacy",
     "directional_candidates": "renamed",
     "legacy_action_history": "derived",
     "legacy_edge_encoding": "derived",
@@ -97,6 +98,7 @@
     "time_feature_cap": "legacy"
    },
    "values": {
+    "action_target": "candidates",
     "coord_encoding": "fourier",
     "d_ff": 512,
     "d_model": 128,
@@ -126,6 +128,7 @@
   "load": {
    "sources": {
     "action_history_len": "derived",
+    "action_target": "legacy",
     "connectivity_filter": "legacy",
     "directional_candidates": "renamed",
     "drc_config_path": "legacy",
@@ -159,6 +162,7 @@
    },
    "values": {
     "action_history_len": 1,
+    "action_target": "candidates",
     "connectivity_filter": false,
     "coord_encoding": "fourier",
     "corner_mode": 90,
@@ -225,6 +229,7 @@
   "resume": {
    "sources": {
     "action_history_len": "derived",
+    "action_target": "legacy",
     "board": "cli",
     "connectivity_filter": "legacy",
     "directional_candidates": "renamed",
@@ -258,6 +263,7 @@
    },
    "values": {
     "action_history_len": 1,
+    "action_target": "candidates",
     "aug_bbox_shifted": false,
     "aug_flip": false,
     "aug_rotate": false,

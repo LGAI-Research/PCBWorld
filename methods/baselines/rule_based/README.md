@@ -30,7 +30,7 @@ tree, fetched pinned and sha256-verified by
 Everything here runs in the single **`pcbworld`** conda env
 ([environment.yml](../../../environment.yml) carries openjdk 21 for Freerouting — the
 runner stops before the first board if `java` is missing, older or cannot run — and rust for KRT;
-cupy/scipy/shapely come from the pip lock).
+scipy/shapely come from the pip lock; cupy only on Linux).
 
 ```bash
 conda activate pcbworld

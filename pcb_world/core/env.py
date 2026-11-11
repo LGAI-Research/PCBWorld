@@ -74,9 +74,14 @@ from pcb_world.core.indexed_obs import (
     static_tables_from_dict,
 )
 from pcb_world.core.reward import PotentialReward, RewardState
+from pcb_world.core import constraints as _constraints
+from pcb_world.vec.candidate_pool import parse_directional_mode
 from pcb_world.core.reward_config import effective_reward_config
 
 logger = logging.getLogger(__name__)
+
+# The obs carries at most this many DRC violations (most severe, nearest to the head first).
+DRC_OBS_K = 32
 
 # Routing corner angle (degrees) -> PNS corner code: MITERED_45 / MITERED_90.
 _CORNER_CODES = {45: 0, 90: 2}
@@ -199,6 +204,11 @@ class Checkpoint:
     # Copied on capture AND restore so a restored env never aliases the node's set.
     episode_closed_nets: set = field(default_factory=set)
     net_reopen_count: int = 0      # net_reselect diagnostic (info["net_reopens"])
+    # Act-time constraint state: the same-point start, the obs this node was reached with
+    # and its ActConstraints (references — both are rebuilt, never mutated in place).
+    start_route_xy: tuple | None = None
+    last_obs: Any = None
+    act: Any = None
     reward_prev_state: Any = None
     wire_via_ref_state: Any = None
     # RAII backstop: weakref to the owning engine so a dropped / leaked
@@ -323,6 +333,24 @@ class PCBWorld(gym.Env):
         # Off (default) keeps net_end a one-way retire, as every pre-knob
         # checkpoint was trained.
         self._net_reselect = bool(cfg.net_reselect)
+        # Action constraints (pcb_world.core.constraints): the candidate pool and the
+        # act-time masks every agent of this env meets.
+        parse_directional_mode(cfg.directional_candidates)   # fail fast on a typo
+        self.directional_candidates: str | None = cfg.directional_candidates
+        self.connectivity_filter = bool(cfg.connectivity_filter)
+        self.pad_graze_margin_mm = float(cfg.pad_graze_margin_mm or 0.0)
+        self.offboard_mask = bool(cfg.offboard_mask)
+        self.mask_start_point = bool(cfg.mask_start_point)
+        self.force_walkaround = bool(cfg.force_walkaround)
+        if cfg.action_target not in _constraints.ACTION_TARGETS:
+            raise ValueError(f"action_target must be one of {_constraints.ACTION_TARGETS}, "
+                             f"got {cfg.action_target!r}")
+        self.action_target: str = cfg.action_target
+        # Act-time constraint state: the current start_route point (same-point rule),
+        # the last observation built, and its ActConstraints (memo, built on demand).
+        self._start_route_xy: tuple[float, float, int] | None = None
+        self._last_obs: dict | None = None
+        self._act: _constraints.ActConstraints | None = None
         # Net-subset (partial routing): restrict the problem to these net codes.
         # None = route every net (legacy). When set, only these nets appear as
         # routable targets (board_static.nets), carry ratsnest/routing_geometry,
@@ -749,6 +777,8 @@ class PCBWorld(gym.Env):
         self._wire_via_ref_state = None
         self._crash_logger.on_reset(self.board_path)
         self._action_history.clear()
+        self._start_route_xy = None
+        self._last_obs, self._act = None, None  # the previous episode's act-time state
         # Seed the "already complete" nets — judged from the CURRENT ratsnest
         # (after this reset's strip / keep + build_connectivity) and recomputed
         # every reset (NOT cached). A routable net with no ratsnest (already
@@ -1047,6 +1077,20 @@ class PCBWorld(gym.Env):
         else:
             action_class = "valid"  # refined below after dispatch
 
+        # The action constraints (pcb_world.core.constraints), the same for every caller:
+        # the forced routing mode, then the target rules against the act-time state.
+        constraint = None
+        if action_class == "valid":
+            forced = _constraints.forced_routing_mode(self.force_walkaround)
+            if forced is not None and "routing_mode" in action:
+                action = {**action, "routing_mode": forced}
+            constraint = self._constraint_violation(action)
+            if constraint is not None:
+                action_class = "mask_reject"
+                logger.warning("Action %d breaks the %s constraint", action_type, constraint)
+        if action_class == "valid":  # a refused action is not executed: the anchor stays
+            self._start_route_xy = _constraints.next_start_route_xy(self._start_route_xy, action)
+
         # ------------------------------------------------------------------
         # 2. Execute (only valid actions touch the engine)
         # ------------------------------------------------------------------
@@ -1288,6 +1332,8 @@ class PCBWorld(gym.Env):
         )
         obs = self._get_obs()
         info = self._get_info()
+        if constraint is not None:
+            info["constraint"] = constraint
         info["action_type"] = action_type
         info["action_success"] = success
         info["action_class"] = action_class
@@ -1481,6 +1527,13 @@ class PCBWorld(gym.Env):
         return rules.default_netclass
 
     def _get_obs(self) -> dict:
+        """Build the observation and make it the act-time state: the next
+        :meth:`act_constraints` / :meth:`step` check is against it."""
+        obs = self._build_obs()
+        self._last_obs, self._act = obs, None
+        return obs
+
+    def _build_obs(self) -> dict:
         """Build JSON observation.
 
         Also updates ``_obs_cache.net_geometry`` (canonical IR)
@@ -1500,7 +1553,7 @@ class PCBWorld(gym.Env):
             # reward share exactly the same view of "which violations count".
             drc_violations = self._engine.drc_helper.get_sorted(
                 head_xy=head_xy,
-                k=32,
+                k=DRC_OBS_K,
                 severity_mode=self._potential_reward.drc_severity_mode,
             )
         else:
@@ -1533,6 +1586,75 @@ class PCBWorld(gym.Env):
             drc_violations=drc_violations,
             action_history=list(self._action_history),
             closed_nets=sorted(self._episode_closed_nets),
+        )
+
+    # ------------------------------------------------------------------
+    # Action constraints (pcb_world.core.constraints)
+    # ------------------------------------------------------------------
+    def act_constraints(self) -> "_constraints.ActConstraints":
+        """The candidate pool and the act-time masks of the current state (the last
+        observation built), built once per state. An RL wrapper decodes pointers
+        with it and :meth:`step` checks every incoming action against it."""
+        if self._act is None:
+            obs = self._act_time_obs()
+            self._act = _constraints.act_constraints(
+                obs,
+                action_mask=self._get_action_mask(),
+                cand_aug={
+                    "directional_candidates": self.directional_candidates,
+                    "connectivity_filter": self.connectivity_filter,
+                    "route_start_xy": self._start_route_xy,
+                    "cluster_keys": self._head_cluster_keys(obs),
+                    "pad_graze_margin_mm": self.pad_graze_margin_mm,
+                },
+                start_route_xy=self._start_route_xy,
+                mask_start_point=self.mask_start_point,
+                offboard_mask=self.offboard_mask,
+                force_walkaround=self.force_walkaround,
+                net_reselect=self._net_reselect,
+            )
+        return self._act
+
+    def _head_cluster_keys(self, obs: dict) -> tuple | None:
+        """Engine-resolved connectivity cluster of the route head, as sorted
+        ``(x, y, human_layer)`` keys — what ``collect_raw_candidates`` drops under
+        ``connectivity_filter``. Plain sorted tuples keep the obs JSON-dumpable and
+        byte-comparable. ``None`` when the filter is off, no route is active, or the
+        engine finds no copper under the head."""
+        if not self.connectivity_filter:
+            return None
+        rh = obs.get("router_head") or {}
+        if not rh.get("is_routing", False):
+            return None
+        xy, layer = rh.get("current_xy"), rh.get("current_layer", -1)
+        if xy is None or layer is None or int(layer) < 0:
+            return None
+        pts = self._engine.get_connected_points(float(xy[0]), float(xy[1]), int(layer))
+        if not pts:
+            return None
+        return tuple(sorted(
+            {(round(float(x), 3), round(float(y), 3), int(lay)) for x, y, lay in pts}
+        ))
+
+    def _act_time_obs(self) -> dict:
+        """The act-time state's observation (built on first use)."""
+        if self._last_obs is None:
+            self._get_obs()
+        return self._last_obs
+
+    def _constraint_violation(self, action: dict) -> str | None:
+        """The constraint ``action`` breaks in the act-time state, or None
+        (:func:`pcb_world.core.constraints.violation`). The pool is built only for a
+        coordinate action under ``candidates`` — the only check that reads it."""
+        obs = self._act_time_obs()
+        act = (self.act_constraints()
+               if self.action_target == "candidates"
+               and int(action["action_type"]) in (ACT_START_ROUTE, ACT_MAKE_LINE, ACT_MAKE_VIA)
+               else None)
+        return _constraints.violation(
+            action, action_target=self.action_target, obs=obs, act=act,
+            start_route_xy=self._start_route_xy, mask_start_point=self.mask_start_point,
+            offboard_mask=self.offboard_mask, net_reselect=self._net_reselect,
         )
 
     def _get_action_mask(self) -> np.ndarray:
@@ -1722,13 +1844,15 @@ class PCBWorld(gym.Env):
     # Checkpoint / Restore (MCTS tree search)
     # ------------------------------------------------------------------
 
-    def checkpoint(self) -> Checkpoint:
+    def checkpoint(self, obs_cache: bool = True) -> Checkpoint:
         """Capture full env state for MCTS tree search.
 
         Heavy router state (board + engine config + routing session) goes into
         the C++ handle; light Python episode state is stored as scalars on the
         returned node. Release with :meth:`release_checkpoint` when the node is
         pruned (the C++ clones are not freed by Python GC of the handle int).
+        ``obs_cache=False`` keeps no act-time obs / constraints: restore rebuilds them
+        on first use.
         """
         ckpt = Checkpoint(
             engine_handle=self._engine.checkpoint(),
@@ -1740,6 +1864,9 @@ class PCBWorld(gym.Env):
             # (never mutated in place) each step, so a reference is snapshot-safe.
             episode_closed_nets=set(self._episode_closed_nets),
             net_reopen_count=self._net_reopen_count,
+            start_route_xy=self._start_route_xy,
+            last_obs=self._last_obs if obs_cache else None,
+            act=self._act if obs_cache else None,
             reward_prev_state=self._reward.prev_state,
             wire_via_ref_state=self._wire_via_ref_state,
         )
@@ -1777,6 +1904,8 @@ class PCBWorld(gym.Env):
         # node's stored checkpoint (the reward states are replaced, not mutated).
         self._episode_closed_nets = set(ckpt.episode_closed_nets)
         self._net_reopen_count = ckpt.net_reopen_count
+        self._start_route_xy = ckpt.start_route_xy
+        self._last_obs, self._act = ckpt.last_obs, ckpt.act
         self._reward.prev_state = ckpt.reward_prev_state
         self._wire_via_ref_state = ckpt.wire_via_ref_state
 

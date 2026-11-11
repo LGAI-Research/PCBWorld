@@ -4,10 +4,10 @@ A reinforcement-learning environment for PCB routing, built on KiCad's interacti
 
 | | |
 |---|---|
-| **Version** | <!--VERSION-->v1.1.1<!--/VERSION--> |
+| **Version** | <!--VERSION-->v1.2.0<!--/VERSION--> |
 | **KiCad** | 9.0.8 (via the engine submodule) |
 | **Python** | 3.12+ |
-| **Platform** | Linux x86_64 (primary), macOS |
+| **Platform** | Linux x86_64 (primary); macOS on Apple Silicon (experimental, [see below](#macos-apple-silicon)) |
 | **License** | [BSD-3-Clause](LICENSE); the engine is GPLv3 (see Licensing below) |
 
 PCBWorld wraps KiCad's push-and-shove router as a [Gymnasium](https://gymnasium.farama.org/)
@@ -64,7 +64,26 @@ bash tools/setup/setup_all.sh        # conda env, pinned baselines, engine build
 conda activate pcbworld && export PYTHONPATH=build_rl/pcbnew/python/rl:. PCBWORLD_DATA_ROOT=$PWD/var/datasets
 ```
 
-macOS first: `brew install cmake ninja wxwidgets libgit2 protobuf ngspice libngspice pkgconf nng unixodbc`.
+`setup_all.sh` needs conda's libmamba solver (the default from conda 23.10) or `mamba` in conda's base; the
+classic solver does not finish on this env, so the script stops and says how to switch
+(`SKIP_ENV=1` keeps an existing env without solving).
+
+#### macOS (Apple Silicon)
+
+The same `setup_all.sh` picks [environment.macos.yml](environment.macos.yml) and
+[requirements-macos.txt](requirements-macos.txt) on an arm64 Mac; install the Xcode Command Line
+Tools first (`xcode-select --install`). The engine is built from the conda env alone; a Homebrew
+install is ignored. Rebuild it (after a C++ change) with `bash tools/setup/build_engine.sh`, as on
+Linux. This path is experimental. On a Mac:
+
+- **Verified** (Apple M5 Pro, macOS 26.4): `setup_all.sh` end to end (env, baseline downloads, engine
+  build, import), the test suite, and the RL quick start (step 3: board generation, PPO training on the
+  Apple GPU (MPS), evaluation); KRT's `grid_router` builds with cargo.
+- **Not yet verified:** LLM agents through a provider API, full rule-based baseline runs (Freerouting,
+  KRT, OrthoRoute), and the optional `pcbnew` / `kicad-cli` builds (`BUILD_PCBNEW=1`, `BUILD_CLI=1`).
+- **Linux only:** LLM-policy training (verl-agent) and the local vLLM provider (vLLM ships no macOS
+  build), the CUDA kernels (flash-attn), and multi-GPU training (NCCL).
+- **Unsupported:** Intel Macs (no PyTorch 2.8 build for x86_64 macOS).
 
 ### 2. Open-source boards (D3)
 

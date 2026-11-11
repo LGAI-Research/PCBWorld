@@ -9,7 +9,7 @@ and kills it instead of parking it once it exceeds the budget. Pinned here:
 - over budget: the server is killed at release (never mid-episode), the next
   engine spawns a fresh process (new pid) and the recycle counter advances;
 - within budget, or budget off (0): the server is parked and reused (same
-  pid), and with the budget off /proc is not even read;
+  pid), and with the budget off the RSS is not even read;
 - the env var is parsed strictly — an unparsable value raises, never a
   silent fallback to the default.
 

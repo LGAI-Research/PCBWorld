@@ -9,7 +9,7 @@ Counterpart to scripts/verify_grid_directional_random.py:
 
 For each grid_size:
   1. Generate (or reuse) a tiny 1-layer grid board (3 nets × 2 pins).
-  2. Wrap PCBWorld with KiCadRLWrapper(directional_candidates=None).
+  2. Wrap PCBWorld with KiCadRLWrapper over an env with directional_candidates=None.
   3. Run uniform-random policy for several steps × episodes.
   4. While mid-route, assert that the directional candidate set has:
        - exactly 8 candidates,
@@ -209,11 +209,10 @@ def run_one_grid(
 ) -> dict:
     env = PCBWorld(
         str(board_path),
-        EnvConfig.with_overrides(max_steps=n_steps, masking_rule="default", reward_rule="drc_only_dense", emit_drc_tokens=False),
+        EnvConfig.with_overrides(max_steps=n_steps, masking_rule="default", reward_rule="drc_only_dense", emit_drc_tokens=False,
+                                 directional_candidates=None, offboard_mask=False),
     )
-    wrapper = KiCadRLWrapper(
-        env, seed=seed, directional_candidates=None,  # 8-direction default
-    )
+    wrapper = KiCadRLWrapper(env, seed=seed)   # 8-direction default ring (env knob)
     rng = np.random.default_rng(seed)
     n_routing = 0
     n_total_axis = 0

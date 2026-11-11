@@ -540,7 +540,9 @@ rpds-py==2026.6.3
 safetensors==0.8.0
     # via transformers
 scipy==1.18.0
-    # via vllm
+    # via
+    #   pcbworld (pyproject.toml)
+    #   vllm
 sentencepiece==0.2.2
     # via vllm
 sentry-sdk==2.66.1

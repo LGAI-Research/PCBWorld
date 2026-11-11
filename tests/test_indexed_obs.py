@@ -252,6 +252,21 @@ class TestTables:
         q = rg["rat_q"]
         assert q[0] == q[2] and q[1] != q[0] and q[3] != q[0]
 
+    def test_ratsnest_order_independent_of_engine_order(self):
+        # Two zero-length edges at one spot (three stacked clusters) tie on
+        # xy; the endpoint layers must break the tie, not the engine order.
+        _, _, board_info = make_canonical_obs()
+
+        def rat(l1, l2):
+            return NS(net_code=1, x1_mm=50.0, y1_mm=40.0, x2_mm=50.0, y2_mm=40.0,
+                      layer1=l1, layer2=l2)
+
+        def points(order):
+            snap = NS(tracks=[], vias=[], ratsnest=order)
+            return [p.to_dict() for p in build_net_geometry(snap, board_info)[1].points]
+
+        assert points([rat(0, 1), rat(1, 2)]) == points([rat(1, 2), rat(0, 1)])
+
     def test_ir_and_dict_dynamic_builders_agree(self):
         obs, net_geometry, _ = make_canonical_obs()
         from_ir = dynamic_tables_from_ir(net_geometry)

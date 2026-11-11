@@ -132,6 +132,7 @@ def replay_and_save(board_path: Path, actions_text: str, out_pcb: Path) -> dict:
         # Paper-era observation (the recipe's values before they were YAML defaults).
         outline_obs="tess", simplify_outline=False, net_constraint_obs=False,
         reject_if_stuck=False,   # paper-era make_line (commit the partial stub; before 2026-07-10)
+        action_target="free",   # the LLM names free (x, y) waypoints, not pool candidates
     ))
     try:
         env.reset()
@@ -177,6 +178,7 @@ def extract_initial_board_state(board_path: Path, state_format: str = "sexpr") -
         # Paper-era observation (the recipe's values before they were YAML defaults).
         outline_obs="tess", simplify_outline=False, net_constraint_obs=False,
         reject_if_stuck=False,   # paper-era make_line (commit the partial stub; before 2026-07-10)
+        action_target="free",   # the LLM names free (x, y) waypoints, not pool candidates
     ))
     try:
         obs, _info = env.reset()

@@ -20,7 +20,8 @@ python -c 'import kicad_rl_router as krl; print("OK")'
 
 - **Single env**: transformer/KiCad rollout AND the rule-based baselines
   (FreeRouting/KRT) all run in the `pcbworld` env —
-  [environment.yml](../environment.yml) carries openjdk 21 + rust.
+  [environment.yml](../environment.yml) carries openjdk 21 + rust (Apple Silicon:
+  [environment.macos.yml](../environment.macos.yml); scope in the README's macOS section).
 - Every data/checkpoint/result root lives under the in-repo `var/`:
 
 ```bash
@@ -66,6 +67,7 @@ var/checkpoints/kdd/             # Transformer_1L_300, Transformer_2L/{default,E
 var/results/kdd/<task>/<cell>/   # per-cell rollout + eval outputs
 var/results/kdd/paper_outputs/   # paper figures/tables
 var/results/kdd/legacy/          # flat-manifest inputs (aggregated_metrics/...) read by a few extractors
+var/crashlogs/                   # crash diagnostics ("Crash logs" below)
 ```
 
 - **task** = `d1/d1_grid{10,50,100,200,500}`, `d2a`, `d3/{d3a,d3b,d3c}`. The loader also
@@ -75,6 +77,15 @@ var/results/kdd/legacy/          # flat-manifest inputs (aggregated_metrics/...)
   `freerouting`, `krt`, `ortho`, `<agent>_<backbone>` (agent ∈ interactive/plan_only/engine_free),
   `jumanji`, `sable`, `reference`. The `pcbworld`/`apiseq`/`cadgen` cell prefixes and the
   cell name `human` are accepted as read-aliases.
+
+**Crash logs.** Training and rollout processes and the engine server write a stack trace to a
+`.log` file under `var/crashlogs/` when they die on a signal such as SIGSEGV or SIGABRT; a
+segfault in the C++ router is in the engine server's log, since the router runs in that process.
+An empty `.log` is not a crash record: it belongs to a process that is still running or was
+killed without a trace (for example by SIGKILL). Step traces and stderr captures of the same run may
+sit next to a crash log. The helper libraries, slow-episode traces and stderr tail snapshots also
+kept there are not crashes.
+`KICAD_CRASH_LOG_DIR=<dir>` moves the directory; `KICAD_CRASH_DIAG=0` turns the diagnostics off.
 
 ### Unified cell layout (flat `boards/` + `per_rollout.csv`)
 

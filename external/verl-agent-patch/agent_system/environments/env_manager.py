@@ -832,7 +832,8 @@ def make_envs(config):
         cad = LLMTrainConfig.from_verl_config(config)
         board_path = cad.board_path
         env_build = {"env_config": cad.env, "state_format": cad.state_format,
-                     "prompt_version": cad.prompt_version}
+                     "prompt_version": cad.prompt_version,
+                     "prompt_guidelines": cad.prompt_guidelines}
 
         # Board scheduling (single / round_robin / per_env_random / per_env_epoch).
         # Defaults to single-board behaviour so pre-existing configs keep

@@ -561,7 +561,7 @@ def build_net_geometry(
         ))
     for k in ratsnest_by_net:
         ratsnest_by_net[k].sort(key=lambda e: (
-            e.x1_mm, e.y1_mm, e.x2_mm, e.y2_mm,
+            e.x1_mm, e.y1_mm, e.x2_mm, e.y2_mm, _rats_layers(e),
         ))
 
     # set() iteration order is also a latent source of nondeterminism

@@ -7,6 +7,7 @@ Tests:
 - get_router_state / get_failure_reason
 """
 
+import itertools
 import sys
 from pathlib import Path
 
@@ -254,6 +255,79 @@ class TestRatsnestPadGroupInvariant:
                 " — ratsnest has swallowed a needed connection (undercount)"
             )
         assert sum(rats.values()) == sum(g - 1 for g in groups.values() if g >= 2)
+
+
+class TestRatsnestContentOrder:
+    """The ratsnest is a function of board content, not of item order.
+
+    A front and a back SMD pad stacked at one spot are two clusters at one
+    position; the MST edge from the third pad may land on either. Which one
+    used to follow the CN_ITEM heap-address order (SearchClusters'
+    ``std::set<CN_ITEM*>``), so identical boards gave different ratsnest
+    layers run to run (D3-A 0067, 2026-10-20). Two boards differing only in
+    the pad order of the footprint — so in allocation order — must agree.
+    """
+
+    PADS = {
+        "a_front": '(pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net 1 "N1")'
+                   ' (uuid "61000000-0000-4000-8000-000000000001"))',
+        "a_back": '(pad "2" smd rect (at 0 0) (size 0.6 0.6) (layers "B.Cu") (net 1 "N1")'
+                  ' (uuid "62000000-0000-4000-8000-000000000002"))',
+        "c": '(pad "3" smd rect (at 5 0) (size 0.6 0.6) (layers "F.Cu") (net 1 "N1")'
+             ' (uuid "63000000-0000-4000-8000-000000000003"))',
+        "d": '(pad "4" smd rect (at 5 4) (size 0.6 0.6) (layers "F.Cu") (net 1 "N1")'
+             ' (uuid "64000000-0000-4000-8000-000000000004"))',
+    }
+
+    # Same pad, other copper layers: with four layers, three clusters of N1 share (0, 0).
+    PADS_4L = {
+        **PADS,
+        "a_in1": '(pad "5" smd rect (at 0 0) (size 0.6 0.6) (layers "In1.Cu") (net 1 "N1")'
+                 ' (uuid "65000000-0000-4000-8000-000000000005"))',
+    }
+
+    def _ratsnest(self, tmp_path: Path, order: list[str], four_layer: bool = False) -> list[tuple]:
+        from tests.helpers.pro_sidecar import write_default_pro
+
+        fixture = (PROJECT_ROOT / "tests" / "fixtures" / "layer_sentinels_board.kicad_pcb").read_text()
+        header = fixture[:fixture.index("  (footprint")]
+        if four_layer:
+            header = header.replace('(31 "B.Cu" signal)',
+                                    '(1 "In1.Cu" signal)\n    (2 "In2.Cu" signal)\n    (31 "B.Cu" signal)')
+        pad_defs = self.PADS_4L if four_layer else self.PADS
+        pads = "\n".join(f"    {pad_defs[k]}" for k in order)
+        pcb = tmp_path / f"stack_{'_'.join(order)}.kicad_pcb"
+        pcb.write_text(header + '  (footprint "TEST:STACK" (layer "F.Cu")\n'
+                       '    (uuid "60000000-0000-4000-8000-000000000000") (at 100 100)\n'
+                       f"{pads}\n  )\n)\n")
+        write_default_pro(pcb)
+        eng = open_engine(board_path=str(pcb))
+        try:
+            eng.build_connectivity()
+            return sorted((e.net_code, e.x1_mm, e.y1_mm, e.layer1, e.x2_mm, e.y2_mm, e.layer2)
+                          for e in eng.get_ratsnest())
+        finally:
+            eng.close()
+
+    def test_pad_order_does_not_change_ratsnest(self, tmp_path: Path) -> None:
+        front_first = self._ratsnest(tmp_path, ["a_front", "a_back", "c", "d"])
+        back_first = self._ratsnest(tmp_path, ["a_back", "a_front", "c", "d"])
+        assert len(front_first) == 3        # c-d, c-stack, front-back (zero length)
+        assert front_first == back_first
+
+    def test_three_stacked_clusters_order_does_not_change_ratsnest(self, tmp_path: Path) -> None:
+        # Two coincident clusters leave one zero-length edge, whose endpoint order the
+        # binding canonicalises — so a chain ordered by CN_CLUSTER* address passes the
+        # test above. With three, the chain order picks WHICH two pairs get edges
+        # (F-In1 + In1-B vs F-B + B-In1) and which layer the edge to "c" lands on.
+        orders = [list(p) + ["c", "d"] for p in itertools.permutations(["a_front", "a_in1", "a_back"])]
+        orders.append(["d", "c", "a_back", "a_in1", "a_front"])
+        results = [self._ratsnest(tmp_path, order, four_layer=True) for order in orders]
+        stack = [e for e in results[0] if (e[1], e[2]) == (e[4], e[5]) == (100.0, 100.0)]
+        assert len(results[0]) == 4         # c-d, c-stack, two zero-length edges in the stack
+        assert len({e[3] for e in stack} | {e[6] for e in stack}) == 3   # F.Cu, In1.Cu, B.Cu
+        for order, result in zip(orders[1:], results[1:]):
+            assert result == results[0], order
 
 
 if __name__ == "__main__":

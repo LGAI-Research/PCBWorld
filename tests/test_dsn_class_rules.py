@@ -661,30 +661,33 @@ def test_runner_stops_without_a_krt_checkout(written, tmp_path, monkeypatch):
                         max_passes=1, extra_env={}, use_gpu=False)
 
 
-def test_krt_runs_through_the_real_krt_runner_and_launcher(written, tmp_path, monkeypatch):
+@pytest.fixture
+def krt_runner(monkeypatch):
+    """The real krt_runner package, imported fresh from the tree and dropped afterwards."""
+    saved = sys.modules.pop("krt_runner", None)
+    monkeypatch.syspath_prepend(str(REPO / "methods" / "baselines" / "rule_based" / "krt" / "src"))
+    import krt_runner as mod
+    yield mod
+    sys.modules.pop("krt_runner", None)
+    if saved is not None:
+        sys.modules["krt_runner"] = saved
+
+
+def test_krt_runs_through_the_real_krt_runner_and_launcher(written, tmp_path, monkeypatch, krt_runner):
     """The real krt_runner and its launcher run route.py with the runner's arguments."""
     from methods.baselines.rule_based import run_rule_based_routers as rb
-    krt_src = REPO / "methods" / "baselines" / "rule_based" / "krt" / "src"
-    saved = sys.modules.pop("krt_runner", None)
-    monkeypatch.syspath_prepend(str(krt_src))
-    try:
-        import krt_runner
-        so_dir = tmp_path / "so"
-        so_dir.mkdir()
-        (so_dir / "grid_router.py").write_text("")
-        monkeypatch.setattr(krt_runner, "_ensure_grid_router_so", lambda: so_dir)
-        krt = tmp_path / "krt"
-        krt.mkdir()
-        (krt / "route.py").write_text(
-            "import sys\n"
-            f"print({_KRT_APPLIED!r})\n"
-            f"open(sys.argv[2], 'w').write({ROUTED!r})\n")
-        monkeypatch.setenv("KRT_ROOT", str(krt))
-        res = rb._route_krt(_board(tmp_path, written), 0, tmp_path, tmp_path, "krt", 60, krt_commit=None)
-    finally:
-        sys.modules.pop("krt_runner", None)
-        if saved is not None:
-            sys.modules["krt_runner"] = saved
+    so_dir = tmp_path / "so"
+    so_dir.mkdir()
+    (so_dir / "grid_router.py").write_text("")
+    monkeypatch.setattr(krt_runner, "_ensure_grid_router_so", lambda: so_dir)
+    krt = tmp_path / "krt"
+    krt.mkdir()
+    (krt / "route.py").write_text(
+        "import sys\n"
+        f"print({_KRT_APPLIED!r})\n"
+        f"open(sys.argv[2], 'w').write({ROUTED!r})\n")
+    monkeypatch.setenv("KRT_ROOT", str(krt))
+    res = rb._route_krt(_board(tmp_path, written), 0, tmp_path, tmp_path, "krt", 60, krt_commit=None)
     assert res.status == "ok", res.error
     assert Path(res.routed_pcb).read_text() == ROUTED
 
@@ -797,20 +800,33 @@ def test_generator_and_runner_name_vias_alike(classes, dia, drill, span):
     assert _pcbnew_via_name(dia, drill, span) == classes.via_padstack_name(dia, drill, span)
 
 
-def test_krt_rust_cache_is_keyed_by_the_krt_version(tmp_path, monkeypatch):
-    krt_src = REPO / "methods" / "baselines" / "rule_based" / "krt" / "src"
-    saved = sys.modules.pop("krt_runner", None)
-    monkeypatch.syspath_prepend(str(krt_src))
-    try:
-        import krt_runner
-        (tmp_path / "rust_router").mkdir()
-        (tmp_path / "rust_router" / "Cargo.toml").write_text('[package]\nname = "x"\nversion = "0.19.0"\n')
-        monkeypatch.setenv("KRT_ROOT", str(tmp_path))
-        assert krt_runner._grid_router_version() == "0.19.0"
-    finally:
-        sys.modules.pop("krt_runner", None)
-        if saved is not None:
-            sys.modules["krt_runner"] = saved
+def test_krt_rust_cache_is_keyed_by_the_krt_version(tmp_path, monkeypatch, krt_runner):
+    (tmp_path / "rust_router").mkdir()
+    (tmp_path / "rust_router" / "Cargo.toml").write_text('[package]\nname = "x"\nversion = "0.19.0"\n')
+    monkeypatch.setenv("KRT_ROOT", str(tmp_path))
+    assert krt_runner._grid_router_version() == "0.19.0"
+
+
+def test_krt_rust_rebuild_stages_the_macos_dylib(tmp_path, monkeypatch, krt_runner):
+    """On macOS cargo names the cdylib libgrid_router.dylib; the rebuild must stage that file.
+    cargo runs inside rust_router/, where KRT's .cargo/config.toml (the macOS PyO3 link flags) is read."""
+    (tmp_path / "rust_router").mkdir()
+    (tmp_path / "rust_router" / "Cargo.toml").write_text('[package]\nname = "x"\nversion = "0.19.0"\n')
+    monkeypatch.setenv("KRT_ROOT", str(tmp_path))
+    monkeypatch.setattr(krt_runner, "sys", SimpleNamespace(platform="darwin"))   # krt_runner's view only
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/cargo")
+
+    def fake_cargo(cmd, check, cwd):
+        assert Path(cwd) == tmp_path / "rust_router"
+        out = Path(cmd[cmd.index("--target-dir") + 1]) / "release"
+        out.mkdir(parents=True)
+        (out / "libgrid_router.dylib").write_bytes(b"dylib")
+
+    monkeypatch.setattr(krt_runner, "subprocess", SimpleNamespace(run=fake_cargo))
+    target = tmp_path / "cache" / "grid_router.so"
+    target.parent.mkdir()
+    krt_runner._build_grid_router_so(target)
+    assert target.read_bytes() == b"dylib"
 
 
 def test_generator_and_runner_share_the_kicad9_format(classes):

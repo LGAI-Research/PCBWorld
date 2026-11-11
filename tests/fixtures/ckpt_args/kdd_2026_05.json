@@ -39,11 +39,12 @@
    "aug_rotate": false,
    "aug_trans": false,
    "aug_zoom": false,
-   "connectivity_filter": false,
-   "directional_candidates": "grid10",
    "env": {
     "action_history_len": 1,
+    "action_target": "candidates",
+    "connectivity_filter": false,
     "corner_mode": 90,
+    "directional_candidates": "grid10",
     "drc_config_path": null,
     "drc_incremental": true,
     "drc_promoted_codes": [
@@ -54,13 +55,17 @@
     "emit_drc_tokens": false,
     "engine_seed": 77,
     "followbranch_iter_limit": 1000000,
+    "force_walkaround": false,
     "keep_routing_fraction": null,
+    "mask_start_point": true,
     "masking_rule": "default_no_via",
     "max_steps": 256,
     "net_constraint_obs": false,
     "net_reselect": false,
     "obs_format": "json",
+    "offboard_mask": false,
     "outline_obs": "tess",
+    "pad_graze_margin_mm": 0.0,
     "reject_if_stuck": false,
     "reward": {
      "drc_log_agg_scale": null,
@@ -80,10 +85,6 @@
     "simplify_outline": false,
     "trim_at_contact": false
    },
-   "force_walkaround": false,
-   "mask_start_point": true,
-   "offboard_mask": false,
-   "pad_graze_margin_mm": 0.0,
    "slot_perm": false
   },
   "policy": {
@@ -113,6 +114,7 @@
   },
   "sources": {
    "action_history_len": "derived",
+   "action_target": "legacy",
    "connectivity_filter": "legacy",
    "directional_candidates": "renamed",
    "drc_config_path": "legacy",

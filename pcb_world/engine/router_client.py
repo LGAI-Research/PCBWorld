@@ -66,7 +66,7 @@ def engine_home() -> str:
 
     The engine is a separate GPLv3 program with its own repository, pinned
     here as the ``engine/`` submodule. Everything that reads its tree — this
-    client, ``tools/setup/setup_all.sh``, the build-provenance tests — goes
+    client, ``tools/setup/build_engine.sh``, the build-provenance tests — goes
     through this one contract, so an engine checked out elsewhere works
     without editing anything.
     """
@@ -354,7 +354,7 @@ class _ServerConn:
             return "(server stderr unavailable)"
 
     def rss_mb(self) -> float | None:
-        """Server resident set size in MB (None off-Linux or once it exited)."""
+        """Server resident set size in MB (None once it exited)."""
         return read_rss_mb(self.pid)
 
     def alive(self) -> bool:

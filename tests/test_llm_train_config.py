@@ -14,12 +14,11 @@ def test_defaults_match_yaml():
     from configs.loader.schema import EnvConfig, LLMTrainConfig
 
     d = LLMTrainConfig()
-    assert (d.env.max_steps, d.env.masking_rule, d.env.reward_rule, d.state_format) == (
-        200, "pcbworld_masking", "default", "sexpr")
-    # every other env field is the shared env: default (RL's)
+    assert d.state_format == "sexpr"
+    # the env is the shared env: (RL's) apart from the LLM_ENV_OVERRIDES keys
     rl = EnvConfig().to_env_kwargs()
     assert {k: v for k, v in d.env.to_env_kwargs().items() if rl[k] != v} == {
-        "max_steps": 200, "reward_rule": "default"}
+        "action_target": "free"}
     assert (d.prompt_version, d.history_length) == ("latest", 0)
     assert (d.boards_order, d.boards_difficulty, d.boards_split) == (
         "single", "easy", "train")
@@ -73,7 +72,7 @@ def test_env_pcbworld_rejects_the_env_block_keys():
             LLMTrainConfig.from_verl_config({"env": {"pcbworld": {key: 1}}})
 
 
-def test_from_verl_config_reads_env_and_pcbworld():
+def test_from_verl_config_reads_env_and_pcbworld(capsys):
     """env-core/board/prompt from env.pcbworld.*; max_steps/history/seed from env.*."""
     from configs.loader.schema import LLMTrainConfig
 
@@ -93,6 +92,9 @@ def test_from_verl_config_reads_env_and_pcbworld():
         },
     }}
     lt = LLMTrainConfig.from_verl_config(cfg)
+    out = capsys.readouterr().out
+    assert "DEVIATION from the shared env (configs/env.yaml): max_steps = 30" in out
+    assert "masking_rule = 'relaxed'" in out
     assert (lt.eval_reward_config, lt.eval_check_angle) == ("drc_sparse", 90)
     assert (lt.env.max_steps, lt.seed, lt.history_length) == (30, 7, 2)
     assert (lt.board_path, lt.env.reward_rule, lt.env.masking_rule) == (

@@ -126,7 +126,7 @@ def test_adaptive_max_steps_moves_the_env_config_with_the_cap():
     from methods.llm_agent.wrappers.adapter import KiCadLLMWrapper
 
     worker = KiCadLLMWrapper(board_path=BOARD, seed=0,
-                             env_config=EnvConfig.with_overrides(max_steps=5),
+                             env_config=EnvConfig.with_overrides(max_steps=5, action_target="free"),
                              state_format="json", prompt_version="latest")
     try:
         assert worker.apply_adaptive_max_steps(13) == 13

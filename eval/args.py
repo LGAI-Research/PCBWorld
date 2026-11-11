@@ -44,7 +44,8 @@ from typing import Iterable, Optional
 from configs.loader.cli import StrictArgumentParser, add_dataclass_args
 from configs.loader.knob import Policy, runtime
 from configs.loader.resolve import RunConfig, add_run_args
-from configs.loader.schema import _ENV_FLAT_KEYS, INVERTED_DESTS, EnvConfig, LLMConfig
+from configs.loader.schema import (_ENV_FLAT_KEYS, INVERTED_DESTS, EnvConfig, LLMConfig,
+                                   report_env_deviations)
 from methods.llm_agent.wrappers.prompts import PCBWORLD_PROMPT_VERSIONS
 
 # LLM-eval defaults (single source: configs/llm.yaml (llm:), via the nested
@@ -151,9 +152,10 @@ def add_prompt_args(parser: argparse.ArgumentParser) -> argparse._ArgumentGroup:
     g = parser.add_argument_group("prompt")
     g.add_argument("--prompt_version", default=_L.prompt.prompt_version,
                    choices=list(PCBWORLD_PROMPT_VERSIONS),
-                   help="PCBWorld prompt version: latest (edited in place) or a "
-                        "frozen legacy v1..v7. Its action set must match "
-                        "--masking_rule (checked when the env is built).")
+                   help="PCBWorld prompt version: latest (generated from the glossary for "
+                        "the run's env) or a frozen legacy v1..v8, whose action set must "
+                        "match --masking_rule (checked when the env is built).")
+    add_dataclass_args(g, _L.prompt, style="underscore")   # --prompt_guidelines / --no-prompt_guidelines
     return g
 
 
@@ -241,13 +243,21 @@ OPTION_POLICIES = {
 
 def resolve_eval_args(argv: Optional[list[str]] = None, **parser_kw) -> RunConfig:
     """Parse an LLM eval command line (:func:`build_eval_parser`) and resolve it once (mode
-    ``fresh``: no checkpoint) into the run's frozen config."""
+    ``fresh``: no checkpoint) into the run's frozen config. Each env key the run sets apart
+    from the shared configs/env.yaml value is printed as a deviation (also in the run record)."""
     from configs.loader.resolve import dest_policies, resolve_parsed
 
     parser = build_eval_parser(**parser_kw)
     args = parser.parse_args(argv)
-    return resolve_parsed(parser, args, "fresh", policies=dest_policies(
+    run = resolve_parsed(parser, args, "fresh", policies=dest_policies(
         LLMConfig(), inverted=INVERTED_DESTS, extra=OPTION_POLICIES))
+    dest_of = {name: dest for dest, name in INVERTED_DESTS.items()}
+
+    def source_of(key: str) -> str:
+        return run.provenance[dest_of.get(key, key)].source   # every resolved key has one
+
+    report_env_deviations(llm_env_config(run), source_of)
+    return run
 
 
 __all__ = [

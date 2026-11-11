@@ -145,9 +145,9 @@ NUM_ACTION_TYPES = NUM_ACTIONS
 # Width of the policy action triple: (action_type, pointer_idx, routing_mode).
 ACTION_ARITY = 3
 
-# Number of routing modes = size of the routing-mode encoding — single source
-# is pcb_world/core/action_schema.MODE_LETTER_TO_INT (m/p/w → 0/1/2).
-NUM_ROUTING_MODES = len(MODE_LETTER_TO_INT)
+# Number of routing modes = size of the routing-mode encoding (m/p/w → 0/1/2) —
+# the env's count (pcb_world.core.constraints).
+from pcb_world.core.constraints import NUM_ROUTING_MODES  # noqa: E402,F401
 
 # Slot usage per action_type: [needs_pointer, needs_mode], DERIVED from
 # ACTION_REGISTRY params (single source — #2 resolved) so it cannot drift from

@@ -103,7 +103,7 @@ def env():
     _skip_if_unavailable()
     from pcb_world.core.env import PCBWorld
 
-    e = PCBWorld(BOARD_PATH, EnvConfig.with_overrides(max_steps=60, masking_rule="default"))  # the paper rule: finish available
+    e = PCBWorld(BOARD_PATH, EnvConfig.with_overrides(action_target="free", max_steps=60, masking_rule="default"))  # the paper rule: finish available
     e.reset()
     yield e
     e.close()
