@@ -6,6 +6,14 @@ with its own version line — its notes are in the
 — and every environment tag pins exactly one engine commit: check out the tag and run
 `git submodule update --init` to get the engine it was tested with.
 
+## v1.2.2 — 2026-11-13
+
+Documentation release. Code, configuration defaults, results and the engine pin (v1.2.1) are as in v1.2.1.
+
+### Changed
+- README header — badges (version from the latest tag, KiCad 9.0.8, Python 3.12+, license) and a one-sentence introduction replace
+  the version table; the platform and engine-license notes follow as one paragraph
+
 ## v1.2.1 — 2026-11-11
 
 Documentation release. Code, configuration defaults and results are as in v1.2.0; the engine pin moves to v1.2.1, which

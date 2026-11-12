@@ -1,14 +1,17 @@
 # PCBWorld
 
-A reinforcement-learning environment for PCB routing, built on KiCad's interactive router.
+[![PCBWorld version](https://img.shields.io/github/v/tag/LGAI-Research/PCBWorld?label=PCBWorld&color=blue)](https://github.com/LGAI-Research/PCBWorld/tags)
+[![KiCad 9.0.8](https://img.shields.io/badge/KiCad-9.0.8-314CB0)](https://www.kicad.org/)
+[![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB)](https://www.python.org/)
+[![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-green)](LICENSE)
 
-| | |
-|---|---|
-| **Version** | <!--VERSION-->v1.2.1<!--/VERSION--> |
-| **KiCad** | 9.0.8 (via the engine submodule) |
-| **Python** | 3.12+ |
-| **Platform** | Linux x86_64 (primary); macOS on Apple Silicon (experimental, [see below](#macos-apple-silicon)) |
-| **License** | [BSD-3-Clause](LICENSE); the engine is GPLv3 (see Licensing below) |
+PCBWorld <!--VERSION-->v1.2.2<!--/VERSION-->,
+from LG AI Research: an open-source Gymnasium environment for PCB routing, built on KiCad's
+interactive router.
+
+It runs on Linux x86_64 (primary) and on macOS with Apple Silicon (experimental,
+[see below](#macos-apple-silicon)). The environment is BSD-3-Clause; the engine is GPLv3
+(see [Licensing](#licensing)). The engine submodule pins KiCad 9.0.8.
 
 PCBWorld wraps KiCad's push-and-shove router as a [Gymnasium](https://gymnasium.farama.org/)
 environment. An agent places tracks and vias on a real `.kicad_pcb` board, and every step is
